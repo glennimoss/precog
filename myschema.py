@@ -1,13 +1,13 @@
-from OracleObjects import *
+from precog import *
 
 foo = Table('foo',
       [ ('id', 'number')
-      , ('text', 'varchar2(100)') ])
+      , ('text', 'varchar2', 100) ])
 
 bar = Table('bar', 
       [ ('id', 'number') 
       , ('foo_id', 'number')
-      , ('body', 'varchar2(32)') ])
+      , ('body', 'varchar2', 33) ])
 
 schema = [foo, bar]
 
