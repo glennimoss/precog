@@ -1,3 +1,29 @@
+class InsensitiveDict (dict):
+
+  def __setitem__ (self, key, value):
+    if isinstance(key, str):
+      key = key.upper()
+
+    super().__setitem__(key, value)
+
+  def __getitem__ (self, key):
+    if isinstance(key, str):
+      key = key.upper()
+
+    return super().__getitem__(key)
+
+  def __delitem__ (self, key):
+    if isinstance(key, str):
+      key = key.upper()
+
+    super().__delitem__(key)
+
+  def __contains__ (self, key):
+    if isinstance(key, str):
+      key = key.upper()
+
+    return super().__contains__(key)
+
 def coerced_comparison (class_):
   def coerced_method (m):
     def c_m (self, other):
