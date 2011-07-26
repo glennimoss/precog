@@ -1,22 +1,27 @@
 from precog import *
 
-foo = Table('foo',
+
+schema = Schema('precog')
+
+schema.add(Table('foo',
       [ ('id', 'number')
       , ('newcol', 'number', None, 3)
+      , ('colly', 'number', None, 3, 7)
+      , ('colbot', 'number', None, None, 2)
       , ('text', 'varchar2', 100) ])
+      )
 
-bar = Table('bar',
+schema.add(Table('bar',
       [ ('id', 'number')
       , ('foo_id', 'number')
       , ('body', 'varchar2', 32) ])
-
-schema = [foo, bar]
+      )
 
 diffs = []
 
-for t in schema:
+for t in schema.objects[Table].values():
   try:
-    print(t.name + ': ', end='')
+    print(str(t.name) + ': ', end='')
     diff = t.diff()
     if diff:
       print('Differences found')

@@ -79,10 +79,11 @@ class OracleFQN (object):
 
 class OracleObject (object):
 
-  def __init__ (self, name):
+  def __init__ (self, name, deferred=False):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(obj=name)
     self.name = name
+    self.deferred = deferred
     self.props = InsensitiveDict()
     self.type = type(self).__name__.upper()
 
@@ -141,8 +142,8 @@ class OracleObject (object):
 
 class Table (OracleObject):
 
-  def __init__ (self, name, columns=[]):
-    super().__init__(name)
+  def __init__ (self, name, columns=[], **kvargs):
+    super().__init__(name, **kvargs)
     self.columns = []
     for c in columns:
       if not isinstance(c, Column):
@@ -169,6 +170,12 @@ class Table (OracleObject):
     return "CREATE TABLE {} (\n    {}\n  )".format(self.name,
         ',\n    '.join(c.sql() for c in self.columns))
 
+  def satisfy (self, other):
+    if self.deferred:
+      self.columns = other.columns
+
+      self.deferred = False
+
   def exists (self):
     exists = super().exists()
 
@@ -194,14 +201,14 @@ class Table (OracleObject):
 
   @staticmethod
   def fromDb (name):
-
+    pass
 
 
 class Column (OracleObject):
 
   def __init__ (self, name, data_type, data_length=None, data_precision=None,
-      data_scale=None, table=None):
-    super().__init__(OracleFQN(part=name))
+      data_scale=None, table=None, **kvargs):
+    super().__init__(OracleFQN(part=name), **kvargs)
     self.props['data_type'] = data_type.upper()
     if data_length is not None:
       self.props['data_length'] = int(data_length)
@@ -214,7 +221,6 @@ class Column (OracleObject):
       self.table = table
       self.name.schema = table.name.schema
       self.name.obj = table.name.obj
-    #self.fqn = OracleFQN(obj=self.table.name, part=self.name)
 
   def __repr__ (self):
     return ("Column('" + self.name.part + "', " +
@@ -230,21 +236,36 @@ class Column (OracleObject):
 
     return True
 
+  def satisfy (self, other):
+    if self.deferred:
+      self.props = other.props
+      self.table = other.table
+
+      self.deferred = False
 
   def sql (self):
+    print(self.props)
     data_type = self.props['data_type']
     if 'data_length' in self.props:
       data_type += "({})".format(self.props['data_length'])
-    return "{} {}".format(self.name, data_type)
+    if 'data_precision' in self.props or 'data_scale' in self.props:
+      precision = (self.props['data_precision']
+          if 'data_precision' in self.props else '*')
+      scale = (",{}".format(self.props["data_scale"])
+          if 'data_scale' in self.props else '')
+      data_type += "({}{})".format(precision, scale)
+
+    return "{} {}".format(self.name.part, data_type)
 
   def exists (self):
     rs = db.query(
         """ SELECT {}
-            FROM user_tab_cols
-            WHERE table_name = :tab
+            FROM all_tab_cols
+            WHERE owner = :o
+              AND table_name = :tab
               AND column_name = :col
         """.format(', '.join(self.props.keys())),
-        tab=self.table.name, col=self.name)
+        o=self.name.schema, tab=self.name.obj, col=self.name.part)
 
     if not rs:
       return False
@@ -316,7 +337,7 @@ class Type (PlsqlCode):
 
 class Schema (object):
 
-  share_namespace = set(
+  share_namespace = {
         Table,
         View,
         Sequence,
@@ -325,7 +346,7 @@ class Schema (object):
         Function,
         Package,
         Type
-      )
+      }
 
   def __init__ (self, name):
     self.name = OracleFQN(name)
@@ -347,27 +368,33 @@ class Schema (object):
       self.objects[obj_type] = {}
     namespace = self.objects[obj_type]
 
-    if (name in namespace) or (obj_type in share_namespace and
+    if (name in namespace) or (obj_type in self.share_namespace and
                               name in self.shared_namespace):
       if name in self.deferred and type(self.deferred[name]) == obj_type:
         # Not a name conflict
-        pass
+        deferred = namespace[name]
+        deferred.satisfy(obj)
       else:
         raise TypeConflict(obj, namespace[name].type)
     else:
       obj.name = name
       namespace[name] = obj
-      if obj_type in share_namespace:
+      if obj_type in self.share_namespace:
         self.shared_namespace[name] = obj
 
-  def find (self, name, obj_type=Table, deferred=True):
-    name = OracleFQN(self.name.schema, name)
+    if Table == obj_type:
+      for col in obj.columns:
+        self.add(col)
 
-    if type in self.objects and name in self.objects[obj_type]:
+  def find (self, name, obj_type=Table, deferred=True):
+    if not isinstance(name, OracleFQN):
+      name = OracleFQN(self.name.schema, name)
+
+    if obj_type in self.objects and name in self.objects[obj_type]:
       return self.objects[obj_type][name]
 
     if deferred:
-      obj = obj_type(name)
+      obj = obj_type(name, deferred=True)
       self.add(obj)
       self.deferred[name] = obj
       return obj
@@ -416,10 +443,3 @@ def fromDb (schema):
     constraint = Constraint(conName, table)
     schema.add(constraint)
 
-
-if __name__ == '__main__':
-  db = DBManager()
-
-  rs = db.query('select * from foop')
-
-  print(rs[0]['VALUE'])
