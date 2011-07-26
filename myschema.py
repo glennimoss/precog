@@ -4,42 +4,37 @@ from precog import *
 schema = Schema('precog')
 
 schema.add(Table('foo',
-      [ ('id', 'number')
-      , ('newcol', 'number', None, 3)
-      , ('colly', 'number', None, 3, 7)
-      , ('colbot', 'number', None, None, 2)
-      , ('text', 'varchar2', 100) ])
+      [ Column('id', data_type='number')
+      , Column('newcol', data_type='number', data_precision=3)
+      , Column('colly', data_type='number', data_precision=3, data_scale=7)
+      , Column('colbot', data_type='number', data_scale=2)
+      , Column('text', data_type='varchar2', data_length=256) ])
       )
 
 schema.add(Table('bar',
-      [ ('id', 'number')
-      , ('foo_id', 'number')
-      , ('body', 'varchar2', 32) ])
+      [ Column('id', data_type='number')
+      , Column('foo_id', data_type='number')
+      , Column('body', data_type='varchar2', data_length=32) ])
       )
 
-diffs = []
+def diffs():
+  dbschema = Schema.fromDb('precog')
+  #dbschema = Schema('precog')
+  #dbschema.add(Table.fromDb(OracleFQN('precog','foo')))
+  #dbschema.add(Table.fromDb(OracleFQN('precog','bar')))
 
-for t in schema.objects[Table].values():
-  try:
-    print(str(t.name) + ': ', end='')
-    diff = t.diff()
-    if diff:
-      print('Differences found')
-      diffs.extend(diff)
-    else:
-      print('Valid')
+  diffs = schema.diff(dbschema)
 
-    print()
-  except TypeConflict as e:
-    print(e)
+  if diffs:
+    print('Delta script:')
+    print(";\n\n".join(diffs) + ";\n")
 
-if diffs:
-  print('Delta script:')
-  print(";\n\n".join(diffs) + ";\n")
+    doit = input('Run script? [yN] ')
 
-  doit = input('Run script? [yN] ')
+    if 'y' == doit.lower():
+      for diff in diffs:
+        db.execute(diff)
 
-  if 'y' == doit.lower():
-    for diff in diffs:
-      db.execute(diff)
+  return diffs
 
+d = diffs()

@@ -1,0 +1,74 @@
+import re
+
+from precog import reserved
+from precog.errors import *
+from precog.util import coerced_comparison
+
+@coerced_comparison
+class OracleIdentifier (str):
+
+  def __new__ (self, identifier):
+    identifier = str(identifier)
+    quoted = identifier.startswith('"') and identifier.endswith('"')
+    identifier = identifier
+    if not quoted:
+      identifier = identifier.upper()
+
+    if len(identifier) == (0 if not quoted else 2):
+      raise OracleNameError("Object name cannot be empty")
+
+    if identifier in reserved.words:
+      raise OracleNameError(
+        "Object name {} is a reserved word".format(repr(identifier)))
+
+    if len(identifier) > (30 if not quoted else 32):
+      raise OracleNameError(
+        "Object name {} is longer than 30 characters"
+        .format(repr(identifier)))
+
+    if (not quoted and
+        not re.match('^[A-Z_$#][0-9A-Z_$#]*$', identifier)):
+      raise OracleNameError(
+        "Object name {} must not start with a number and "
+        "otherwise contain only letters, numbers, _, $, or #"
+        .format(repr(identifier)))
+
+    if (quoted and
+        not re.match('^"[^"\0]+"$', identifier)):
+      raise OracleNameError(
+        "Quoted object name {} cannot contain \" or \\0"
+        .format(repr(identifier)))
+
+    return super().__new__(self, identifier)
+
+  def __repr__ (self):
+    return "OracleIdentifier({})".format(super().__repr__())
+
+class OracleFQN (object):
+  def __init__ (self, schema=None, obj=None, part=None):
+    self.schema = OracleIdentifier(schema) if schema else None
+    self.obj = OracleIdentifier(obj) if obj else None
+    self.part = OracleIdentifier(part) if part else None
+
+    if not (self.schema or self.obj or self.part):
+      raise OracleNameError('have to have a name')
+
+  def __str__ (self):
+    return '.'.join(x for x in (self.schema, self.obj, self.part) if x)
+
+  def __repr__ (self):
+    return "OracleFQN({})".format(', '.join(
+        "{}='{}'".format(arg, val) for arg, val in
+          (('schema', self.schema), ('obj', self.obj), ('part', self.part))
+          if val))
+
+  def __hash__ (self):
+    return self.__str__().__hash__()
+
+  def __eq__ (self, other):
+    if not isinstance(other, OracleFQN):
+      return False
+
+    return (self.schema == other.schema and
+            self.obj == other.obj and
+            self.part == other.part)

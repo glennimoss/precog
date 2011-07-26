@@ -1,0 +1,35 @@
+Release 0.1.2 (Nov 23, 2010)
+---------------------------------
+
+Bug Fixes
+ * Fixed incorrect detection of keyword fragments embed in names (issue7,
+   reported and initial patch by andyboyko).
+ * Stricter detection of identfier aliases (issue8, reported by estama).
+ * WHERE grouping consumed closing parenthesis (issue9, reported by estama).
+ * Fixed an issue with trailing whitespaces (reported by Kris).
+ * Better detection of escaped single quotes (issue13, reported by
+   Martin Brochhaus, patch by bluemaro with test case by Dan Carley).
+ * Ignore identifier in double-quotes when changing cases (issue 21).
+ * Lots of minor fixes targeting encoding, indentation, statement
+   parsing and more (issues 12, 14, 15, 16, 18, 19).
+ * Code cleanup with a pinch of refactoring.
+
+
+Release 0.1.1 (May 6, 2009)
+---------------------------
+
+Bug Fixes
+ * Lexers preserves original line breaks (issue1).
+ * Improved identifier parsing: backtick quotes, wildcards, T-SQL variables
+   prefixed with @.
+ * Improved parsing of identifier lists (issue2).
+ * Recursive recognition of AS (issue4) and CASE.
+ * Improved support for UPDATE statements.
+
+Other
+ * Code cleanup and better test coverage.
+
+
+Release 0.1.0 (Apr 8, 2009)
+---------------------------
+ * Initial release.

@@ -1,4 +1,6 @@
-class InsensitiveDict (dict):
+from collections import OrderedDict
+
+class InsensitiveDict (OrderedDict):
 
   def __setitem__ (self, key, value):
     if isinstance(key, str):
@@ -10,7 +12,10 @@ class InsensitiveDict (dict):
     if isinstance(key, str):
       key = key.upper()
 
-    return super().__getitem__(key)
+    try:
+      return super().__getitem__(key)
+    except KeyError:
+      return None
 
   def __delitem__ (self, key):
     if isinstance(key, str):

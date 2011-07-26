@@ -1,12 +1,28 @@
 class PrecogError (Exception):
+  pass
+
+class ObjectError (PrecogError):
+
+  def __init__ (self, obj):
+    self.obj = obj
 
   def __str__ (self):
-    return "{}: {} [{}]".format(type(self), self.obj.type, self.obj.name)
+    return "{} [{}]".format(self.obj.type, self.obj.name)
 
-class TypeConflict (PrecogError):
+class SchemaConflict (ObjectError):
+
+  def __init__ (self, obj, other):
+    super().__init__(obj)
+    self.other = other
+
+  def __str__ (self):
+    return (super().__str__() +
+      " is present in schema as {}".format(self.other.sql(True)))
+
+class TypeConflict (ObjectError):
 
   def __init__ (self, obj, wrongtype='a different type'):
-    self.obj = obj
+    super().__init__(obj)
     self.wrongtype = wrongtype
 
   def __str__ (self):

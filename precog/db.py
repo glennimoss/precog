@@ -1,4 +1,6 @@
+from precog.identifier import OracleIdentifier
 from precog.util import InsensitiveDict
+
 try:
   import cx_Oracle
 
@@ -17,13 +19,20 @@ except ImportError as e:
   _curs = DummyCursor()
 
 
+def unquote (d):
+  for k in d:
+    if isinstance(d[k], OracleIdentifier):
+      d[k] = d[k].strip('"')
+
 def query (*args, **kvargs):
+  unquote(kvargs)
   _curs.execute(*args, **kvargs)
   return [InsensitiveDict(
             zip((column[0] for column in _curs.description), row)
           ) for row in _curs]
 
 def execute (*args, **kvargs):
+  unquote(kvargs)
   _curs.execute(*args, **kvargs)
 
   return _curs.rowcount
