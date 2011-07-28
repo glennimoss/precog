@@ -50,7 +50,8 @@ class _Main(object):
             "--encoding",
             action="store",
             type="string",
-            dest="encoding"
+            dest="encoding",
+            default="UTF-8"
             )
         optParser.add_option(
             "--input",

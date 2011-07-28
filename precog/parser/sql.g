@@ -27,6 +27,9 @@ options {
   output=AST;
 }
 
+@lexer::header {
+  NL_CHANNEL = DEFAULT_CHANNEL + 1
+}
 @lexer::members {
 # needed for things like BETWEEN 1..2 where 1. would be treated as a literal
 def numberDotValid ():
@@ -35,14 +38,45 @@ def numberDotValid ():
         i += 1
     return input.LA(i) == '.' and input.LA(i+1) != '.'
 }
+@lexer::main {
+  def main(argv):
+      from custom_antlr import MultiChannelTokenStream
+      from sqlLexer import sqlLexer
+      inStream = ANTLRFileStream(argv[1])
+      lexer = sqlLexer(inStream)
+      tokenStream = MultiChannelTokenStream(lexer)
+      tokenStream.add(NL_CHANNEL, HIDDEN)
+      for t in tokenStream.getTokens():
+        print t
+}
+@main {
+  def main(argv):
+      from custom_antlr import MultiChannelTokenStream
+      from sqlLexer import sqlLexer
+      inStream = ANTLRFileStream(argv[1])
+      lexer = sqlLexer(inStream)
+      tokenStream = MultiChannelTokenStream(lexer)
+      parser = sqlParser(tokenStream)
+      result = parser.prog()
+      if result is not None:
+          if hasattr(result, 'tree'):
+              if result.tree is not None:
+                  print result.tree.toStringTree()
+          else:
+              print repr(result)
+}
 
 sqlplus_file
-    : ( create_object ( DIVIDE show_errors )? DIVIDE? )+ EOF
+    : ( create_object ( SLASH show_errors )? SLASH? )+ EOF
     ;
     
 show_errors
     : kSHOW kERRORS SEMI?
     ;
+
+plsql_stmt
+  : create_object SLASH
+  ;
 
 create_object
     : create_package
@@ -443,7 +477,7 @@ add_expr
     ;
 
 mul_expr
-    : unary_sign_expr ( ( ASTERISK | DIVIDE | kMOD ) unary_sign_expr )*
+    : unary_sign_expr ( ( ASTERISK | SLASH | kMOD ) unary_sign_expr )*
     ;
 
 unary_sign_expr
@@ -729,7 +763,7 @@ PLUS
 MINUS
 	:	'-'
 	;
-DIVIDE
+SLASH
 	:	'/'
 	;
 EQ
@@ -791,11 +825,14 @@ fragment
 DOUBLEQUOTED_STRING
 	:	'"' ( ~('"') )* '"'
 	;
-WS	:	(' '|'\r'|'\t'|'\n') {$channel=HIDDEN;}
-	;
+NL : '\r'? '\n' { $channel = NL_CHANNEL } ;
+SPACE	:	(' '|'\t') { $channel=HIDDEN } ;
+TERMINATOR
+  : { self.input.LT(-1) == '\n' }?=> ' '* SLASH ' '* NL
+  ;
 SL_COMMENT
-	:	'--' ~('\n'|'\r')* '\r'? '\n' {$channel=HIDDEN;}
+	:	'--' ~('\n'|'\r')* NL {$channel=HIDDEN;}
 	;
 ML_COMMENT
 	:	'/*' ( options {greedy=false;} : . )* '*/' {$channel=HIDDEN;}
-	;
+	; 

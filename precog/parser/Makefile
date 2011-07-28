@@ -1,10 +1,12 @@
-all: sqlLexer.py sqlParser.py
+G := $(basename $(wildcard *.g))
 
-sqlLexer.py sqlParser.py: sql.g
-	antlr sql.g
-	2to3-3.1 -wn sqlLexer.py sqlParser.py
+all: $(G)Lexer.py $(G)Parser.py
+
+$(G)Lexer.py $(G)Parser.py: $(G).g
+	antlr $(G).g
+	2to3-3.1 -wn $(G)Lexer.py $(G)Parser.py
 
 clean:
-	rm -f sqlLexer.* sqlParser.* sql.tokens
+	rm -f $(G)Lexer.* $(G)Parser.* $(G).tokens
 
 .PHONY: clean
