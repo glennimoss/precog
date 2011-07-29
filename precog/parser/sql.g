@@ -24,36 +24,73 @@ grammar sql;
 
 options {
   language=Python;
-  output=AST;
 }
 
 @lexer::header {
+  from .custom_antlr import NamedConstant, FileStream
+
   NL_CHANNEL = DEFAULT_CHANNEL + 1
 }
 @lexer::members {
-# needed for things like BETWEEN 1..2 where 1. would be treated as a literal
-def numberDotValid ():
-    i = 1
-    while input.LA(i) >= '0' and input.LA(i) <= '9':
-        i += 1
-    return input.LA(i) == '.' and input.LA(i+1) != '.'
+  # needed for things like BETWEEN 1..2 where 1. would be treated as a literal
+  def numberDotValid ():
+      i = 1
+      while self.input.LA(i) >= '0' and self.input.LA(i) <= '9':
+          i += 1
+      return self.input.LA(i) == '.' and self.input.LA(i+1) != '.'
+
+  def aloneOnLine (self, dir=None):
+    if not dir:
+      return self.aloneOnLine(-1) and self.aloneOnLine(1)
+
+    # A terminator can only occur on a line by itself, possibly with whitespace
+    p = 1 if dir == 1 else 0
+    c = 0
+    while c != EOF:
+      p += dir
+      c = self.input.LT(p)
+      if c == '\n':
+        return True
+      if not (c == ' ' or c == '\t'):
+        return False
+
+    # EOF is as good as a line terminator
+    return True
 }
 @lexer::main {
+  NamedConstant.name(locals())
+
   def main(argv):
-      from custom_antlr import MultiChannelTokenStream
-      from sqlLexer import sqlLexer
-      inStream = ANTLRFileStream(argv[1])
+      from precog import reserved
+
+      from .custom_antlr import MultiChannelTokenStream
+      inStream = FileStream(argv[1])
       lexer = sqlLexer(inStream)
       tokenStream = MultiChannelTokenStream(lexer)
-      tokenStream.add(NL_CHANNEL, HIDDEN)
-      for t in tokenStream.getTokens():
-        print t
+      #tokenStream.add(NL_CHANNEL, HIDDEN)
+      sql = set()
+      plsql = set()
+      for t in tokenStream:
+        if t.type == ID:
+          text = t.text.upper()
+
+          if text in reserved.words:
+            sql.add(text)
+          if text in reserved.plsql:
+            plsql.add(text)
+
+      print("Reserved in both:")
+      print(*sorted(sql.intersection(plsql)), sep="\n")
+      print("Reserved only in SQL:")
+      print(*sorted(sql - plsql), sep="\n")
+      print("Reserved only in PL/SQL:")
+      print(*sorted(plsql - sql), sep="\n")
 }
 @main {
   def main(argv):
-      from custom_antlr import MultiChannelTokenStream
+      from .custom_antlr import MultiChannelTokenStream
       from sqlLexer import sqlLexer
-      inStream = ANTLRFileStream(argv[1])
+      inStream = FileStream(argv[1])
       lexer = sqlLexer(inStream)
       tokenStream = MultiChannelTokenStream(lexer)
       parser = sqlParser(tokenStream)
@@ -61,22 +98,28 @@ def numberDotValid ():
       if result is not None:
           if hasattr(result, 'tree'):
               if result.tree is not None:
-                  print result.tree.toStringTree()
+                  print(result.tree.toStringTree())
           else:
-              print repr(result)
+              print(repr(result))
 }
 
 sqlplus_file
-    : ( create_object ( SLASH show_errors )? SLASH? )+ EOF
+    : ( sql_stmt | plsql_stmt )* EOF
     ;
     
+
+sql_stmt
+  : . SEMI
+  ;
+
+plsql_stmt
+  : .+ TERMINATOR
+  ;
+
+/*
 show_errors
     : kSHOW kERRORS SEMI?
     ;
-
-plsql_stmt
-  : create_object SLASH
-  ;
 
 create_object
     : create_package
@@ -614,99 +657,118 @@ kSHOW : {self.input.LT(1).text.lower() == "show"}? ID;
 kTYPE : {self.input.LT(1).text.lower() == "type"}? ID;
 kVALUES : {self.input.LT(1).text.lower() == "values"}? ID;
 
+*/
 
+ADD : 'add' ;
+ALTER : 'alter' ;
 AND	:	'and'	;
 ARRAY : 'array' ;
 AS : 'as' ;
 AUTHID: 'authid';
+BEGIN	:	'begin'	;
 BETWEEN : 'between' ;
 BODY	:	'body';
 BULK: 'bulk';
 BULK_ROWCOUNT: 'bulk_rowcount';
 BY	:	'by';
 CASE: 'case';
-CREATE: 'create';
+CHAR : 'char' ;
+CHECK : 'check' ;
+CLOSE	:	'close';
 COLLECT:	'collect';
 COMMIT	:	'commit';
+CONSTANT	:	'constant'	;
+CONTINUE:	'continue';
+CREATE: 'create';
 CURRENT_USER: 'current_user';
+CURSOR	:	'cursor'	;
+DATE : 'date' ;
+DECLARE	:	'declare'	;
 DEFAULT : 'default' ;
 DEFINER: 'definer';
 DELETE	:	'delete';
+DELETING:	'deleting';
+DETERMINISTIC	: 'deterministic'	;
+DROP : 'drop' ;
 ELSE : 'else' ;
 ELSIF	:	'elsif';
+END	:	'end'	;
+EXCEPTION	:	'exception'	;
+EXECUTE	:	'execute';
+EXISTS	:	'exists';
+EXIT	:	'exit';
 EXTERNAL:	'external';
 FALSE	:	'false';
 FETCH	:	'fetch';
 FOR : 'for' ;
 FORALL : 'forall' ;
+FROM : 'from' ;
+FUNCTION	:	'function'	;
 GOTO	:	'goto';
 IF	:	'if';
+IMMEDIATE	:	'immediate';
 IN : 'in' ;
+INCREMENT : 'increment' ;
 INDEX : 'index' ;
 INSERT	:	'insert';
+INSERTING :	'inserting';
 INTO	:	'into';
 IS : 'is' ;
+ISOPEN	:	'isopen';
 LANGUAGE:	'language';
 LIKE : 'like' ;
 LIMIT : 'limit' ;
 LOCK	:	'lock';
+LOOP	:	'loop';
+NOCOPY	:	'nocopy'	;
 NOT : 'not' ;
 NOTFOUND:	'notfound';
 NULL : 'null' ;
+NUMBER : 'number' ;
+OF : 'of' ;
+ON : 'on' ;
 OPEN	:	'open';
 OR : 'or' ;
-PACKAGE: 'package';
-RAISE	:	'raise';
-ROLLBACK:	'rollback';
-SAVEPOINT	:	'savepoint';
-SELECT	:	'select';
-SET	:	'set';
-SQL	:	'sql';
-TABLE	:	'table';
-TRANSACTION	:	'transaction';
-TRUE	:	'true';
-THEN : 'then' ;
-UPDATE	:	'update';
-WHILE	:	'while';
-INSERTING
-	:	'inserting';
-UPDATING:	'updating';
-DELETING:	'deleting';
-ISOPEN	:	'isopen';
-EXISTS	:	'exists';
-
-BEGIN	:	'begin'	;
-CLOSE	:	'close';
-CONSTANT	:	'constant'	;
-CONTINUE:	'continue';
-CURSOR	:	'cursor'	;
-DECLARE	:	'declare'	;
-DETERMINISTIC	: 'deterministic'	;
-END	:	'end'	;
-EXCEPTION	:	'exception'	;
-EXECUTE	:	'execute';
-EXIT	:	'exit';
-FUNCTION	:	'function'	;
-IMMEDIATE	:	'immediate';
-LOOP	:	'loop';
-NOCOPY	:	'nocopy'	;
 OTHERS	:	'others'	;
 OUT	:	'out'	;
+PACKAGE: 'package';
 PARALLEL_ENABLE	:	'parallel_enable';
 PIPELINED	:	'pipelined'	;
 PRAGMA	:	'pragma'	;
 PROCEDURE	:	'procedure'	;
+RAISE	:	'raise';
 RECORD	:	'record'	;
 REF	:	'ref'	;
 RESULT_CACHE	:	'result_cache'	;
 RETURN	:	'return'	;
 RETURNING	:	'returning'	;
+ROLLBACK:	'rollback';
+ROW : 'row' ;
 ROWTYPE	:	'rowtype'	;
+SAVEPOINT	:	'savepoint';
+SELECT	:	'select';
+SET	:	'set';
+SQL	:	'sql';
+START : 'start' ;
 SUBTYPE	:	'subtype'	;
+SYSDATE : 'sysdate' ;
+TABLE	:	'table';
+THEN : 'then' ;
+TRANSACTION	:	'transaction';
+TRIGGER : 'trigger' ;
+TRUE	:	'true';
+UPDATE	:	'update';
+UPDATING:	'updating';
 USING:	'using'	;
+VALUES : 'values' ;
+VARCHAR : 'varchar' ;
+VARCHAR2 : 'varchar2' ;
 VARRAY	:	'varray'	;
 VARYING	:	'varying'	;
 WHEN	:	'when'	;
+WHERE : 'where' ;
+WHILE	:	'while';
+WITH : 'with' ;
 
 QUOTED_STRING
 	:	( 'n' )? '\'' ( '\'\'' | ~('\'') )* '\''
@@ -827,12 +889,12 @@ DOUBLEQUOTED_STRING
 	;
 NL : '\r'? '\n' { $channel = NL_CHANNEL } ;
 SPACE	:	(' '|'\t') { $channel=HIDDEN } ;
-TERMINATOR
-  : { self.input.LT(-1) == '\n' }?=> ' '* SLASH ' '* NL
-  ;
 SL_COMMENT
 	:	'--' ~('\n'|'\r')* NL {$channel=HIDDEN;}
 	;
 ML_COMMENT
 	:	'/*' ( options {greedy=false;} : . )* '*/' {$channel=HIDDEN;}
 	; 
+TERMINATOR
+  : { self.aloneOnLine() }? SLASH
+  ;

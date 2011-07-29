@@ -185,8 +185,8 @@ class CommonToken(Token):
             self.channel = oldToken.channel
             self.index = oldToken.index
             self._text = oldToken._text
-            self.input = oldToken.input
             if isinstance(oldToken, CommonToken):
+                self.input = oldToken.input
                 self.start = oldToken.start
                 self.stop = oldToken.stop
 
@@ -220,10 +220,7 @@ class CommonToken(Token):
         if self.input is None:
             return None
 
-        if self.start < self.input.size() and self.stop < self.input.size():
-          return self.input.substring(self.start, self.stop)
-
-        return '<EOF>'
+        return self.input.substring(self.start, self.stop)
 
 
     def setText(self, text):
@@ -244,10 +241,6 @@ class CommonToken(Token):
     def setType(self, ttype):
         self.type = ttype
 
-    def getTypeName(self):
-        return str(self.type)
-
-    typeName = property(lambda s: s.getTypeName())
 
     def getLine(self):
         return self.line
@@ -300,11 +293,11 @@ class CommonToken(Token):
         else:
             txt = "<no text>"
 
-        return "[@%d,%d:%d=%r,<%s>%s,%d:%d]" % (
+        return "[@%d,%d:%d=%r,<%d>%s,%d:%d]" % (
             self.index,
             self.start, self.stop,
             txt,
-            self.typeName, channelStr,
+            self.type, channelStr,
             self.line, self.charPositionInLine
             )
 
@@ -411,8 +404,13 @@ class ClassicToken(Token):
     __repr__ = toString
 
 
+
+EOF_TOKEN = CommonToken(type=EOF)
+
 INVALID_TOKEN = CommonToken(type=INVALID_TOKEN_TYPE)
 
 # In an action, a lexer rule can set token to this SKIP_TOKEN and ANTLR
 # will avoid creating a token for this symbol and try to fetch another.
 SKIP_TOKEN = CommonToken(type=INVALID_TOKEN_TYPE)
+
+

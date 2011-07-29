@@ -236,8 +236,9 @@ class ParserMain(_Main):
         parser = self.parserClass(tokenStream, **kwargs)
         result = getattr(parser, options.parserRule)()
         if result is not None:
-            if hasattr(result, 'tree') and result.tree is not None:
-                self.writeln(options, result.tree.toStringTree())
+            if hasattr(result, 'tree'):
+                if result.tree is not None:
+                    self.writeln(options, result.tree.toStringTree())
             else:
                 self.writeln(options, repr(result))
 
@@ -304,3 +305,4 @@ class WalkerMain(_Main):
                     self.writeln(options, result.tree.toStringTree())
                 else:
                     self.writeln(options, repr(result))
+

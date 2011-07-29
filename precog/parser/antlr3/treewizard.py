@@ -36,9 +36,9 @@ See <http://www.antlr.org/wiki/display/~admin/2007/07/02/Exploring+Concept+of+Tr
 #
 # end[licence]
 
-from antlr3.constants import INVALID_TOKEN_TYPE
-from antlr3.tokens import CommonToken
-from antlr3.tree import CommonTree, CommonTreeAdaptor
+from .constants import INVALID_TOKEN_TYPE
+from .tokens import CommonToken
+from .tree import CommonTree, CommonTreeAdaptor
 
 
 def computeTokenTypes(tokenNames):
@@ -320,7 +320,12 @@ class TreeWizard(object):
     """
 
     def __init__(self, adaptor=None, tokenNames=None, typeMap=None):
-        self.adaptor = adaptor
+        if adaptor is None:
+            self.adaptor = CommonTreeAdaptor()
+
+        else:
+            self.adaptor = adaptor
+
         if typeMap is None:
             self.tokenNameToTypeMap = computeTokenTypes(tokenNames)
 

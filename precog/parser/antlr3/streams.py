@@ -33,8 +33,8 @@
 import codecs
 from io import StringIO
 
-from antlr3.constants import DEFAULT_CHANNEL, EOF
-from antlr3.tokens import Token, EOF_TOKEN
+from .constants import DEFAULT_CHANNEL, EOF
+from .tokens import Token, CommonToken
 
 
 ############################################################################
@@ -259,6 +259,15 @@ class TokenStream(IntStream):
         two tokens ago. LT(0) is undefined.  For i>=n, return Token.EOFToken.
         Return null for LT(0) and any index that results in an absolute address
         that is negative.
+	"""
+
+        raise NotImplementedError
+
+
+    def range(self):
+        """
+        How far ahead has the stream been asked to look?  The return
+        value is a valid index from 0..n-1.
         """
 
         raise NotImplementedError
@@ -629,7 +638,8 @@ class CommonTokenStream(TokenStream):
         # Set<tokentype>; discard any tokens with this type
         self.discardSet = set()
 
-        # Skip tokens on any channel but this one; this is how we skip whitespace...
+        # Skip tokens on any channel but this one; this is how we skip
+        # whitespace...
         self.channel = channel
 
         # By default, track all incoming tokens
@@ -641,6 +651,13 @@ class CommonTokenStream(TokenStream):
 
         # Remember last marked position
         self.lastMarker = None
+
+        # how deep have we gone?
+        self._range = -1
+
+
+    def makeEOFToken(self):
+        return self.tokenSource.makeEOFToken()
 
 
     def setTokenSource(self, tokenSource):
@@ -814,10 +831,13 @@ class CommonTokenStream(TokenStream):
             i = self.skipOffTokenChannels(i+1) # leave p on valid token
             n += 1
 
+        if i > self._range:
+            self._range = i
+
         try:
             return self.tokens[i]
         except IndexError:
-            return EOF_TOKEN
+            return self.makeEOFToken()
 
 
     def LB(self, k):
@@ -855,6 +875,16 @@ class CommonTokenStream(TokenStream):
         return self.tokens[i]
 
 
+    def slice(self, start, stop):
+        if self.p == -1:
+            self.fillBuffer()
+
+        if start < 0 or stop < 0:
+            return None
+
+        return self.tokens[start:stop+1]
+
+
     def LA(self, i):
         return self.LT(i).type
 
@@ -871,6 +901,10 @@ class CommonTokenStream(TokenStream):
 
     def size(self):
         return len(self.tokens)
+
+
+    def range(self):
+        return self._range
 
 
     def index(self):
@@ -921,6 +955,11 @@ class RewriteOperation(object):
 
     def __init__(self, stream, index, text):
         self.stream = stream
+
+        # What index into rewrites List are we?
+        self.instructionIndex = None
+
+        # Token buffer index.
         self.index = index
         self.text = text
 
@@ -933,7 +972,8 @@ class RewriteOperation(object):
 
     def toString(self):
         opName = self.__class__.__name__
-        return '<%s@%d:"%s">' % (opName, self.index, self.text)
+        return '<%s@%d:"%s">' % (
+            opName, self.index, self.text)
 
     __str__ = toString
     __repr__ = toString
@@ -944,7 +984,8 @@ class InsertBeforeOp(RewriteOperation):
 
     def execute(self, buf):
         buf.write(self.text)
-        buf.write(self.stream.tokens[self.index].text)
+        if self.stream.tokens[self.index].type != EOF:
+            buf.write(self.stream.tokens[self.index].text)
         return self.index + 1
 
 
@@ -969,24 +1010,11 @@ class ReplaceOp(RewriteOperation):
 
 
     def toString(self):
+        if self.text is None:
+            return '<DeleteOp@%d..%d>' % (self.index, self.lastIndex)
+
         return '<ReplaceOp@%d..%d:"%s">' % (
             self.index, self.lastIndex, self.text)
-
-    __str__ = toString
-    __repr__ = toString
-
-
-class DeleteOp(ReplaceOp):
-    """
-    @brief Internal helper class.
-    """
-
-    def __init__(self, stream, first, last):
-        ReplaceOp.__init__(self, stream, first, last, None)
-
-
-    def toString(self):
-        return '<DeleteOp@%d..%d>' % (self.index, self.lastIndex)
 
     __str__ = toString
     __repr__ = toString
@@ -1133,6 +1161,7 @@ class TokenRewriteStream(CommonTokenStream):
 
         op = InsertBeforeOp(self, index, text)
         rewrites = self.getProgram(programName)
+        op.instructionIndex = len(rewrites)
         rewrites.append(op)
 
 
@@ -1168,11 +1197,12 @@ class TokenRewriteStream(CommonTokenStream):
 
         if first > last or first < 0 or last < 0 or last >= len(self.tokens):
             raise ValueError(
-                "replace: range invalid: "+first+".."+last+
-                "(size="+len(self.tokens)+")")
+                "replace: range invalid: %d..%d (size=%d)"
+                % (first, last, len(self.tokens)))
 
         op = ReplaceOp(self, first, last, text)
         rewrites = self.getProgram(programName)
+        op.instructionIndex = len(rewrites)
         rewrites.append(op)
 
 
@@ -1203,6 +1233,9 @@ class TokenRewriteStream(CommonTokenStream):
 
 
     def toOriginalString(self, start=None, end=None):
+        if self.p == -1:
+            self.fillBuffer()
+
         if start is None:
             start = self.MIN_TOKEN_INDEX
         if end is None:
@@ -1211,13 +1244,17 @@ class TokenRewriteStream(CommonTokenStream):
         buf = StringIO()
         i = start
         while i >= self.MIN_TOKEN_INDEX and i <= end and i < len(self.tokens):
-            buf.write(self.get(i).text)
+            if self.get(i).type != EOF:
+                buf.write(self.get(i).text)
             i += 1
 
         return buf.getvalue()
 
 
     def toString(self, *args):
+        if self.p == -1:
+            self.fillBuffer()
+
         if len(args) == 0:
             programName = self.DEFAULT_PROGRAM_NAME
             start = self.MIN_TOKEN_INDEX
@@ -1273,7 +1310,8 @@ class TokenRewriteStream(CommonTokenStream):
             t = self.tokens[i]
             if op is None:
                 # no operation at that index, just dump token
-                buf.write(t.text)
+                if t.type != EOF:
+                    buf.write(t.text)
                 i += 1 # move to next token
 
             else:
@@ -1309,8 +1347,16 @@ class TokenRewriteStream(CommonTokenStream):
         R.i-j.u R.x-y.v | x-y in i-j          ERROR
         R.i-j.u R.x-y.v | boundaries overlap  ERROR
 
-        I.i.u R.x-y.v   | i in x-y            delete I
-        I.i.u R.x-y.v   | i not in x-y        leave alone, nonoverlapping
+        Delete special case of replace (text==null):
+        D.i-j.u D.x-y.v |                     boundaries overlapcombine to
+                                              max(min)..max(right)
+
+        I.i.u R.x-y.v   |                     i in (x+1)-ydelete I (since
+                                              insert before we're not deleting
+                                              i)
+        I.i.u R.x-y.v   |                     i not in (x+1)-yleave alone,
+                                              nonoverlapping
+
         R.x-y.v I.i.u   | i in x-y            ERROR
         R.x-y.v I.x.u                         R.x-y.uv (combine, delete I)
         R.x-y.v I.i.u   | i not in x-y        leave alone, nonoverlapping
@@ -1353,14 +1399,22 @@ class TokenRewriteStream(CommonTokenStream):
 
             # Wipe prior inserts within range
             for j, iop in self.getKindOfOps(rewrites, InsertBeforeOp, i):
-                if iop.index >= rop.index and iop.index <= rop.lastIndex:
-                    rewrites[j] = None  # delete insert as it's a no-op.
+                if iop.index == rop.index:
+                    # E.g., insert before 2, delete 2..2; update replace
+                    # text to include insert before, kill insert
+                    rewrites[iop.instructionIndex] = None
+                    rop.text = self.catOpText(iop.text, rop.text)
+
+                elif iop.index > rop.index and iop.index <= rop.lastIndex:
+                    # delete insert as it's a no-op.
+                    rewrites[j] = None
 
             # Drop any prior replaces contained within
             for j, prevRop in self.getKindOfOps(rewrites, ReplaceOp, i):
                 if (prevRop.index >= rop.index
                     and prevRop.lastIndex <= rop.lastIndex):
-                    rewrites[j] = None  # delete replace as it's a no-op.
+                    # delete replace as it's a no-op.
+                    rewrites[j] = None
                     continue
 
                 # throw exception unless disjoint or identical
@@ -1368,7 +1422,18 @@ class TokenRewriteStream(CommonTokenStream):
                             or prevRop.index > rop.lastIndex)
                 same = (prevRop.index == rop.index
                         and prevRop.lastIndex == rop.lastIndex)
-                if not disjoint and not same:
+
+                # Delete special case of replace (text==null):
+                # D.i-j.u D.x-y.v| boundaries overlapcombine to
+                # max(min)..max(right)
+                if prevRop.text is None and rop.text is None and not disjoint:
+                    # kill first delete
+                    rewrites[prevRop.instructionIndex] = None
+
+                    rop.index = min(prevRop.index, rop.index)
+                    rop.lastIndex = max(prevRop.lastIndex, rop.lastIndex)
+
+                elif not disjoint and not same:
                     raise ValueError(
                         "replace op boundaries of %s overlap with previous %s"
                         % (rop, prevRop))
@@ -1388,13 +1453,15 @@ class TokenRewriteStream(CommonTokenStream):
                     # whole token buffer so no lazy eval issue with any
                     # templates
                     iop.text = self.catOpText(iop.text, prevIop.text)
-                    rewrites[j] = None  # delete redundant prior insert
+                    # delete redundant prior insert
+                    rewrites[j] = None
 
             # look for replaces where iop.index is in range; error
             for j, rop in self.getKindOfOps(rewrites, ReplaceOp, i):
                 if iop.index == rop.index:
                     rop.text = self.catOpText(iop.text, rop.text)
-                    rewrites[i] = None  # delete current insert
+                    # delete current insert
+                    rewrites[i] = None
                     continue
 
                 if iop.index >= rop.index and iop.index <= rop.lastIndex:
@@ -1405,7 +1472,8 @@ class TokenRewriteStream(CommonTokenStream):
         m = {}
         for i, op in enumerate(rewrites):
             if op is None:
-                continue # ignore deleted ops
+                # ignore deleted ops
+                continue
 
             assert op.index not in m, "should only be one op per index"
             m[op.index] = op
@@ -1424,6 +1492,8 @@ class TokenRewriteStream(CommonTokenStream):
 
 
     def getKindOfOps(self, rewrites, kind, before=None):
+        """Get all operations before an index of a particular kind."""
+
         if before is None:
             before = len(rewrites)
         elif before > len(rewrites):

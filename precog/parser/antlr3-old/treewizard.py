@@ -320,12 +320,7 @@ class TreeWizard(object):
     """
 
     def __init__(self, adaptor=None, tokenNames=None, typeMap=None):
-        if adaptor is None:
-            self.adaptor = CommonTreeAdaptor()
-
-        else:
-            self.adaptor = adaptor
-
+        self.adaptor = adaptor
         if typeMap is None:
             self.tokenNameToTypeMap = computeTokenTypes(tokenNames)
 

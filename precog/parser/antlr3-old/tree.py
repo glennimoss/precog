@@ -1106,9 +1106,6 @@ class BaseTreeAdaptor(TreeAdaptor):
 
 
     def createFromToken(self, tokenType, fromToken, text=None):
-        if fromToken is None:
-            return self.createFromType(tokenType, text)
-
         assert isinstance(tokenType, int), type(tokenType).__name__
         assert isinstance(fromToken, Token), type(fromToken).__name__
         assert text is None or isinstance(text, str), type(text).__name__
@@ -1369,6 +1366,9 @@ class CommonTree(BaseTree):
 
         if self.getType() == INVALID_TOKEN_TYPE:
             return "<errornode>"
+
+        if not self.token.text:
+          return '<%s>' % ('EOF' if self.token.type == EOF else self.token.type)
 
         return self.token.text
 
@@ -1711,15 +1711,6 @@ class TreeNodeStream(IntStream):
         raise NotImplementedError
 
 
-    def reset(self):
-        """
-        Reset the tree node stream in such a way that it acts like
-        a freshly constructed stream.
-        """
-
-        raise NotImplementedError
-
-
     def toString(self, start, stop):
         """
         Return the text of all nodes from start to stop, inclusive.
@@ -1859,10 +1850,6 @@ class CommonTreeNodeStream(TreeNodeStream):
         self.calls = []
 
 
-    def __iter__(self):
-        return TreeIterator(self.root, self.adaptor)
-
-
     def fillBuffer(self):
         """Walk tree with depth-first-search and fill nodes buffer.
         Don't do DOWN, UP nodes if its a list (t is isNil).
@@ -1970,10 +1957,6 @@ class CommonTreeNodeStream(TreeNodeStream):
             return None
 
         return self.nodes[self.p - k]
-
-
-    def isEOF(self, obj):
-        return self.adaptor.getType(obj) == EOF
 
 
     def getTreeSource(self):
@@ -2218,9 +2201,7 @@ class TreeParser(BaseRecognizer):
 
     def getMissingSymbol(self, input, e, expectedTokenType, follow):
         tokenText = "<missing " + self.tokenNames[expectedTokenType] + ">"
-        adaptor = input.adaptor
-        return adaptor.createToken(
-            CommonToken(type=expectedTokenType, text=tokenText))
+        return CommonTree(CommonToken(type=expectedTokenType, text=tokenText))
 
 
     # precompiled regex used by inContext
@@ -2427,130 +2408,14 @@ class TreeVisitor(object):
             # if rewritten, walk children of new t
             t = pre_action(t)
 
-        idx = 0
-        while idx < self.adaptor.getChildCount(t):
+        for idx in range(self.adaptor.getChildCount(t)):
             child = self.adaptor.getChild(t, idx)
             self.visit(child, pre_action, post_action)
-            idx += 1
 
         if post_action is not None and not isNil:
             t = post_action(t)
 
         return t
-
-#############################################################################
-#
-# tree iterator
-#
-#############################################################################
-
-class TreeIterator(object):
-    """
-    Return a node stream from a doubly-linked tree whose nodes
-    know what child index they are.
-
-    Emit navigation nodes (DOWN, UP, and EOF) to let show tree structure.
-    """
-
-    def __init__(self, tree, adaptor=None):
-        if adaptor is None:
-            adaptor = CommonTreeAdaptor()
-
-        self.root = tree
-        self.adaptor = adaptor
-
-        self.first_time = True
-        self.tree = tree
-
-        # If we emit UP/DOWN nodes, we need to spit out multiple nodes per
-        # next() call.
-        self.nodes = []
-
-        # navigation nodes to return during walk and at end
-        self.down = adaptor.createFromType(DOWN, "DOWN")
-        self.up = adaptor.createFromType(UP, "UP")
-        self.eof = adaptor.createFromType(EOF, "EOF")
-
-
-    def reset(self):
-        self.first_time = True
-        self.tree = self.root
-        self.nodes = []
-
-
-    def __iter__(self):
-        return self
-
-
-    def has_next(self):
-        if self.first_time:
-            return self.root is not None
-
-        if len(self.nodes) > 0:
-            return True
-
-        if self.tree is None:
-            return False
-
-        if self.adaptor.getChildCount(self.tree) > 0:
-            return True
-
-        # back at root?
-        return self.adaptor.getParent(self.tree) is not None
-
-
-    def __next__(self):
-        if not self.has_next():
-            raise StopIteration
-
-        if self.first_time:
-            # initial condition
-            self.first_time = False
-            if self.adaptor.getChildCount(self.tree) == 0:
-                # single node tree (special)
-                self.nodes.append(self.eof)
-                return self.tree
-
-            return self.tree
-
-        # if any queued up, use those first
-        if len(self.nodes) > 0:
-            return self.nodes.pop(0)
-
-        # no nodes left?
-        if self.tree is None:
-            return self.eof
-
-        # next node will be child 0 if any children
-        if self.adaptor.getChildCount(self.tree) > 0:
-            self.tree = self.adaptor.getChild(self.tree, 0)
-            # real node is next after DOWN
-            self.nodes.append(self.tree)
-            return self.down
-
-        # if no children, look for next sibling of tree or ancestor
-        parent = self.adaptor.getParent(self.tree)
-        # while we're out of siblings, keep popping back up towards root
-        while (parent is not None
-               and self.adaptor.getChildIndex(self.tree)+1 >= self.adaptor.getChildCount(parent)):
-            # we're moving back up
-            self.nodes.append(self.up)
-            self.tree = parent
-            parent = self.adaptor.getParent(self.tree)
-
-        # no nodes left?
-        if parent is None:
-            self.tree = None # back at root? nothing left then
-            self.nodes.append(self.eof) # add to queue, might have UP nodes in there
-            return self.nodes.pop(0)
-
-        # must have found a node with an unvisited sibling
-        # move to it and return it
-        nextSiblingIndex = self.adaptor.getChildIndex(self.tree) + 1
-        self.tree = self.adaptor.getChild(parent, nextSiblingIndex)
-        self.nodes.append(self.tree) # add to queue, might have UP nodes in there
-        return self.nodes.pop(0)
-
 
 
 #############################################################################
@@ -2790,11 +2655,7 @@ class RewriteRuleSubtreeStream(RewriteRuleElementStream):
 
         # test size above then fetch
         el = self._next()
-        while self.adaptor.isNil(el) and self.adaptor.getChildCount(el) == 1:
-            el = self.adaptor.getChild(el, 0)
-
-        # dup just the root (want node here)
-        return self.adaptor.dupNode(el)
+        return el
 
 
     def dup(self, el):
@@ -2841,3 +2702,4 @@ class TreeRuleReturnScope(RuleReturnScope):
 
     def getTree(self):
         return self.tree
+

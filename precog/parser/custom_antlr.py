@@ -1,7 +1,20 @@
-from antlr3 import CommonTokenStream
-from antlr3.constants import DEFAULT_CHANNEL
+from .antlr3.streams import (CommonTokenStream, StringStream, FileStream,
+  InputStream)
+from .antlr3.constants import DEFAULT_CHANNEL, EOF
 
-class MultiChannelTokenStream (CommonTokenStream):
+class IterableTokenStream(CommonTokenStream):
+
+  def __iter__ (self):
+    return self
+
+  def __next__ (self):
+    c = self.LT(1)
+    if c.type == EOF:
+      raise StopIteration
+    self.consume()
+    return c
+
+class MultiChannelTokenStream (IterableTokenStream):
 
   def __init__(self, tokenSource=None, channel=DEFAULT_CHANNEL):
     super().__init__(tokenSource, channel)
@@ -44,3 +57,61 @@ class MultiChannelTokenStream (CommonTokenStream):
         i -= 1
 
     return i
+
+class InsensitiveStringStream (StringStream):
+
+  def LA(self, i):
+    if i == 0:
+      return 0 # undefined
+
+    if i < 0:
+      i += 1 # e.g., translate LA(-1) to use offset i=0; then data[p+0-1]
+
+    try:
+      return ord(chr(self.data[self.p+i-1]).lower())
+    except IndexError:
+      return EOF
+
+
+
+  def LT(self, i):
+    if i == 0:
+      return 0 # undefined
+
+    if i < 0:
+      i += 1 # e.g., translate LA(-1) to use offset i=0; then data[p+0-1]
+
+    try:
+      return self.strdata[self.p+i-1].lower()
+    except IndexError:
+      return EOF
+
+class InsensitiveFileStream (FileStream, InsensitiveStringStream):
+  pass
+
+class InsensitiveInputStream (InputStream, InsensitiveStringStream):
+  pass
+
+StringStream = InsensitiveStringStream
+FileStream = InsensitiveFileStream
+InputStream = InsensitiveInputStream
+
+class NamedConstant (int):
+  """Augment constant numbers with printable names"""
+  def __new__ (self, id, text):
+    return super().__new__(self, id)
+
+  def __init__ (self, id, text):
+    self._text = text
+
+  def __str__ (self):
+    return self._text
+
+  def __repr__ (self):
+    return "<{} {}>".format(self._text, int(self))
+
+  @staticmethod
+  def name (vars):
+    for name, value in vars.items():
+      if isinstance(value, int) and name.isupper():
+        vars[name] = NamedConstant(value, name)

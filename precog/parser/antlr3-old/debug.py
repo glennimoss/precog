@@ -79,10 +79,11 @@ class DebugParser(Parser):
 
 
     def reportError(self, exc):
-        Parser.reportError(self, exc)
-
         if isinstance(exc, RecognitionException):
             self._dbg.recognitionException(exc)
+
+        else:
+            traceback.print_exc(exc)
 
 
 class DebugTokenStream(TokenStream):
@@ -448,7 +449,7 @@ class DebugEventListener(object):
         pass
 
 
-    def enterDecision(self, decisionNumber, couldBacktrack):
+    def enterDecision(self, decisionNumber):
         """Every decision, fixed k or arbitrary, has an enter/exit event
         so that a GUI can easily track what LT/consume events are
         associated with prediction.  You will see a single enter/exit
@@ -939,9 +940,8 @@ class DebugEventSocketProxy(DebugEventListener):
         self.transmit("exitSubRule\t%d" % decisionNumber)
 
 
-    def enterDecision(self, decisionNumber, couldBacktrack):
-        self.transmit(
-            "enterDecision\t%d\t%d" % (decisionNumber, couldBacktrack))
+    def enterDecision(self, decisionNumber):
+        self.transmit("enterDecision\t%d" % decisionNumber)
 
 
     def exitDecision(self, decisionNumber):
