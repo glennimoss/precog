@@ -1,5 +1,6 @@
 from precog.identifier import OracleIdentifier
 from precog.util import InsensitiveDict
+from precog.errors import OracleError
 
 try:
   import cx_Oracle
@@ -25,14 +26,16 @@ def unquote (d):
       d[k] = d[k].strip('"')
 
 def query (*args, **kvargs):
-  unquote(kvargs)
-  _curs.execute(*args, **kvargs)
+  execute(*args, **kvargs)
   return [InsensitiveDict(
             zip((column[0] for column in _curs.description), row)
           ) for row in _curs]
 
 def execute (*args, **kvargs):
   unquote(kvargs)
-  _curs.execute(*args, **kvargs)
+  try:
+    _curs.execute(*args, **kvargs)
+  except cx_Oracle.DatabaseError as e:
+    raise OracleError("{}SQL: {}".format(e, args[0])) from e
 
   return _curs.rowcount

@@ -1,6 +1,9 @@
 class PrecogError (Exception):
   pass
 
+class OracleError (PrecogError):
+  pass
+
 class ObjectError (PrecogError):
 
   def __init__ (self, obj):
@@ -39,6 +42,16 @@ class DataTypeConflict (TypeConflict):
         ", ".join("{} = {} but found {}"
                     .format(prop, self.obj.props[prop], found)
                   for prop, found in self.diff_props.items()))
+
+class TableConflict (ObjectError):
+
+  def __init__ (self, obj, tablename):
+    super().__init__(obj)
+    self.tablename = tablename
+
+  def __str__ (self):
+    return "{} does not belong to expected table [{}]".format(
+        super().__str__(), self.tablename)
 
 class OracleNameError (PrecogError):
   pass

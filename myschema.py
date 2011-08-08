@@ -1,21 +1,8 @@
 from precog import *
+from precog.parser import sqlLexer, sqlParser
 
 
-schema = Schema('precog')
-
-schema.add(Table('foo',
-      [ Column('id', data_type='number')
-      , Column('newcol', data_type='number', data_precision=3)
-      , Column('colly', data_type='number', data_precision=3, data_scale=7)
-      , Column('colbot', data_type='number', data_scale=2)
-      , Column('text', data_type='varchar2', data_length=256) ])
-      )
-
-schema.add(Table('bar',
-      [ Column('id', data_type='number')
-      , Column('foo_id', data_type='number')
-      , Column('body', data_type='varchar2', data_length=32) ])
-      )
+schema = Schema.fromFile('precog', 'test.sql')
 
 def diffs():
   dbschema = Schema.fromDb('precog')

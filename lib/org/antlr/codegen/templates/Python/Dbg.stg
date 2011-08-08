@@ -307,7 +307,7 @@ try:
     self.isCyclicDecision = True
     <super.dfaDecision(...)>
 
-except NoViableAltException, nvae:
+except NoViableAltException as nvae:
     self._dbg.recognitionException(nvae)
     raise
 

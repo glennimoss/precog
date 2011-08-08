@@ -3,18 +3,18 @@ Oracle SQL parser.
 
 Originally based on:
 | Oracle PL/SQL grammar built with ANTLR v3.2 and v3.1.3. I only vouch that it works for v3.2, though.
-| 
+|
 | Author: Patrick Higgins
 | License: GNU Lesser General Public License, version 2.1 or (at your option) any later version.
-| 
+|
 | I have used a swallow_to_semi trick to avoid parsing SQL statements and other statements that were not of value to me.
 | The idea was that a separate parser for SQL would be created (I believe this is what Oracle itself does).
-| 
+|
 | Nearly all of the PL/SQL language from 11g is in this grammar, though. It works on all files in a fairly large code
 | base.
-| 
+|
 | This has some limited support for parsing SQL*Plus files, which turns out to be pretty hard to work into ANTLR.
-| 
+|
 | It works for my usage, but I think doing it properly would mean writing a Java class to parse the SQL*Plus language
 | (which is pretty simple and shouldn't need ANTLR) and another adapter for ANTLR which enables tracking back to the
 | original source line numbers. This PL/SQL parser might be invoked many times for each SQL*Plus file.
@@ -26,10 +26,28 @@ options {
   language=Python;
 }
 
+scope g { schema }
+
 @lexer::header {
-  from .custom_antlr import NamedConstant, FileStream
+  from antlr3.ext import NamedConstant, FileStream
+  from . import util
 
   NL_CHANNEL = DEFAULT_CHANNEL + 1
+}
+@parser::header {
+  from antlr3.ext import NamedConstant, FileStream
+  from . import util
+  from precog.identifier import OracleFQN
+  from precog.objects import *
+  from precog.util import InsensitiveDict
+
+  NL_CHANNEL = DEFAULT_CHANNEL + 1
+}
+@lexer::init {
+  self.aloneOnLine = util.aloneOnLine(lambda p: self.input.LT(p))
+}
+@parser::init {
+  self._aloneOnLine = util.aloneOnLine(lambda p: self.input.LT(p).text)
 }
 @lexer::members {
   # needed for things like BETWEEN 1..2 where 1. would be treated as a literal
@@ -38,88 +56,187 @@ options {
       while self.input.LA(i) >= '0' and self.input.LA(i) <= '9':
           i += 1
       return self.input.LA(i) == '.' and self.input.LA(i+1) != '.'
-
-  def aloneOnLine (self, dir=None):
-    if not dir:
-      return self.aloneOnLine(-1) and self.aloneOnLine(1)
-
-    # A terminator can only occur on a line by itself, possibly with whitespace
-    p = 1 if dir == 1 else 0
-    c = 0
-    while c != EOF:
-      p += dir
-      c = self.input.LT(p)
-      if c == '\n':
-        return True
-      if not (c == ' ' or c == '\t'):
-        return False
-
-    # EOF is as good as a line terminator
-    return True
+}
+@parser::members {
+  def aloneOnLine (self):
+    self.input.add(NL_CHANNEL)
+    ret = self._aloneOnLine()
+    self.input.drop(NL_CHANNEL)
+    return ret
 }
 @lexer::main {
   NamedConstant.name(locals())
 
   def main(argv):
-      from precog import reserved
+    from precog import reserved
 
-      from .custom_antlr import MultiChannelTokenStream
-      inStream = FileStream(argv[1])
-      lexer = sqlLexer(inStream)
-      tokenStream = MultiChannelTokenStream(lexer)
-      #tokenStream.add(NL_CHANNEL, HIDDEN)
-      sql = set()
-      plsql = set()
-      for t in tokenStream:
-        if t.type == ID:
-          text = t.text.upper()
-
-          if text in reserved.words:
-            sql.add(text)
-          if text in reserved.plsql:
-            plsql.add(text)
-
-      print("Reserved in both:")
-      print(*sorted(sql.intersection(plsql)), sep="\n")
-      print("Reserved only in SQL:")
-      print(*sorted(sql - plsql), sep="\n")
-      print("Reserved only in PL/SQL:")
-      print(*sorted(plsql - sql), sep="\n")
+    #from antlr3.ext import MultiChannelTokenStream
+    inStream = FileStream(argv[1])
+    lexer = sqlLexer(inStream)
+    #tokenStream = MultiChannelTokenStream(lexer)
+    #tokenStream.add(NL_CHANNEL, HIDDEN)
+    tokenStream = CommonTokenStream(lexer)
+    for t in tokenStream:
+      print(t)
 }
-@main {
+@parser::main {
+  schema = Schema('fileschema')
+
   def main(argv):
-      from .custom_antlr import MultiChannelTokenStream
-      from sqlLexer import sqlLexer
-      inStream = FileStream(argv[1])
-      lexer = sqlLexer(inStream)
-      tokenStream = MultiChannelTokenStream(lexer)
-      parser = sqlParser(tokenStream)
-      result = parser.prog()
-      if result is not None:
-          if hasattr(result, 'tree'):
-              if result.tree is not None:
-                  print(result.tree.toStringTree())
-          else:
-              print(repr(result))
+    global schema
+    from antlr3.ext import MultiChannelTokenStream
+    from .sqlLexer import sqlLexer
+    inStream = FileStream(argv[1])
+    lexer = sqlLexer(inStream)
+    tokenStream = MultiChannelTokenStream(lexer)
+    parser = sqlParser(tokenStream)
+    parser.sqlplus_file(schema)
 }
 
-sqlplus_file
-    : ( sql_stmt | plsql_stmt )* EOF
+sqlplus_file[schema]
+scope g;
+@init { $g::schema = schema }
+    : ( stmt=sql_stmt { $g::schema.add(stmt) }
+      | stmt=sqlplus_stmt { print($stmt.mystmt) }
+      /*| stmt=plsql_stmt*/
+      )* EOF
     ;
-    
 
-sql_stmt
-  : . SEMI
+
+plsql_stmt returns [mystmt]
+  : type=( DECLARE
+    | BEGIN
+    | CREATE FUNCTION { $type = 'creating that function' }
+    ) content+=~(TERMINATOR)+ TERMINATOR { $mystmt = repr($type) + '[' + ']['.join(x.text for x in $content) + ']' }
   ;
 
-plsql_stmt
-  : .+ TERMINATOR
+sql_stmt returns [stmt]
+  : ( stmt_=create_table { $stmt = $stmt_.obj }
+    | stmt_=create_index { $stmt = $stmt_.obj }
+    ) SEMI
+  ;
+
+sqlplus_stmt returns [mystmt]
+  : TERMINATOR { $mystmt = 'Repeat me!' }
+  | kQUIT  { $mystmt = "Quittin' time!" }
   ;
 
 /*
 show_errors
     : kSHOW kERRORS SEMI?
     ;
+    */
+
+identifier returns [ident]
+  : first=ID ( DOT second=ID ( DOT third=ID )? )?
+    {
+      schema = $first.text if $second else None
+      obj = $second.text if $second else $first.text
+      part = $third.text if $first and $second else None
+      $ident = OracleFQN(schema, obj, part)
+    }
+  ;
+create_table returns [obj]
+@init {
+  columns = []
+  props = InsensitiveDict()
+}
+@after { obj = Table($ident.ident, columns, **props) }
+  : CREATE TABLE ident=identifier
+    LPAREN
+      c=column_specification { columns.append($c.column) }
+      (COMMA c=column_specification { columns.append($c.column) } )*
+    RPAREN
+    (tablespace_clause { props.update($tablespace_clause.props) })?
+  ;
+
+column_specification returns [column]
+@after { column = Column($i.text, **$c.props) }
+  : i=ID c=column_data_type
+    ( DEFAULT e=expression { $c.props['data_default'] = $e.text } )?
+    ( NOT? NULL { $c.props['nullable'] = 'N' if $NOT else 'Y' } )?
+  ;
+
+column_data_type returns [props]
+@after { $props = $type_props.props }
+  :
+  ( type_props=numeric_data_type
+  | type_props=string_data_type
+  | type_props=other_data_type
+  | type_props=user_data_type
+  )
+  ;
+
+numeric_data_type returns [props]
+@init { props = InsensitiveDict() }
+  : data_type=
+  (NUMBER
+  | FLOAT
+  ) { props['data_type'] = $data_type.text }
+  (p=numeric_data_type_precision { props.update($p.props) })?
+  ;
+
+numeric_data_type_precision returns [props]
+@init { $props = InsensitiveDict() }
+  : LPAREN ( precision=INTEGER
+           (COMMA scale=INTEGER { props['data_scale'] = int($scale.text) })?
+             { props['data_precision'] = int($precision.text) }
+           | ASTERISK COMMA scale=INTEGER
+             { props['data_scale'] = int($scale.text) } )
+    RPAREN
+  ;
+
+string_data_type returns [props]
+@init { $props = InsensitiveDict() }
+  : type=VARCHAR2
+    ( LPAREN INTEGER RPAREN { $props['data_length'] = int($INTEGER.text) })?
+    { $props['data_type'] = $type.text }
+  ;
+
+other_data_type returns [props]
+@init { $props = InsensitiveDict() }
+  : d=DATE { $props['data_type'] = $d.text }
+  ;
+
+user_data_type returns [props]
+  : i=identifier { $props = InsensitiveDict([('data_type', str($i.ident))]) }
+  ;
+
+create_index returns [obj]
+@init {
+  columns = []
+  props = InsensitiveDict()
+}
+@after { obj = Index($index_name.ident, columns, **props) }
+  : CREATE ( UNIQUE /*| BITMAP*/ )? INDEX index_name=identifier
+    ON table_name=identifier /*table_alias=ID?*/
+    LPAREN
+      c=ID {
+        columns.append($g::schema.find(
+          OracleFQN($table_name.ident.schema, $table_name.ident.obj, $c.text),
+          Column))
+        }
+      (COMMA c=ID {
+        columns.append($g::schema.find(
+          OracleFQN($table_name.ident.schema, $table_name.ident.obj, $c.text),
+          Column))
+        }
+      )*
+    RPAREN
+    (tablespace_clause { props.update($tablespace_clause.props) })?
+  ;
+
+tablespace_clause returns [props]
+@init { props = InsensitiveDict() }
+  : kTABLESPACE ID { props['tablespace_name'] = $ID.text }
+  ;
+
+expression
+  : SYSDATE
+  ;
+
+/*
+
 
 create_object
     : create_package
@@ -185,7 +302,7 @@ type_definition :
 subtype_definition :
         SUBTYPE ID IS datatype ( NOT NULL )?
     ;
-    
+
 record_type_definition :
 	RECORD LPAREN record_field_declaration ( COMMA record_field_declaration )* RPAREN
     ;
@@ -249,8 +366,8 @@ procedure_definition :
 	procedure_heading
 	( IS | AS ) declare_section? body
 	;
-	
-body 	:	
+
+body 	:
 	BEGIN statement SEMI ( statement SEMI | pragma SEMI )*
 	( EXCEPTION exception_handler+ )? END ID?
 	;
@@ -259,7 +376,7 @@ exception_handler
 	:	WHEN ( qual_id ( OR qual_id )* | OTHERS )
 		THEN ( statement SEMI )+
 	;
-	
+
 statement :
     label*
     ( assign_or_call_statement
@@ -334,11 +451,11 @@ exit_statement :
 fetch_statement :
         FETCH qual_id ( into_clause | bulk_collect_into_clause ( LIMIT numeric_expression )? )
     ;
-    
+
 into_clause :
         INTO lvalue ( COMMA lvalue )*
     ;
-    
+
 bulk_collect_into_clause :
         BULK COLLECT INTO lvalue ( COMMA lvalue )*
     ;
@@ -361,9 +478,9 @@ for_loop_statement :
 
 forall_statement :
         FORALL ID IN bounds_clause sql_statement ( kSAVE kEXCEPTIONS )?
-    ; 
+    ;
 
-bounds_clause 
+bounds_clause
     : numeric_expression DOUBLEDOT numeric_expression
     | kINDICES kOF atom ( BETWEEN numeric_expression AND numeric_expression )?
     | kVALUES kOF atom
@@ -540,7 +657,7 @@ atom
     | NULL
     | LPAREN expression RPAREN
     ;
-    
+
 variable_or_function_call
     : call ( DOT call )* ( DOT delete_call )?
     ;
@@ -659,6 +776,18 @@ kVALUES : {self.input.LT(1).text.lower() == "values"}? ID;
 
 */
 
+kCLOB : {self.input.LT(1).text.lower() == 'clob'}? ID;
+kTABLESPACE : {self.input.LT(1).text.lower() == 'tablespace'}? ID;
+kQUIT : {self.input.LT(1).text.lower() == 'quit' and self.aloneOnLine()}? ID;
+
+/*****
+ * PL/SQL Reserved words
+ *****/
+kWHEN	:	{self.input.LT(1).text.lower() == 'when'}? ID;
+
+/*****
+ * Keywords
+ *****/
 ADD : 'add' ;
 ALTER : 'alter' ;
 AND	:	'and'	;
@@ -700,6 +829,7 @@ EXIT	:	'exit';
 EXTERNAL:	'external';
 FALSE	:	'false';
 FETCH	:	'fetch';
+FLOAT : 'float';
 FOR : 'for' ;
 FORALL : 'forall' ;
 FROM : 'from' ;
@@ -757,6 +887,7 @@ THEN : 'then' ;
 TRANSACTION	:	'transaction';
 TRIGGER : 'trigger' ;
 TRUE	:	'true';
+UNIQUE : 'unique';
 UPDATE	:	'update';
 UPDATING:	'updating';
 USING:	'using'	;
@@ -765,7 +896,6 @@ VARCHAR : 'varchar' ;
 VARCHAR2 : 'varchar2' ;
 VARRAY	:	'varray'	;
 VARYING	:	'varying'	;
-WHEN	:	'when'	;
 WHERE : 'where' ;
 WHILE	:	'while';
 WITH : 'with' ;
@@ -881,7 +1011,7 @@ NUMBER_VALUE
 	;
 fragment
 N
-	: '0' .. '9' ( '0' .. '9' )*
+	: ('0'..'9')+
 	;
 fragment
 DOUBLEQUOTED_STRING
@@ -894,7 +1024,7 @@ SL_COMMENT
 	;
 ML_COMMENT
 	:	'/*' ( options {greedy=false;} : . )* '*/' {$channel=HIDDEN;}
-	; 
+	;
 TERMINATOR
   : { self.aloneOnLine() }? SLASH
   ;

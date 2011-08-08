@@ -1,17 +1,18 @@
 from precog import db
 from precog.errors import *
 from precog.identifier import *
+from precog.log import logging
 from precog.util import InsensitiveDict
 
 class OracleObject (object):
 
-  def __init__ (self, name, deferred=False, **kvargs):
+  def __init__ (self, name, deferred=False, **props):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(obj=name)
     self.name = name
     self.deferred = deferred
     self.props = InsensitiveDict()
-    for prop, value in kvargs.items():
+    for prop, value in props.items():
       self.props[prop] = value
     self.type = type(self).__name__.upper()
 
@@ -23,6 +24,9 @@ class OracleObject (object):
       return False
 
     if self.name != other.name:
+      return False
+
+    if self.props != other.props:
       return False
 
     return True
@@ -68,8 +72,8 @@ class OracleObject (object):
 
 class Table (OracleObject):
 
-  def __init__ (self, name, columns=[], indexes=[], **kvargs):
-    super().__init__(name, **kvargs)
+  def __init__ (self, name, columns=[], indexes=[], **props):
+    super().__init__(name, **props)
     self.columns = []
     self.indexes = []
     for c in columns:
@@ -138,6 +142,9 @@ class Table (OracleObject):
 
     return diffs
 
+  def dependencies (self):
+    return []
+
   @classmethod
   def fromDb (class_, name):
     rs = db.query(""" SELECT tablespace_name
@@ -153,13 +160,10 @@ class Table (OracleObject):
 
 class Column (OracleObject):
 
-  def __init__ (self, name, **kvargs):
-    table = None
-    if 'table' in kvargs:
-      table = kvargs['table']
-      del kvargs['table']
-
-    super().__init__(OracleFQN(part=name), **kvargs)
+  def __init__ (self, name, table=None, **props):
+    if not isinstance(name, OracleFQN):
+      name = OracleFQN(part=name)
+    super().__init__(name, **props)
 
     if table:
       self.table = table
@@ -183,15 +187,6 @@ class Column (OracleObject):
         ', '.join(prop.lower() + '=' + repr(val)
           for prop, val in self.props.items()) + ')')
 
-  def __eq__ (self, other):
-    if not super().__eq__(other):
-      return False
-
-    if self.props != other.props:
-      return False
-
-    return True
-
   def satisfy (self, other):
     if self.deferred:
       self.props = other.props
@@ -200,9 +195,10 @@ class Column (OracleObject):
       self.deferred = False
 
   def sql (self, fq=False):
-    name = self.name.part
-    if fq:
-      name = self.name
+    parts = []
+    name = self.name if fq else self.name.part
+    parts.append(name)
+
     data_type = self.props['data_type']
     if data_type in ('NUMBER', 'FLOAT'):
       if self.props['data_precision'] or self.props['data_scale']:
@@ -213,8 +209,12 @@ class Column (OracleObject):
         data_type += "({}{})".format(precision, scale)
     elif 'data_length' in self.props:
       data_type += "({})".format(self.props['data_length'])
+    parts.append(data_type)
 
-    return "{} {}".format(name, data_type)
+    if 'data_default' in self.props:
+      parts.append("DEFAULT {}".format(self.props['data_default']))
+
+    return " ".join(parts)
 
   def diff (self, other):
     diffs = []
@@ -228,10 +228,16 @@ class Column (OracleObject):
         if expected != other.props[prop])
 
     if propDiff:
+      for prop in propDiff:
+        logging.debug("Prop: {} expected: {}, found {}".format(prop,
+          repr(self.props[prop]), repr(other.props[prop])))
       diffs.append("ALTER TABLE {} MODIFY ( {} )".format(
         other.table.name, self.sql()))
 
     return diffs
+
+  def dependencies (self):
+    return [self.table]
 
   @classmethod
   def fromDb (class_, name):
@@ -240,6 +246,7 @@ class Column (OracleObject):
                              , data_length
                              , data_precision
                              , data_scale
+                             , data_default
                         FROM all_tab_cols
                         WHERE owner = :o
                           AND table_name = :t
@@ -258,7 +265,40 @@ class Constraint (OracleObject):
 
 class Index (OracleObject):
   """ ALTER INDEX {} REBUILD TABLESPACE {} """
-  pass
+
+  def __init__ (self, name, columns=[], **props):
+    super().__init__(name, **props)
+
+    self.columns = columns
+
+  @property
+  def columns (self):
+    return self._columns
+
+  @columns.setter
+  def columns (self, value):
+    if value:
+      tablename = value[0].name.obj
+
+      for column in value:
+        if column.name.obj != tablename:
+          raise TableConflict(column, tablename)
+
+      self._tablename = tablename
+
+    self._columns = value
+
+  def sql (self, fq=True):
+    name = self.name.obj
+    if fq:
+      name = self.name
+    return "CREATE {}INDEX {} ON {} ( {} ){}".format(
+        'UNIQUE ' if self.props['uniqueness'] == 'UNIQUE' else '',
+        name,
+        self._tablename,
+        ', '.join(c.name.part for c in self.columns),
+        " TABLESPACE {}".format(self.props['tablespace_name'])
+          if self.props['tablespace_name'] else '')
 
 class Sequence (OracleObject):
   pass
@@ -351,6 +391,9 @@ class Schema (OracleObject):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(self.name.schema, name)
 
+    if not name.schema:
+      name = OracleFQN(self.name.schema, name.obj, name.part)
+
     if obj_type in self.objects and name in self.objects[obj_type]:
       return self.objects[obj_type][name]
 
@@ -359,7 +402,6 @@ class Schema (OracleObject):
       self.add(obj)
       self.deferred[name] = obj
       return obj
-
 
     return None
 
@@ -427,6 +469,17 @@ class Schema (OracleObject):
 
       constraint = Constraint(conName, table)
       schema.add(constraint)
+
+    return schema
+
+  @classmethod
+  def fromFile (class_, schemaName, filename):
+    schema = class_(schemaName)
+
+    from precog import parser
+
+    sqlParser = parser.fileParser(filename)
+    sqlParser.sqlplus_file(schema)
 
     return schema
 

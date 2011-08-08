@@ -1,6 +1,6 @@
-from .antlr3.streams import (CommonTokenStream, StringStream, FileStream,
+from antlr3.streams import (CommonTokenStream, StringStream, FileStream,
   InputStream)
-from .antlr3.constants import DEFAULT_CHANNEL, EOF
+from antlr3.constants import DEFAULT_CHANNEL, EOF
 
 class IterableTokenStream(CommonTokenStream):
 
@@ -26,9 +26,10 @@ class MultiChannelTokenStream (IterableTokenStream):
     # there may be tokens we wanted to see between the last on-channel token and
     # the ones we're now looking for. First, go back, then add the new channel
     # and move to the next on-channel token.
-    self.p = self.skipOffTokenChannelsReverse(self.p - 1)
+    # Maybe we don't want to do that... :P
+    #self.p = self.skipOffTokenChannelsReverse(self.p - 1)
     self._channels.update(channels)
-    self.consume()
+    #self.consume()
 
   def drop (self, *channels):
     self._channels.difference_update(channels)
