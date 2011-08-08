@@ -1,4 +1,5 @@
 from precog import db
+from precog.diff import Diff, order_diffs
 from precog.errors import *
 from precog.identifier import *
 from precog.log import logging
@@ -11,10 +12,14 @@ class OracleObject (object):
       name = OracleFQN(obj=name)
     self.name = name
     self.deferred = deferred
-    self.props = InsensitiveDict()
-    for prop, value in props.items():
-      self.props[prop] = value
+    self.props = InsensitiveDict(props)
+    #for prop, value in props.items():
+      #self.props[prop] = value
     self.type = type(self).__name__.upper()
+
+  def __repr__ (self):
+    return "{}({!r}, deferred={!r}, **{!r})".format(type(self).__name__,
+        self.name, self.deferred, self.props)
 
   def __str__ (self):
     return self.sql()
@@ -31,13 +36,29 @@ class OracleObject (object):
 
     return True
 
+  def __hash__ (self):
+    return hash((type(self), self.name))
+
+  def sql (self):
+    return "-- Placeholder for {} {}".format(type(self).__name__, self.name)
+
+  def satisfy (self, other):
+    if self.deferred:
+      self.props = other.props
+
+      self.deferred = False
+
   def diff (self, other):
+    """
+    Calculate differences between self, which is the desired definition, and
+    other, which is the current database state.
+    """
     if self != other:
-      return [self.sql()]
+      return [Diff(self.sql(), self.dependencies(), self)]
 
     return []
 
-  def diffSubobjects (self, target_objs, current_objs):
+  def diff_subobjects (self, target_objs, current_objs):
     diffs = []
 
     if not isinstance(target_objs, dict):
@@ -53,42 +74,34 @@ class OracleObject (object):
 
     if addobjs:
       diffs.extend(
-          self.addSubobjects(target_objs[addobj] for addobj in addobjs))
+          self.add_subobjects(target_objs[addobj] for addobj in addobjs))
     if dropobjs:
       diffs.extend(
-          self.dropSubobjects(current_objs[dropobj] for dropobj in dropobjs))
+          self.drop_subobjects(current_objs[dropobj] for dropobj in dropobjs))
 
-    for objDiffs in (target_obj.diff(current_objs[target_obj.name])
+    for obj_diffs in (target_obj.diff(current_objs[target_obj.name])
         for target_obj in target_objs.values()
         if target_obj.name in current_objs):
-      diffs.extend(objDiffs)
+      diffs.extend(obj_diffs)
 
     return diffs
 
+  def dependencies (self):
+    return set()
 
   @classmethod
-  def fromDb (class_, name):
+  def from_db (class_, name):
     return class_(name, deferred=True)
 
-class Table (OracleObject):
+class HasColumns (object):
+  """ Mixin for objects that have the columns property """
 
-  def __init__ (self, name, columns=[], indexes=[], **props):
+  def __init__ (self, name, columns=set(), **props):
     super().__init__(name, **props)
-    self.columns = []
-    self.indexes = []
-    for c in columns:
-      c.table = self
-      self.columns.append(c)
-    for i in indexes:
-      i.table = self
-      self.indexes.append(i)
 
-  def __repr__ (self):
-    return ("Table('" + self.name.obj + "', [" +
-        ', '.join(repr(c) for c in self.columns) + ']' +
-        (', indexes=[' + ', '.join(repr(i) for i in self.indexes) + ']'
-          if self.indexes else '') +
-        ')')
+    self.columns = columns
+
+  __hash__ = OracleObject.__hash__
 
   def __eq__ (self, other):
     if not super().__eq__(other):
@@ -99,6 +112,84 @@ class Table (OracleObject):
 
     return mycols == othercols
 
+  @property
+  def columns (self):
+    return self._columns
+
+  @columns.setter
+  def columns (self, value):
+    if not isinstance(value, set):
+      raise TypeError("expected set: {}".format(value))
+    self._columns = value
+
+  def satisfy (self, other):
+    if self.deferred:
+      super().satisfy(other)
+      self.columns = other.columns
+
+  def dependencies (self):
+    return super().dependencies() | self.columns
+
+class HasTable (object):
+  """ Mixin for objects that have the table property """
+
+  def __init__ (self, name, table=None, **props):
+    super().__init__(name, **props)
+
+    self.table = table
+
+  __hash__ = OracleObject.__hash__
+
+  def __eq__ (self, other):
+    if not super().__eq__(other):
+      return False
+    return self.table == other.table
+
+  def satisfy (self, other):
+    if self.deferred:
+      super().satisfy(other)
+      self.table = other.table
+
+  def dependencies (self):
+    return super().dependencies() | {self.table}
+
+
+class Table (HasColumns, OracleObject):
+
+  def __init__ (self, name, indexes=set(), **props):
+    super().__init__(name, **props)
+    self.indexes = indexes
+
+  @HasColumns.columns.setter
+  def columns (self, value):
+    if not isinstance(value, set):
+      raise TypeError("expected set: {}".format(value))
+    for column in value:
+      column.table = self
+
+    self._columns = value
+
+  @property
+  def indexes (self):
+    return self._indexes
+
+  @indexes.setter
+  def indexes (self, value):
+    for index in value:
+      index.table = self
+
+    self._indexes = value
+
+  def __repr__ (self):
+    return ("Table('" + self.name.obj + "', [" +
+        ', '.join(repr(c) for c in self.columns) + ']' +
+        (', indexes=[' + ', '.join(repr(i) for i in self.indexes) + ']'
+          if self.indexes else '') +
+        ')')
+
+  def dependencies (self):
+    # a Table doesn't depend on its columns
+    return set()
 
   def sql (self, fq=True):
     name = self.name.obj
@@ -109,44 +200,35 @@ class Table (OracleObject):
         " TABLESPACE {}".format(self.props['tablespace_name'])
           if self.props['tablespace_name'] else '')
 
-  def addSubobjects (self, columns):
-    return ["ALTER TABLE {} ADD ( {} )".format(self.name,
-          ', '.join(column.sql() for column in columns))]
+  def add_subobjects (self, columns):
+    return [Diff("ALTER TABLE {} ADD ( {} )".format(self.name, column.sql()),
+      self, column) for column in columns]
 
-  def dropSubobjects (self, columns):
-    return ["ALTER TABLE {} DROP ( {} )".format(self.name,
-        ', '.join(column.name.part for column in columns))]
-
-  def satisfy (self, other):
-    if self.deferred:
-      self.columns = other.columns
-
-      self.deferred = False
+  def drop_subobjects (self, columns):
+    return [Diff("ALTER TABLE {} DROP ( {} )".format(
+      self.name, column.name.part), {self, column}) for column in columns]
 
   def diff (self, other):
     diffs = []
 
     if self.name.obj != other.name.obj:
-      diffs.append("ALTER TABLE {} RENAME TO {}"
-          .format(other.name, self.name.obj))
+      diffs.append(Diff("ALTER TABLE {} RENAME TO {}"
+          .format(other.name, self.name.obj), other, self))
 
     if (self.props['tablespace_name'] and
         self.props['tablespace_name'] != other.props['tablespace_name']):
-      diffs.append("ALTER TABLE {} MOVE TABLESPACE {}"
-          .format(other.name, self.props['tablespace_name']))
+      diffs.append(Diff("ALTER TABLE {} MOVE TABLESPACE {}"
+          .format(other.name, self.props['tablespace_name']), other, self))
 
       for i in other.indexes:
-        diffs.append("ALTER INDEX {} REBUILD".format(i.name))
+        diffs.append(Diff("ALTER INDEX {} REBUILD".format(i.name), i, i))
 
-    diffs.extend(other.diffSubobjects(self.columns, other.columns))
+    diffs.extend(other.diff_subobjects(self.columns, other.columns))
 
     return diffs
 
-  def dependencies (self):
-    return []
-
   @classmethod
-  def fromDb (class_, name):
+  def from_db (class_, name):
     rs = db.query(""" SELECT tablespace_name
                       FROM all_tables
                       WHERE owner = :o
@@ -154,19 +236,16 @@ class Table (OracleObject):
                   """, o=name.schema, t=name.obj)
     if not rs:
       return None
-    return class_(name, Column.fromDb(name), **rs[0])
+    return class_(name, Column.from_db(name), **rs[0])
 
 
 
-class Column (OracleObject):
+class Column (HasTable, OracleObject):
 
-  def __init__ (self, name, table=None, **props):
+  def __init__ (self, name, **props):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(part=name)
     super().__init__(name, **props)
-
-    if table:
-      self.table = table
 
     if 'data_type' in self.props:
       self.props['data_type'] = self.props['data_type'].upper()
@@ -186,13 +265,6 @@ class Column (OracleObject):
     return ("Column('" + self.name.part + "', " +
         ', '.join(prop.lower() + '=' + repr(val)
           for prop, val in self.props.items()) + ')')
-
-  def satisfy (self, other):
-    if self.deferred:
-      self.props = other.props
-      self.table = other.table
-
-      self.deferred = False
 
   def sql (self, fq=False):
     parts = []
@@ -220,27 +292,25 @@ class Column (OracleObject):
     diffs = []
 
     if self.name.part != other.name.part:
-      diffs.append("ALTER TABLE {} RENAME COLUMN {} TO {}"
-          .format(other.table.name, other.name.part, self.name.part))
+      diffs.append(Diff("ALTER TABLE {} RENAME COLUMN {} TO {}"
+          .format(other.table.name, other.name.part, self.name.part),
+          {other.table, other}, self))
 
-    propDiff = InsensitiveDict((prop, other.props[prop])
+    prop_diff = InsensitiveDict((prop, other.props[prop])
         for prop, expected in self.props.items()
         if expected != other.props[prop])
 
-    if propDiff:
-      for prop in propDiff:
+    if prop_diff:
+      for prop in prop_diff:
         logging.debug("Prop: {} expected: {}, found {}".format(prop,
           repr(self.props[prop]), repr(other.props[prop])))
-      diffs.append("ALTER TABLE {} MODIFY ( {} )".format(
-        other.table.name, self.sql()))
+      diffs.append(Diff("ALTER TABLE {} MODIFY ( {} )".format(
+        other.table.name, self.sql()), {other.table, other}, self))
 
     return diffs
 
-  def dependencies (self):
-    return [self.table]
-
   @classmethod
-  def fromDb (class_, name):
+  def from_db (class_, name):
     rs = db.query(""" SELECT column_name
                              , data_type
                              , data_length
@@ -253,32 +323,22 @@ class Column (OracleObject):
                           AND (:c IS NULL OR column_name = :c)
                     """, o=name.schema, t=name.obj, c=name.part)
 
-    return [class_(name[1], **{key.lower(): value for key, value in props})
-      for name, *props in (row.items() for row in rs)]
+    return {class_(name[1], **dict(props))
+      for name, *props in (row.items() for row in rs)}
 
 
-class Constraint (OracleObject):
+class Constraint (HasTable, OracleObject):
+  pass
 
-  def __init__ (self, name, table=None):
-    super().__init__(name)
-    self.table = table
-
-class Index (OracleObject):
+class Index (HasColumns, OracleObject):
   """ ALTER INDEX {} REBUILD TABLESPACE {} """
 
-  def __init__ (self, name, columns=[], **props):
-    super().__init__(name, **props)
-
-    self.columns = columns
-
-  @property
-  def columns (self):
-    return self._columns
-
-  @columns.setter
+  @HasColumns.columns.setter
   def columns (self, value):
+    if not isinstance(value, set):
+      raise TypeError("expected set: {}".format(value))
     if value:
-      tablename = value[0].name.obj
+      tablename = next(iter(value)).name.obj
 
       for column in value:
         if column.name.obj != tablename:
@@ -312,6 +372,9 @@ class Grant (OracleObject):
 class View (OracleObject): # Table??
   pass
 
+class Lob (OracleObject):
+  pass
+
 class PlsqlCode (OracleObject):
   pass
 
@@ -327,11 +390,23 @@ class Procedure (PlsqlCode):
 class Package (PlsqlCode):
   pass
 
+class PackageBody (PlsqlCode):
+
+  def __init__ (self, name, **props):
+    super().__init__(name, **props)
+    self.type = 'PACKAGE BODY'
+
 class Trigger (PlsqlCode):
   pass
 
 class Type (PlsqlCode):
   pass
+
+class TypeBody (PlsqlCode):
+
+  def __init__ (self, name, **props):
+    super().__init__(name, **props)
+    self.type = 'TYPE BODY'
 
 class Schema (OracleObject):
 
@@ -346,7 +421,7 @@ class Schema (OracleObject):
         Type
       }
 
-  def __init__ (self, name):
+  def __init__ (self, name=None):
     super().__init__(OracleFQN(name))
 
     # Namespaces
@@ -375,6 +450,7 @@ class Schema (OracleObject):
         # Not a name conflict
         deferred = namespace[name]
         deferred.satisfy(obj)
+        del self.deferred[name]
       else:
         raise SchemaConflict(obj, namespace[name])
     else:
@@ -413,73 +489,139 @@ class Schema (OracleObject):
       target_objs = self.objects[t] if t in self.objects else []
       current_objs = other.objects[t] if t in other.objects else []
 
-      diffs.extend(other.diffSubobjects(target_objs, current_objs))
+      diffs.extend(other.diff_subobjects(target_objs, current_objs))
 
     return diffs
 
-  def addSubobjects (self, objs):
-    return [obj.sql() for obj in objs]
+  def add_subobjects (self, objs):
+    return [Diff(obj.sql(), obj.dependencies(), obj) for obj in objs]
 
-  def dropSubobjects (self, objs):
-    return ["DROP {} {}".format(obj.type, obj.name) for obj in objs]
+  def drop_subobjects (self, objs):
+    return [Diff("DROP {} {}".format(obj.type, obj.name), obj) for obj in objs]
 
   @classmethod
-  def fromDb (class_, schemaName):
-    schema = class_(schemaName)
+  def from_db (class_, schema_name=None):
+    schema = class_(schema_name)
 
-    def makeName (name):
+    owner = schema_name
+    if not owner:
+      owner = db.user
+
+    def make_name (name):
       try:
-        objName =  OracleIdentifier(name)
+        obj_name =  OracleIdentifier(name)
       except OracleNameError:
-        objName = OracleIdentifier('"' + name + '"')
+        obj_name = OracleIdentifier('"' + name + '"')
 
-      return OracleFQN(schema.name.schema, objName)
+      return OracleFQN(owner, obj_name)
 
     rs = db.query(""" SELECT object_name, object_type
                       FROM all_objects
                       WHERE owner = :o
-                  """, o=schema.name.schema)
+                  """, o=owner)
 
     for obj in rs:
-      objectName = makeName(obj['object_name'])
+      object_name = make_name(obj['object_name'])
 
-      className = obj['object_type'].capitalize()
+      class_name = ''.join(word.capitalize()
+          for word in obj['object_type'].split())
       try:
-        class_ = globals()[className]
-        obj = class_.fromDb(objectName)
+        class_ = globals()[class_name]
+        obj = class_.from_db(object_name)
         schema.add(obj)
       except (NameError, KeyError) as e:
-        print("{} [{}]: unexpected type".format(className, obj['object_name']))
+        print("{} [{}]: unexpected type".format(class_name, obj['object_name']))
 
     # Constraints handled differently
     rs = db.query(""" SELECT constraint_name, table_name
                       FROM all_constraints
                       WHERE owner = :o
-                  """, o=schema.name.schema)
+                  """, o=owner)
 
     for con in rs:
-      conName = makeName(con['constraint_name'])
-      tableName = makeName(con['table_name'])
+      con_name = make_name(con['constraint_name'])
+      table_name = make_name(con['table_name'])
 
+      table = schema.find(table_name, Table)
 
-      table = schema.find(tableName)
-      if not table:
-        print("Constraint [{}] references nonexistent table [{}]"
-          .format(constraint.name, tableName))
-
-      constraint = Constraint(conName, table)
+      constraint = Constraint(con_name, table)
       schema.add(constraint)
 
     return schema
 
+class Database (object):
+
+  def __init__ (self, default_schema=None):
+    self.schemas = {}
+    self.parser = None
+
+    if not default_schema:
+      default_schema = db.user
+    self.default_schema = default_schema
+
+  def add (self, obj):
+    if not obj:
+      return
+
+    if isinstance(obj, Schema):
+      self.schemas[obj.name] = obj
+      return
+
+    schema_name = obj.name.schema
+    if not schema_name:
+      schema_name = db.user
+
+    if schema_name not in self.schemas:
+      self.schemas[schema_name] = Schema(schema_name)
+
+    self.schemas[schema_name].add(obj)
+
+  def add_file (self, filename):
+    if not self.parser:
+      from precog import parser
+      self.parser = parser.file_parser(filename)
+
+    self.parser.sqlplus_file(self)
+
+  def find (self, name, obj_type=Table, deferred=True):
+    if not isinstance(name, OracleFQN):
+      name = OracleFQN(self.default_schema, name)
+
+    if not name.schema:
+      name = OracleFQN(self.default_schema, name.obj, name.part)
+
+    if name.schema not in self.schemas:
+      if deferred:
+        self.schemas[name.schema] = Schema(name.schema)
+      else:
+        return None
+
+    return self.schemas[name.schema].find(name, obj_type, deferred)
+
+  def validate (self):
+    unsatisfied = [obj for schema in self.schemas.values()
+        for obj in schema.deferred.values()]
+
+    if unsatisfied:
+      raise UnsatisfiedDependencyError(unsatisfied)
+
+  def diff_to_db (self):
+    self.validate()
+
+    diffs = []
+    for schema_name in self.schemas:
+      diffs.extend(self.schemas[schema_name].diff(Schema.from_db(schema_name)))
+
+    if diffs:
+      diffs = order_diffs(diffs)
+
+    return diffs
+
   @classmethod
-  def fromFile (class_, schemaName, filename):
-    schema = class_(schemaName)
+  def from_file (class_, filename):
+    database = class_()
 
-    from precog import parser
+    database.add_file(filename)
 
-    sqlParser = parser.fileParser(filename)
-    sqlParser.sqlplus_file(schema)
-
-    return schema
+    return database
 

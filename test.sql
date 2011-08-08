@@ -1,11 +1,9 @@
 create index foo_idx on foo ( id );
 
-/*
 create table foo
   ( id number
   , text vArChaR2(128)
 );
-  */
 
 
 /*

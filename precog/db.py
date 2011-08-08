@@ -39,3 +39,5 @@ def execute (*args, **kvargs):
     raise OracleError("{}SQL: {}".format(e, args[0])) from e
 
   return _curs.rowcount
+
+user = OracleIdentifier(_connection.username)

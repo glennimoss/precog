@@ -56,3 +56,11 @@ class TableConflict (ObjectError):
 class OracleNameError (PrecogError):
   pass
 
+class UnsatisfiedDependencyError (PrecogError):
+
+  def __init__ (self, unsatisfied):
+    self.unsatisfied = unsatisfied
+
+  def __str__ (self):
+    return ", ".join("{}: {}".format(type(obj).__name__, obj.name)
+        for obj in self.unsatisfied)

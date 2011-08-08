@@ -1,20 +1,14 @@
 from precog import *
-from precog.parser import sqlLexer, sqlParser
 
 
-schema = Schema.fromFile('precog', 'test.sql')
+database = Database.from_file('test.sql')
 
 def diffs():
-  dbschema = Schema.fromDb('precog')
-  #dbschema = Schema('precog')
-  #dbschema.add(Table.fromDb(OracleFQN('precog','foo')))
-  #dbschema.add(Table.fromDb(OracleFQN('precog','bar')))
-
-  diffs = schema.diff(dbschema)
+  diffs = database.diff_to_db()
 
   if diffs:
     print('Delta script:')
-    print(";\n\n".join(diffs) + ";\n")
+    print(";\n\n".join(str(diff) for diff in diffs) + ";\n")
 
     doit = input('Run script? [yN] ')
 

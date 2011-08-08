@@ -4,13 +4,13 @@ class InsensitiveDict (OrderedDict):
 
   def __setitem__ (self, key, value):
     if isinstance(key, str):
-      key = key.upper()
+      key = key.lower()
 
     super().__setitem__(key, value)
 
   def __getitem__ (self, key):
     if isinstance(key, str):
-      key = key.upper()
+      key = key.lower()
 
     try:
       return super().__getitem__(key)
@@ -19,13 +19,13 @@ class InsensitiveDict (OrderedDict):
 
   def __delitem__ (self, key):
     if isinstance(key, str):
-      key = key.upper()
+      key = key.lower()
 
     super().__delitem__(key)
 
   def __contains__ (self, key):
     if isinstance(key, str):
-      key = key.upper()
+      key = key.lower()
 
     return super().__contains__(key)
 

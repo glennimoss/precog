@@ -3,12 +3,12 @@ from antlr3.ext import (FileStream, MultiChannelTokenStream, NamedConstant,
 from precog.parser.sqlLexer import sqlLexer
 from precog.parser.sqlParser import sqlParser
 
-__all__ = ['fileParser', 'stringParser']
+__all__ = ['file_parser', 'string_parser']
 
-def fileParser (filename):
+def file_parser (filename):
   return parser(FileStream(filename))
 
-def stringParser (string):
+def string_parser (string):
   return parser(StringStream(string))
 
 def parser (stream):
