@@ -1,4 +1,4 @@
---create index foo_idx on foo ( id );
+create index foo_idx on foo ( id );
 
 create table foo
   ( id number
@@ -7,7 +7,7 @@ create table foo
 
 create table bar
   ( bar_id number
-  , when date default sysdate
+  , when date default SYSDATE + 3
   , data varchar2(32)
 );
 

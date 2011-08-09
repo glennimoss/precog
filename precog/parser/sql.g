@@ -79,19 +79,6 @@ scope g { database }
     for t in tokenStream:
       print(t)
 }
-@parser::main {
-  database = Database('fileschema')
-
-  def main(argv):
-    global schema
-    from antlr3.ext import MultiChannelTokenStream
-    from .sqlLexer import sqlLexer
-    inStream = FileStream(argv[1])
-    lexer = sqlLexer(inStream)
-    tokenStream = MultiChannelTokenStream(lexer)
-    parser = sqlParser(tokenStream)
-    parser.sqlplus_file(database)
-}
 
 sqlplus_file[database]
 scope g;
@@ -229,10 +216,6 @@ create_index returns [obj]
 tablespace_clause returns [props]
 @init { props = InsensitiveDict() }
   : kTABLESPACE ID { props['tablespace_name'] = $ID.text }
-  ;
-
-expression
-  : SYSDATE
   ;
 
 /*
@@ -407,10 +390,6 @@ lvalue
 
 assign_or_call_statement
     : lvalue ( DOT delete_call | ASSIGN expression )?
-    ;
-
-call
-    : COLON? ID ( LPAREN ( parameter ( COMMA parameter )* )? RPAREN )?
     ;
 
 delete_call
@@ -592,6 +571,8 @@ match_parens
 
 label_name:	ID;
 
+*/
+
 expression
     : or_expr
     ;
@@ -654,12 +635,21 @@ atom
     | string_literal
     | numeric_atom
     | boolean_atom
+    | global_name_literal
     | NULL
     | LPAREN expression RPAREN
     ;
 
+global_name_literal
+  : SYSDATE
+  ;
+
 variable_or_function_call
-    : call ( DOT call )* ( DOT delete_call )?
+    : call ( DOT call )* /*( DOT delete_call )?*/
+    ;
+
+call
+    : COLON? ID ( LPAREN ( parameter ( COMMA parameter )* )? RPAREN )?
     ;
 
 attribute
@@ -712,10 +702,13 @@ parameter
     : ( ID ARROW )? expression
     ;
 
+/*
 index
     : expression
     ;
+    */
 
+/*
 create_package :
         CREATE ( OR kREPLACE )? PACKAGE ( schema_name=ID DOT )? package_name=ID
         ( invoker_rights_clause )?
@@ -759,22 +752,22 @@ invoker_rights_clause :
 call_spec
     : LANGUAGE swallow_to_semi
     ;
-
-kERRORS : { len(self.input.LT(1).text) >= 3 and "errors".startswith(self.input.LT(1).text.lower())}? ID;
-kEXCEPTIONS : {self.input.LT(1).text.lower() == "exceptions"}? ID;
-kFOUND : {self.input.LT(1).text.lower() == "found"}? ID;
-kINDICES : {self.input.LT(1).text.lower() == "indices"}? ID;
-kMOD : {self.input.LT(1).text.lower() == "mod"}? ID;
-kNAME : {self.input.LT(1).text.lower() == "name"}? ID;
-kOF : {self.input.LT(1).text.lower() == "of"}? ID;
-kREPLACE : {self.input.LT(1).text.lower() == "replace"}? ID;
-kROWCOUNT : {self.input.LT(1).text.lower() == "rowcount"}? ID;
-kSAVE : {self.input.LT(1).text.lower() == "save"}? ID;
-kSHOW : {self.input.LT(1).text.lower() == "show"}? ID;
-kTYPE : {self.input.LT(1).text.lower() == "type"}? ID;
-kVALUES : {self.input.LT(1).text.lower() == "values"}? ID;
-
 */
+
+//kERRORS : { len(self.input.LT(1).text) >= 3 and "errors".startswith(self.input.LT(1).text.lower())}? ID;
+//kEXCEPTIONS : {self.input.LT(1).text.lower() == "exceptions"}? ID;
+kFOUND : {self.input.LT(1).text.lower() == "found"}? ID;
+//kINDICES : {self.input.LT(1).text.lower() == "indices"}? ID;
+kMOD : {self.input.LT(1).text.lower() == "mod"}? ID;
+//kNAME : {self.input.LT(1).text.lower() == "name"}? ID;
+//kOF : {self.input.LT(1).text.lower() == "of"}? ID;
+//kREPLACE : {self.input.LT(1).text.lower() == "replace"}? ID;
+kROWCOUNT : {self.input.LT(1).text.lower() == "rowcount"}? ID;
+//kSAVE : {self.input.LT(1).text.lower() == "save"}? ID;
+//kSHOW : {self.input.LT(1).text.lower() == "show"}? ID;
+//kTYPE : {self.input.LT(1).text.lower() == "type"}? ID;
+//kVALUES : {self.input.LT(1).text.lower() == "values"}? ID;
+
 
 kCLOB : {self.input.LT(1).text.lower() == 'clob'}? ID;
 kTABLESPACE : {self.input.LT(1).text.lower() == 'tablespace'}? ID;

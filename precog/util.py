@@ -1,4 +1,5 @@
 from collections import OrderedDict
+import logging
 
 class InsensitiveDict (OrderedDict):
 
@@ -59,3 +60,13 @@ def coerced_comparison (class_):
     setattr(class_, m_name, coerced_m)
 
   return class_
+
+class HasLog (object):
+  """ Mixin for making a log named after the class """
+
+  def __init__ (self):
+    self.log = HasLog.log_for(type(self))
+
+  @staticmethod
+  def log_for (class_):
+    return logging.getLogger("{}.{}".format(class_.__module__, class_.__name__))

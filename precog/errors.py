@@ -19,8 +19,8 @@ class SchemaConflict (ObjectError):
     self.other = other
 
   def __str__ (self):
-    return (super().__str__() +
-      " is present in schema as {}".format(self.other.sql(True)))
+    return "{} is present in schema as {}".format(
+        super().__str__(), self.other.sql(True))
 
 class TypeConflict (ObjectError):
 
@@ -56,11 +56,14 @@ class TableConflict (ObjectError):
 class OracleNameError (PrecogError):
   pass
 
+class ReservedNameError (PrecogError):
+  pass
+
 class UnsatisfiedDependencyError (PrecogError):
 
   def __init__ (self, unsatisfied):
     self.unsatisfied = unsatisfied
 
   def __str__ (self):
-    return ", ".join("{}: {}".format(type(obj).__name__, obj.name)
-        for obj in self.unsatisfied)
+    return "\n  ".join([''] + ["{}: {}".format(type(obj).__name__, obj.name)
+        for obj in self.unsatisfied])

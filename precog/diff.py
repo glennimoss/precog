@@ -1,4 +1,5 @@
 from copy import copy
+from precog import db
 from precog.errors import PrecogError
 
 class Diff (object):
@@ -16,6 +17,9 @@ class Diff (object):
 
   def __str__ (self):
     return self.sql
+
+  def apply (self):
+    return db.execute(self.sql)
 
 class DiffCycleError (PrecogError):
   pass

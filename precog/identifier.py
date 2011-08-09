@@ -29,7 +29,7 @@ class OracleIdentifier (str):
         raise OracleNameError("Object name cannot be empty")
 
       if identifier in reserved.words:
-        raise OracleNameError(
+        raise ReservedNameError(
           "Object name {} is a reserved word".format(repr(identifier)))
 
       if len(identifier) > (30 if not quoted else 32):
@@ -103,6 +103,9 @@ def name_from_oracle (name):
   if name.upper() == name:
     try:
       return OracleIdentifier(name)
+    except ReservedNameError:
+      # built-in types will just be strings
+      return name
     except OracleNameError:
       pass
 

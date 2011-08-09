@@ -1,6 +1,6 @@
 import cx_Oracle
 from precog.identifier import OracleIdentifier, name_from_oracle
-from precog.util import InsensitiveDict
+from precog.util import HasLog, InsensitiveDict
 from precog.errors import OracleError
 
 _connection = None
@@ -18,16 +18,22 @@ def connect (connect_string):
     user = OracleIdentifier(_connection.username)
     _curs = _connection.cursor()
   except ImportError as e:
-    print('Unable to load cx_Oracle:', e, '\nUsing stub...')
-    class DummyCursor (list):
-      def execute (self, *args, **kvargs):
-        return []
+    HasLog.log_for(connect).warn(
+        "Unable to load cx_Oracle: {}\nUsing stub...".format(e))
 
-      rowcount = 0
+    class DummyConnection (object):
+      class DummyCursor (list):
+        def execute (self, *args, **kvargs):
+          return []
 
-      description = []
+        rowcount = 0
 
-    _curs = DummyCursor()
+        description = []
+
+      def cursor (self):
+        return DummyCursor()
+
+    _connection = DummyConnection()
 
 def _rowfactory (row, cursor, oracle_names=[]):
   row = InsensitiveDict(zip((column[0] for column in cursor.description), row))
@@ -48,18 +54,26 @@ def _unquote (d):
       d[k] = d[k].strip('"')
 
 def query (*args, oracle_names=[], **kvargs):
-  execute(*args, **kvargs)
-  return [_rowfactory(row, _curs, oracle_names) for row in _curs]
+  cursor = _execute(*args, **kvargs)
+  rs = [_rowfactory(row, cursor, oracle_names) for row in cursor]
+  cursor.close()
+  return rs
 
 def execute (*args, **kvargs):
-  if not _curs:
+  cursor = _execute(*args, **kvargs)
+  rc = cursor.rowcount
+  cursor.close()
+  return rc
+
+def _execute(*args, **kvargs):
+  if not _connection:
     raise OracleError('Not connected')
 
   _unquote(kvargs)
+  cursor = _connection.cursor()
   try:
-    _curs.execute(*args, **kvargs)
+    cursor.execute(*args, **kvargs)
   except cx_Oracle.DatabaseError as e:
     raise OracleError("{}SQL: {}".format(e, args[0])) from e
-
-  return _curs.rowcount
+  return cursor
 

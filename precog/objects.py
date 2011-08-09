@@ -2,24 +2,28 @@ from precog import db
 from precog.diff import Diff, order_diffs
 from precog.errors import *
 from precog.identifier import *
-import logging
-from precog.util import InsensitiveDict
+from precog.util import HasLog, InsensitiveDict
 
-class OracleObject (object):
+class OracleObject (HasLog):
 
   def __init__ (self, name, deferred=False, **props):
+    super().__init__()
     if not isinstance(name, OracleFQN):
       name = OracleFQN(obj=name)
     self.name = name
     self.deferred = deferred
     self.props = InsensitiveDict(props)
-    #for prop, value in props.items():
-      #self.props[prop] = value
     self.type = type(self).__name__.upper()
 
-  def __repr__ (self):
-    return "{}({!r}, {}**{!r})".format(type(self).__name__,
-        self.name, 'deferred=True, ' if self.deferred else '', self.props)
+  def __repr__ (self, **other_props):
+    if self.deferred:
+      other_props['deferred'] = True
+
+    other_props.update(self.props)
+    return "{}({!r}, {})".format(type(self).__name__,
+        self.name,
+        ', '.join("{}={!r}".format(k, v) for k, v in other_props.items()))
+
 
   def __str__ (self):
     return self.sql()
@@ -39,8 +43,14 @@ class OracleObject (object):
   def __hash__ (self):
     return hash((type(self), self.name))
 
-  def sql (self):
+  def sql (self, fq=True):
     return "-- Placeholder for {} {}".format(type(self).__name__, self.name)
+
+  def create (self):
+    return Diff(self.sql, self.dependencies(), self)
+
+  def drop (self):
+    return Diff("DROP {} {}".format(self.type, self.name), self)
 
   def satisfy (self, other):
     if self.deferred:
@@ -53,8 +63,12 @@ class OracleObject (object):
     Calculate differences between self, which is the desired definition, and
     other, which is the current database state.
     """
+
+    if other.deferred:
+      self.log.warn(
+          "Comparing {!r} to deferred object {!r}".format(self, other))
     if self != other:
-      logging.debug('OracleObject: self != other')
+      self.log.debug('OracleObject: self != other')
       return [Diff(self.sql(), self.dependencies(), self)]
 
     return []
@@ -67,8 +81,8 @@ class OracleObject (object):
     if not isinstance(current_objs, dict):
       current_objs = {obj.name: obj for obj in current_objs}
 
-    logging.debug("target_objs = {}".format(target_objs))
-    logging.debug("current_objs = {}".format(current_objs))
+    self.log.debug("target_objs = {}".format(target_objs))
+    self.log.debug("current_objs = {}".format(current_objs))
 
     target_obj_names = set(target_objs)
     current_obj_names = set(current_objs)
@@ -76,8 +90,8 @@ class OracleObject (object):
     addobjs = target_obj_names - current_obj_names
     dropobjs = current_obj_names - target_obj_names
 
-    logging.debug("addobjs = {}".format(addobjs))
-    logging.debug("dropobjs = {}".format(dropobjs))
+    self.log.debug("addobjs = {}".format(addobjs))
+    self.log.debug("dropobjs = {}".format(dropobjs))
 
     if addobjs:
       diffs.extend(
@@ -96,9 +110,13 @@ class OracleObject (object):
   def dependencies (self):
     return set()
 
+  warned = False
   @classmethod
   def from_db (class_, name):
-    logging.warn("Unimplemented from_db for {}".format(class_.__name__))
+    if not class_.warned:
+      HasLog.log_for(class_).warn(
+          "Unimplemented from_db for {}".format(class_.__name__))
+      class_.warned = True
     return class_(name, deferred=True)
 
 class HasColumns (object):
@@ -119,6 +137,10 @@ class HasColumns (object):
     othercols = {c.name: c for c in other.columns}
 
     return mycols == othercols
+
+  def __repr__ (self, **other_props):
+    other_props['columns'] = self.columns
+    return super().__repr__(**other_props)
 
   @property
   def columns (self):
@@ -189,11 +211,12 @@ class Table (HasColumns, OracleObject):
     self._indexes = value
 
   def __repr__ (self):
-    return ("Table('" + self.name.obj + "', columns=[" +
-        ', '.join(repr(c) for c in self.columns) + ']' +
-        (', indexes={' + ', '.join(repr(i) for i in self.indexes) + '}'
-          if self.indexes else '') +
-        ')')
+    return super().__repr__(indexes=self.indexes)
+    #return ("Table('" + self.name.obj + "', columns=[" +
+        #', '.join(repr(c) for c in self.columns) + ']' +
+        #(', indexes={' + ', '.join(repr(i) for i in self.indexes) + '}'
+          #if self.indexes else '') +
+        #')')
 
   def dependencies (self):
     # a Table doesn't depend on its columns
@@ -245,8 +268,7 @@ class Table (HasColumns, OracleObject):
                   oracle_names=['tablespace_name'])
     if not rs:
       return None
-    rs = rs[0]
-    return class_(name, columns=Column.from_db(name), **rs)
+    return class_(name, columns=Column.from_db(name), **rs[0])
 
 
 
@@ -257,14 +279,13 @@ class Column (HasTable, OracleObject):
       name = OracleFQN(part=name)
     super().__init__(name, **props)
 
-    if 'data_type' in self.props:
+    if self.props['data_type']:
       try:
         self.props['data_type'] = OracleIdentifier(self.props['data_type'])
-      except OracleNameError:
-        # Probably a built-in type, so we'll just use it as-is.
-        pass
+      except ReservedNameError:
+        self.props['data_type'] = self.props['data_type'].upper()
 
-    if 'data_default' in self.props and self.props['data_default']:
+    if self.props['data_default']:
       self.props['data_default'] = self.props['data_default'].strip()
 
   @property
@@ -278,15 +299,15 @@ class Column (HasTable, OracleObject):
       self.name.schema = value.name.schema
       self.name.obj = value.name.obj
 
-  def __repr__ (self):
-    return ("Column('" + self.name.part + "', " +
-        ', '.join(prop.lower() + '=' + repr(val)
-          for prop, val in self.props.items()) + ')')
+  #def __repr__ (self):
+    #return ("Column('" + self.name.part + "', " +
+        #', '.join(prop.lower() + '=' + repr(val)
+          #for prop, val in self.props.items()) + ')')
 
   def sql (self, fq=False):
     parts = []
     name = self.name if fq else self.name.part
-    parts.append(name)
+    parts.append(str(name))
 
     data_type = self.props['data_type']
     if data_type in ('NUMBER', 'FLOAT'):
@@ -296,16 +317,17 @@ class Column (HasTable, OracleObject):
         scale = (",{}".format(self.props["data_scale"])
             if self.props['data_scale'] else '')
         data_type += "({}{})".format(precision, scale)
-    elif 'data_length' in self.props:
+    elif self.props['data_length']:
       data_type += "({})".format(self.props['data_length'])
     parts.append(data_type)
 
-    if 'data_default' in self.props:
+    if self.props['data_default']:
       parts.append("DEFAULT {}".format(self.props['data_default']))
 
     return " ".join(parts)
 
   def diff (self, other):
+    super().diff(other)
     diffs = []
 
     if self.name.part != other.name.part:
@@ -319,10 +341,16 @@ class Column (HasTable, OracleObject):
 
     if prop_diff:
       for prop in prop_diff:
-        logging.debug("Prop: {} expected: {}, found {}".format(prop,
+        self.log.debug("Prop: {} expected: {}, found {}".format(prop,
           repr(self.props[prop]), repr(other.props[prop])))
       diffs.append(Diff("ALTER TABLE {} MODIFY ( {} )".format(
         other.table.name, self.sql()), {other.table, other}, self))
+
+    if (other.props['data_default'] and
+        other.props['data_default'] != 'NULL' and
+        not self.props['data_default']):
+      diffs.append(Diff("ALTER TABLE {} MODIFY ( {} DEFAULT NULL)".format(
+        other.table.name, other.name.part), {other.table, other}, self))
 
     return diffs
 
@@ -349,7 +377,6 @@ class Constraint (HasTable, OracleObject):
   pass
 
 class Index (HasColumns, OracleObject):
-  """ ALTER INDEX {} REBUILD TABLESPACE {} """
 
   @HasColumns.columns.setter
   def columns (self, value):
@@ -378,6 +405,26 @@ class Index (HasColumns, OracleObject):
         " TABLESPACE {}".format(self.props['tablespace_name'])
           if self.props['tablespace_name'] else '')
 
+  def diff (self, other):
+    diffs = []
+
+    if self.name.obj != other.name.obj:
+      diffs.append(Diff("ALTER INDEX {} RENAME TO {}"
+          .format(other.name, self.name.obj), other, self))
+
+    if (self.props['tablespace_name'] and
+        self.props['tablespace_name'] != other.props['tablespace_name']):
+      diffs.append(Diff("ALTER INDEX {} REBUILD TABLESPACE {}"
+          .format(other.name, self.props['tablespace_name']), other, self))
+
+    recreate = other.diff_subobjects(self.columns, other.columns)
+    self.log.debug("Index's columns diffs: {}".format(recreate))
+    if recreate:
+      diffs.append(self.drop())
+      diffs.append(self.create())
+
+    return diffs
+
   @classmethod
   def from_db (class_, name):
     rs = db.query(""" SELECT uniqueness
@@ -399,9 +446,9 @@ class Index (HasColumns, OracleObject):
     if not rs:
       return None
     *props, (devnull, columns) = rs[0].items()
-    print(props, columns)
-    columns = [OracleFQN(col['table_owner'], col['table_name'],
-      col['column_name']) for col in columns]
+    columns = [_current_database.find(OracleFQN(col['table_owner'],
+      col['table_name'], col['column_name']), Column)
+      for col in columns]
     return class_(name, columns=columns, **dict(props))
 
 class Sequence (OracleObject):
@@ -483,7 +530,7 @@ class Schema (OracleObject):
 
     obj_type = type(obj)
     name = OracleFQN(self.name.schema, obj.name.obj, obj.name.part)
-    logging.debug(
+    self.log.debug(
         "Adding {}{} {} as {}".format('deferred ' if obj.deferred else '',
           obj_type.__name__, obj.name, name))
     obj.name = name
@@ -496,7 +543,7 @@ class Schema (OracleObject):
                               name in self.shared_namespace):
       if name in self.deferred and type(self.deferred[name]) == obj_type:
         # Not a name conflict
-        logging.debug('Satisfying deferred object')
+        self.log.debug('Satisfying deferred object')
         deferred = namespace[name]
         deferred.satisfy(obj)
         del self.deferred[name]
@@ -535,7 +582,7 @@ class Schema (OracleObject):
 
     types = set(self.objects).union(other.objects) - {Column}
     for t in types:
-      logging.debug("Diffing {}s".format(t.__name__))
+      self.log.debug("Diffing {}s".format(t.__name__))
       target_objs = self.objects[t] if t in self.objects else []
       current_objs = other.objects[t] if t in other.objects else []
 
@@ -544,18 +591,21 @@ class Schema (OracleObject):
     return diffs
 
   def add_subobjects (self, objs):
-    return [Diff(obj.sql(), obj.dependencies(), obj) for obj in objs]
+    return [obj.create() for obj in objs]
 
   def drop_subobjects (self, objs):
-    return [Diff("DROP {} {}".format(obj.type, obj.name), obj) for obj in objs]
+    return []
+    #return [obj.drop() for obj in objs]
 
   @classmethod
   def from_db (class_, schema_name=None):
     schema = class_(schema_name)
 
-    owner = schema_name
+    owner = OracleIdentifier(schema_name)
     if not owner:
       owner = db.user
+
+    schema.log.info("Fetching schema {}".format(owner))
 
     def make_name (name):
       return OracleFQN(owner, name, from_oracle=True)
@@ -563,9 +613,12 @@ class Schema (OracleObject):
     rs = db.query(""" SELECT object_name, object_type
                       FROM all_objects
                       WHERE owner = :o
+                        AND subobject_name IS NULL
                   """, o=owner)
 
     for obj in rs:
+      schema.log.debug("Fetching {} {}".format(obj['object_type'],
+        obj['object_name']))
       object_name = make_name(obj['object_name'])
 
       class_name = ''.join(word.capitalize()
@@ -575,7 +628,9 @@ class Schema (OracleObject):
         obj = class_.from_db(object_name)
         schema.add(obj)
       except (NameError, KeyError) as e:
-        print("{} [{}]: unexpected type".format(class_name, obj['object_name']))
+        schema.log.warn("{} [{}]: unexpected type".format(
+          class_name, obj['object_name']))
+        raise
 
     # Constraints handled differently
     rs = db.query(""" SELECT constraint_name, table_name
@@ -592,29 +647,31 @@ class Schema (OracleObject):
       constraint = Constraint(con_name, table)
       schema.add(constraint)
 
+    schema.log.info("Fetching schema {} complete".format(owner))
     return schema
 
-class Database (object):
+class Database (HasLog):
 
   def __init__ (self, default_schema=None):
+    super().__init__()
     self.schemas = {}
-    self.parser = None
 
     if not default_schema:
       default_schema = db.user
-    self.default_schema = default_schema
+    self.default_schema = OracleIdentifier(default_schema)
+    self.log.debug("Creating with default schema {}".format(default_schema))
 
   def add (self, obj):
     if not obj:
       return
 
+    schema_name = obj.name.schema
     if isinstance(obj, Schema):
-      self.schemas[obj.name] = obj
+      self.schemas[schema_name] = obj
       return
 
-    schema_name = obj.name.schema
     if not schema_name:
-      schema_name = db.user
+      schema_name = self.default_schema
 
     if schema_name not in self.schemas:
       self.schemas[schema_name] = Schema(schema_name)
@@ -622,11 +679,9 @@ class Database (object):
     self.schemas[schema_name].add(obj)
 
   def add_file (self, filename):
-    if not self.parser:
-      from precog import parser
-      self.parser = parser.file_parser(filename)
-
-    self.parser.sqlplus_file(self)
+    self.log.info("Parsing file {}".format(filename))
+    from precog import parser
+    parser.file_parser(filename).sqlplus_file(self)
 
   def find (self, name, obj_type=Table, deferred=True):
     if not isinstance(name, OracleFQN):
@@ -644,6 +699,7 @@ class Database (object):
     return self.schemas[name.schema].find(name, obj_type, deferred)
 
   def validate (self):
+    self.log.info('Validating referential integrity')
     unsatisfied = [obj for schema in self.schemas.values()
         for obj in schema.deferred.values()]
 
@@ -651,14 +707,24 @@ class Database (object):
       raise UnsatisfiedDependencyError(unsatisfied)
 
   def diff_to_db (self, connection_string):
+    global _current_database
     self.validate()
+
+    self.log.info('Comparing database definition to current database state')
 
     db.connect(connection_string)
 
+    _current_database = Database()
+
     diffs = []
     for schema_name in self.schemas:
-      logging.debug("Validating schema {}".format(schema_name))
-      diffs.extend(self.schemas[schema_name].diff(Schema.from_db(schema_name)))
+      db_schema = Schema.from_db(schema_name)
+      _current_database.add(db_schema)
+    #_current_database.validate()
+
+    for schema_name in self.schemas:
+      diffs.extend(self.schemas[schema_name].diff(
+        _current_database.schemas[schema_name]))
 
     if diffs:
       diffs = order_diffs(diffs)
@@ -666,18 +732,20 @@ class Database (object):
     return diffs
 
   @classmethod
-  def from_file (class_, filename):
-    database = class_()
+  def from_file (class_, filename, default_schema=None):
+    database = class_(default_schema)
 
     database.add_file(filename)
 
     for schema in database.schemas.values():
-      logging.debug("Schema {}".format(schema.name))
+      database.log.debug("Schema {}".format(schema.name))
       for obj_type in schema.objects:
-        logging.debug("  {}s:".format(obj_type.__name__))
-        for obj_name in sorted([str(obj_name) for obj_name in
-            schema.objects[obj_type]]):
-          logging.debug("    {}".format(obj_name))
+        database.log.debug("  {}s:".format(obj_type.__name__))
+        for obj_name in sorted([obj_name for obj_name in
+            schema.objects[obj_type]], key=lambda n: str(n)):
+          database.log.debug(
+              " {}".format(schema.objects[obj_type][obj_name].sql(True)))
 
     return database
 
+_current_database = None
