@@ -104,7 +104,7 @@ class OracleObject (object):
 class HasColumns (object):
   """ Mixin for objects that have the columns property """
 
-  def __init__ (self, name, columns=set(), **props):
+  def __init__ (self, name, columns=[], **props):
     super().__init__(name, **props)
 
     self.columns = columns
@@ -126,8 +126,8 @@ class HasColumns (object):
 
   @columns.setter
   def columns (self, value):
-    if not isinstance(value, set):
-      raise TypeError("expected set: {}".format(value))
+    if not isinstance(value, list):
+      raise TypeError("expected list: {}".format(value))
     self._columns = value
 
   def satisfy (self, other):
@@ -136,7 +136,7 @@ class HasColumns (object):
       self.columns = other.columns
 
   def dependencies (self):
-    return super().dependencies() | self.columns
+    return super().dependencies() | set(self.columns)
 
 class HasTable (object):
   """ Mixin for objects that have the table property """
@@ -170,8 +170,8 @@ class Table (HasColumns, OracleObject):
 
   @HasColumns.columns.setter
   def columns (self, value):
-    if not isinstance(value, set):
-      raise TypeError("expected set: {}".format(value))
+    if not isinstance(value, list):
+      raise TypeError("Table expected list: {}".format(value))
     for column in value:
       column.table = self
 
@@ -189,8 +189,8 @@ class Table (HasColumns, OracleObject):
     self._indexes = value
 
   def __repr__ (self):
-    return ("Table('" + self.name.obj + "', columns={" +
-        ', '.join(repr(c) for c in self.columns) + '}' +
+    return ("Table('" + self.name.obj + "', columns=[" +
+        ', '.join(repr(c) for c in self.columns) + ']' +
         (', indexes={' + ', '.join(repr(i) for i in self.indexes) + '}'
           if self.indexes else '') +
         ')')
@@ -346,10 +346,10 @@ class Index (HasColumns, OracleObject):
 
   @HasColumns.columns.setter
   def columns (self, value):
-    if not isinstance(value, set):
-      raise TypeError("expected set: {}".format(value))
+    if not isinstance(value, list):
+      raise TypeError("Index expected list: {}".format(value))
     if value:
-      tablename = next(iter(value)).name.obj
+      tablename = value[0].name.obj
 
       for column in value:
         if column.name.obj != tablename:
@@ -388,10 +388,10 @@ class Index (HasColumns, OracleObject):
                   """, o=name.schema, t=name.obj)
     if not rs:
       return None
-    *props, columns = rs[0].items()
+    *props, (devnull, columns) = rs[0].items()
     print(props, columns)
-    columns = {OracleFQN(col['table_owner'], col['table_name'],
-      col['column_name']) for col in columns[1]}
+    columns = [OracleFQN(col['table_owner'], col['table_name'],
+      col['column_name']) for col in columns]
     return class_(name, columns=columns, **dict(props))
 
 class Sequence (OracleObject):

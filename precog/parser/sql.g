@@ -138,14 +138,14 @@ identifier returns [ident]
   ;
 create_table returns [obj]
 @init {
-  columns = set()
+  columns = []
   props = InsensitiveDict()
 }
 @after { obj = Table($ident.ident, columns=columns, **props) }
   : CREATE TABLE ident=identifier
     LPAREN
-      c=column_specification { columns.add($c.column) }
-      (COMMA c=column_specification { columns.add($c.column) } )*
+      c=column_specification { columns.append($c.column) }
+      (COMMA c=column_specification { columns.append($c.column) } )*
     RPAREN
     (tablespace_clause { props.update($tablespace_clause.props) })?
   ;
@@ -204,7 +204,7 @@ user_data_type returns [props]
 
 create_index returns [obj]
 @init {
-  columns = set()
+  columns = []
   props = InsensitiveDict()
 }
 @after { obj = Index($index_name.ident, columns=columns, **props) }
@@ -212,12 +212,12 @@ create_index returns [obj]
     ON table_name=identifier /*table_alias=ID?*/
     LPAREN
       c=ID {
-        columns.add($g::database.find(
+        columns.append($g::database.find(
           OracleFQN($table_name.ident.schema, $table_name.ident.obj, $c.text),
           Column))
         }
       (COMMA c=ID {
-        columns.add($g::database.find(
+        columns.append($g::database.find(
           OracleFQN($table_name.ident.schema, $table_name.ident.obj, $c.text),
           Column))
         }
