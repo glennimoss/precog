@@ -323,11 +323,11 @@ class Column (HasTable, OracleObject):
   @classmethod
   def from_db (class_, name):
     rs = db.query(""" SELECT column_name
-                             , data_type
-                             , data_length
-                             , data_precision
-                             , data_scale
-                             , data_default
+                           , data_type
+                           , data_length
+                           , data_precision
+                           , data_scale
+                           , data_default
                         FROM all_tab_cols
                         WHERE owner = :o
                           AND table_name = :t
@@ -373,14 +373,26 @@ class Index (HasColumns, OracleObject):
 
   @classmethod
   def from_db (class_, name):
-    rs = db.query(""" SELECT tablespace_name
-                      FROM all_tables
+    rs = db.query(""" SELECT uniqueness
+                           , tablespace_name
+                           , CURSOR(SELECT table_owner
+                                         , table_name
+                                         , column_name
+                                    FROM all_ind_columns aic
+                                    WHERE aic.index_owner = ai.owner
+                                      AND aic.index_name = ai.index_name)
+                             AS columns
+                      FROM all_indexes ai
                       WHERE owner = :o
-                        AND table_name = :t
+                        AND index_name = :t
                   """, o=name.schema, t=name.obj)
     if not rs:
       return None
-    return class_(name, columns=Column.from_db(name), **rs[0])
+    *props, columns = rs[0].items()
+    print(props, columns)
+    columns = {OracleFQN(col['table_owner'], col['table_name'],
+      col['column_name']) for col in columns[1]}
+    return class_(name, columns=columns, **dict(props))
 
 class Sequence (OracleObject):
   pass
