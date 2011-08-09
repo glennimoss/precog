@@ -19,20 +19,25 @@ except ImportError as e:
 
   _curs = DummyCursor()
 
+def _rowfactory (row, cursor=_curs):
+  row = InsensitiveDict(zip((column[0] for column in cursor.description), row))
+  for column in cursor.description:
+    if column[1] == cx_Oracle.CURSOR:
+      subcursor = row[column[0]]
+      row[column[0]] = [_rowfactory(subrow, subcursor) for subrow in subcursor]
+  return row
 
-def unquote (d):
+def _unquote (d):
   for k in d:
     if isinstance(d[k], OracleIdentifier):
       d[k] = d[k].strip('"')
 
 def query (*args, **kvargs):
   execute(*args, **kvargs)
-  return [InsensitiveDict(
-            zip((column[0] for column in _curs.description), row)
-          ) for row in _curs]
+  return [_rowfactory(row) for row in _curs]
 
 def execute (*args, **kvargs):
-  unquote(kvargs)
+  _unquote(kvargs)
   try:
     _curs.execute(*args, **kvargs)
   except cx_Oracle.DatabaseError as e:
