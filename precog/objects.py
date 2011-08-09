@@ -645,8 +645,10 @@ class Database (object):
     if unsatisfied:
       raise UnsatisfiedDependencyError(unsatisfied)
 
-  def diff_to_db (self):
+  def diff_to_db (self, connection_string):
     self.validate()
+
+    db.connect(connection_string)
 
     diffs = []
     for schema_name in self.schemas:
