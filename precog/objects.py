@@ -18,8 +18,8 @@ class OracleObject (object):
     self.type = type(self).__name__.upper()
 
   def __repr__ (self):
-    return "{}({!r}, deferred={!r}, **{!r})".format(type(self).__name__,
-        self.name, self.deferred, self.props)
+    return "{}({!r}, {}**{!r})".format(type(self).__name__,
+        self.name, 'deferred=True, ' if self.deferred else '', self.props)
 
   def __str__ (self):
     return self.sql()
@@ -54,6 +54,7 @@ class OracleObject (object):
     other, which is the current database state.
     """
     if self != other:
+      logging.debug('OracleObject: self != other')
       return [Diff(self.sql(), self.dependencies(), self)]
 
     return []
@@ -66,11 +67,17 @@ class OracleObject (object):
     if not isinstance(current_objs, dict):
       current_objs = {obj.name: obj for obj in current_objs}
 
+    logging.debug("target_objs = {}".format(target_objs))
+    logging.debug("current_objs = {}".format(current_objs))
+
     target_obj_names = set(target_objs)
     current_obj_names = set(current_objs)
 
     addobjs = target_obj_names - current_obj_names
     dropobjs = current_obj_names - target_obj_names
+
+    logging.debug("addobjs = {}".format(addobjs))
+    logging.debug("dropobjs = {}".format(dropobjs))
 
     if addobjs:
       diffs.extend(
@@ -91,6 +98,7 @@ class OracleObject (object):
 
   @classmethod
   def from_db (class_, name):
+    logging.warn("Unimplemented from_db for {}".format(class_.__name__))
     return class_(name, deferred=True)
 
 class HasColumns (object):
@@ -181,9 +189,9 @@ class Table (HasColumns, OracleObject):
     self._indexes = value
 
   def __repr__ (self):
-    return ("Table('" + self.name.obj + "', [" +
-        ', '.join(repr(c) for c in self.columns) + ']' +
-        (', indexes=[' + ', '.join(repr(i) for i in self.indexes) + ']'
+    return ("Table('" + self.name.obj + "', columns={" +
+        ', '.join(repr(c) for c in self.columns) + '}' +
+        (', indexes={' + ', '.join(repr(i) for i in self.indexes) + '}'
           if self.indexes else '') +
         ')')
 
@@ -236,7 +244,7 @@ class Table (HasColumns, OracleObject):
                   """, o=name.schema, t=name.obj)
     if not rs:
       return None
-    return class_(name, Column.from_db(name), **rs[0])
+    return class_(name, columns=Column.from_db(name), **rs[0])
 
 
 
@@ -249,6 +257,9 @@ class Column (HasTable, OracleObject):
 
     if 'data_type' in self.props:
       self.props['data_type'] = self.props['data_type'].upper()
+
+    if 'data_default' in self.props and self.props['data_default']:
+      self.props['data_default'] = self.props['data_default'].strip()
 
   @property
   def table (self):
@@ -360,6 +371,17 @@ class Index (HasColumns, OracleObject):
         " TABLESPACE {}".format(self.props['tablespace_name'])
           if self.props['tablespace_name'] else '')
 
+  @classmethod
+  def from_db (class_, name):
+    rs = db.query(""" SELECT tablespace_name
+                      FROM all_tables
+                      WHERE owner = :o
+                        AND table_name = :t
+                  """, o=name.schema, t=name.obj)
+    if not rs:
+      return None
+    return class_(name, columns=Column.from_db(name), **rs[0])
+
 class Sequence (OracleObject):
   pass
 
@@ -437,9 +459,13 @@ class Schema (OracleObject):
     if not obj:
       return
 
-    name = OracleFQN(self.name.schema, obj.name.obj, obj.name.part)
-
     obj_type = type(obj)
+    name = OracleFQN(self.name.schema, obj.name.obj, obj.name.part)
+    logging.debug(
+        "Adding {}{} {} as {}".format('deferred ' if obj.deferred else '',
+          obj_type.__name__, obj.name, name))
+    obj.name = name
+
     if not obj_type in self.objects:
       self.objects[obj_type] = {}
     namespace = self.objects[obj_type]
@@ -448,6 +474,7 @@ class Schema (OracleObject):
                               name in self.shared_namespace):
       if name in self.deferred and type(self.deferred[name]) == obj_type:
         # Not a name conflict
+        logging.debug('Satisfying deferred object')
         deferred = namespace[name]
         deferred.satisfy(obj)
         del self.deferred[name]
@@ -486,6 +513,7 @@ class Schema (OracleObject):
 
     types = set(self.objects).union(other.objects) - {Column}
     for t in types:
+      logging.debug("Diffing {}s".format(t.__name__))
       target_objs = self.objects[t] if t in self.objects else []
       current_objs = other.objects[t] if t in other.objects else []
 
@@ -610,6 +638,7 @@ class Database (object):
 
     diffs = []
     for schema_name in self.schemas:
+      logging.debug("Validating schema {}".format(schema_name))
       diffs.extend(self.schemas[schema_name].diff(Schema.from_db(schema_name)))
 
     if diffs:
@@ -622,6 +651,14 @@ class Database (object):
     database = class_()
 
     database.add_file(filename)
+
+    for schema in database.schemas.values():
+      logging.debug("Schema {}".format(schema.name))
+      for obj_type in schema.objects:
+        logging.debug("  {}s:".format(obj_type.__name__))
+        for obj_name in sorted([str(obj_name) for obj_name in
+            schema.objects[obj_type]]):
+          logging.debug("    {}".format(obj_name))
 
     return database
 

@@ -14,7 +14,7 @@ def diffs():
 
     if 'y' == doit.lower():
       for diff in diffs:
-        db.execute(diff)
+        db.execute(str(diff))
 
   return diffs
 

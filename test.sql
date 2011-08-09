@@ -5,8 +5,6 @@ create table foo
   , text vArChaR2(128)
 );
 
-
-/*
 create table bar
   ( bar_id number
   , when date default sysdate
@@ -19,4 +17,3 @@ create table baz
   , b number(7,9)
   , c number(*,13)
 );
-  */
