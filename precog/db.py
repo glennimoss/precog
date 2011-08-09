@@ -1,4 +1,5 @@
 import cx_Oracle
+from precog.identifier import OracleIdentifier, name_from_oracle
 from precog.util import InsensitiveDict
 from precog.errors import OracleError
 
@@ -28,13 +29,17 @@ def connect (connect_string):
 
     _curs = DummyCursor()
 
-def _rowfactory (row, cursor):
+def _rowfactory (row, cursor, oracle_names=[]):
   row = InsensitiveDict(zip((column[0] for column in cursor.description), row))
   for column in cursor.description:
     if column[1] == cx_Oracle.CURSOR:
       subcursor = row[column[0]]
-      row[column[0]] = [_rowfactory(subrow, subcursor) for subrow in subcursor]
+      row[column[0]] = [_rowfactory(subrow, subcursor, oracle_names)
+          for subrow in subcursor]
       subcursor.close()
+  for column_name in oracle_names:
+    if column_name in row:
+      row[column_name] = name_from_oracle(row[column_name])
   return row
 
 def _unquote (d):
@@ -42,9 +47,9 @@ def _unquote (d):
     if isinstance(d[k], OracleIdentifier):
       d[k] = d[k].strip('"')
 
-def query (*args, **kvargs):
+def query (*args, oracle_names=[], **kvargs):
   execute(*args, **kvargs)
-  return [_rowfactory(row, _curs) for row in _curs]
+  return [_rowfactory(row, _curs, oracle_names) for row in _curs]
 
 def execute (*args, **kvargs):
   if not _curs:

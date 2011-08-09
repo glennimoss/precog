@@ -241,10 +241,12 @@ class Table (HasColumns, OracleObject):
                       FROM all_tables
                       WHERE owner = :o
                         AND table_name = :t
-                  """, o=name.schema, t=name.obj)
+                  """, o=name.schema, t=name.obj,
+                  oracle_names=['tablespace_name'])
     if not rs:
       return None
-    return class_(name, columns=Column.from_db(name), **rs[0])
+    rs = rs[0]
+    return class_(name, columns=Column.from_db(name), **rs)
 
 
 
@@ -256,7 +258,11 @@ class Column (HasTable, OracleObject):
     super().__init__(name, **props)
 
     if 'data_type' in self.props:
-      self.props['data_type'] = self.props['data_type'].upper()
+      try:
+        self.props['data_type'] = OracleIdentifier(self.props['data_type'])
+      except OracleNameError:
+        # Probably a built-in type, so we'll just use it as-is.
+        pass
 
     if 'data_default' in self.props and self.props['data_default']:
       self.props['data_default'] = self.props['data_default'].strip()
@@ -332,10 +338,11 @@ class Column (HasTable, OracleObject):
                         WHERE owner = :o
                           AND table_name = :t
                           AND (:c IS NULL OR column_name = :c)
-                    """, o=name.schema, t=name.obj, c=name.part)
+                    """, o=name.schema, t=name.obj, c=name.part,
+                    oracle_names=['column_name', 'data_type'])
 
-    return {class_(name[1], **dict(props))
-      for name, *props in (row.items() for row in rs)}
+    return [class_(name, **dict(props))
+      for (devnull, name), *props in (row.items() for row in rs)]
 
 
 class Constraint (HasTable, OracleObject):
@@ -380,12 +387,15 @@ class Index (HasColumns, OracleObject):
                                          , column_name
                                     FROM all_ind_columns aic
                                     WHERE aic.index_owner = ai.owner
-                                      AND aic.index_name = ai.index_name)
-                             AS columns
+                                      AND aic.index_name = ai.index_name
+                                    ORDER BY aic.column_position
+                             ) AS columns
                       FROM all_indexes ai
                       WHERE owner = :o
                         AND index_name = :t
-                  """, o=name.schema, t=name.obj)
+                  """, o=name.schema, t=name.obj,
+                  oracle_names=['tablespace_name', 'table_owner', 'table_name',
+                    'column_name'])
     if not rs:
       return None
     *props, (devnull, columns) = rs[0].items()
@@ -548,12 +558,7 @@ class Schema (OracleObject):
       owner = db.user
 
     def make_name (name):
-      try:
-        obj_name =  OracleIdentifier(name)
-      except OracleNameError:
-        obj_name = OracleIdentifier('"' + name + '"')
-
-      return OracleFQN(owner, obj_name)
+      return OracleFQN(owner, name, from_oracle=True)
 
     rs = db.query(""" SELECT object_name, object_type
                       FROM all_objects
