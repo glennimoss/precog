@@ -1,5 +1,5 @@
 from antlr3 import EOF
-from precog.log import logging
+import logging
 
 def aloneOnLine (LT):
   def _aloneOnLine (dir=None):

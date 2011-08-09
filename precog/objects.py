@@ -2,7 +2,7 @@ from precog import db
 from precog.diff import Diff, order_diffs
 from precog.errors import *
 from precog.identifier import *
-from precog.log import logging
+import logging
 from precog.util import InsensitiveDict
 
 class OracleObject (object):
