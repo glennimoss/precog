@@ -4,11 +4,10 @@ import sys
 import logging
 
 from precog.objects import Database
+from precog.errors import OracleError
 
 #logging.basicConfig(level=logging.DEBUG)
 logging.basicConfig(level=logging.INFO)
-logging.getLogger('precog.objects.Column').setLevel(logging.DEBUG)
-logging.getLogger('precog.objects.Schema').setLevel(logging.DEBUG)
 
 connect_string = sys.argv[1]
 schema_name = connect_string.split('/')[0]
@@ -24,4 +23,7 @@ if diffs:
 
   if 'y' == doit.lower():
     for diff in diffs:
-      diff.apply()
+      try:
+        diff.apply()
+      except OracleError as e:
+        print(e)
