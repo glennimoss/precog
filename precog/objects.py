@@ -520,6 +520,8 @@ class Schema (OracleObject):
       }
 
   def __init__ (self, name=None):
+    if not name:
+      name = db.user
     super().__init__(OracleFQN(name))
 
     # Namespaces
@@ -540,7 +542,6 @@ class Schema (OracleObject):
     self.log.debug(
         "Adding {}{} {} as {}".format('deferred ' if obj.deferred else '',
           obj_type.__name__, obj.name, name))
-    obj.name = name
 
     if not obj_type in self.objects:
       self.objects[obj_type] = {}
@@ -606,12 +607,11 @@ class Schema (OracleObject):
     #return [obj.drop() for obj in objs]
 
   @classmethod
-  def from_db (class_, schema_name=None):
-    schema = class_(schema_name)
+  def from_db (class_, schema=None):
+    if not isinstance(schema, class_):
+      schema = class_(schema)
 
-    owner = OracleIdentifier(schema_name)
-    if not owner:
-      owner = db.user
+    owner = schema.name.schema
 
     schema.log.info("Fetching schema {}".format(owner))
 
@@ -726,8 +726,12 @@ class Database (HasLog):
 
     diffs = []
     for schema_name in self.schemas:
-      db_schema = Schema.from_db(schema_name)
+      db_schema = Schema(schema_name)
       _current_database.add(db_schema)
+
+    for schema in _current_database.schemas.values():
+      Schema.from_db(schema)
+
     #_current_database.validate()
 
     for schema_name in self.schemas:
