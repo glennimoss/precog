@@ -100,6 +100,7 @@ plsql_stmt returns [mystmt]
 sql_stmt returns [stmt]
   : ( stmt_=create_table { $stmt = $stmt_.obj }
     | stmt_=create_index { $stmt = $stmt_.obj }
+    | insert_statement
     ) SEMI
   ;
 
@@ -221,6 +222,10 @@ tablespace_clause returns [props]
 @init { props = InsensitiveDict() }
   : kTABLESPACE ID { props['tablespace_name'] = $ID.text }
   ;
+
+insert_statement :
+        INSERT swallow_to_semi
+    ;
 
 /*
 
@@ -532,10 +537,6 @@ delete_statement :
         DELETE swallow_to_semi
     ;
 
-insert_statement :
-        INSERT swallow_to_semi
-    ;
-
 lock_table_statement :
         LOCK TABLE swallow_to_semi
     ;
@@ -558,10 +559,6 @@ set_transaction_statement :
 
 update_statement :
         UPDATE swallow_to_semi
-    ;
-
-swallow_to_semi :
-        ~( SEMI )+
     ;
 
 while_loop_statement :
@@ -777,6 +774,10 @@ kBITMAP : {self.input.LT(1).text.lower() == 'bitmap'}? ID;
 kCLOB : {self.input.LT(1).text.lower() == 'clob'}? ID;
 kTABLESPACE : {self.input.LT(1).text.lower() == 'tablespace'}? ID;
 kQUIT : {self.input.LT(1).text.lower() == 'quit' and self.aloneOnLine()}? ID;
+
+swallow_to_semi :
+        ~( SEMI )+
+    ;
 
 /*****
  * PL/SQL Reserved words

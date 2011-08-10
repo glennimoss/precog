@@ -1,12 +1,20 @@
-from antlr3.ext import (FileStream, MultiChannelTokenStream, NamedConstant,
-    StringStream)
+import logging
+from antlr3.ext import (InputStream, FileStream, MultiChannelTokenStream,
+    NamedConstant, StringStream)
 from precog.parser.sqlLexer import sqlLexer
 from precog.parser.sqlParser import sqlParser
 
 __all__ = ['file_parser', 'string_parser']
 
 def file_parser (filename):
-  return parser(FileStream(filename))
+  stream = FileStream
+  name = filename
+  if not isinstance(filename, str):
+    stream = InputStream
+    name = filename.name
+  logging.getLogger('precog.parser.file_parser()').info(
+      "Parsing file {}".format(name))
+  return parser(stream(filename))
 
 def string_parser (string):
   return parser(StringStream(string))

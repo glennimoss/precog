@@ -1,15 +1,26 @@
-from copy import copy
+import logging
+from pprint import pprint, pformat
+
 from precog import db
 from precog.errors import PrecogError
 
 class Diff (object):
+  DROP = 1
+  CREATE = 2
+  ALTER = 3
 
-  def __init__ (self, sql, dependencies={}, produces=None):
+  def __init__ (self, sql, dependencies={}, produces=None, priority=None):
     self.sql = sql
     if not isinstance(dependencies, set):
       dependencies = {dependencies}
     self.dependencies = dependencies
     self.produces = produces
+
+    if produces is None and priority is None:
+      priority = Diff.DROP
+    elif priority is None:
+      priority = Diff.ALTER
+    self.priority=priority
 
   def __repr__ (self):
     return "Diff({!r}, {!r}, {!r})".format(self.sql, self.dependencies,
@@ -25,12 +36,21 @@ class DiffCycleError (PrecogError):
   pass
 
 def order_diffs (diffs):
-  diffs = {diff.produces or diff: diff for diff in diffs}
+  log = logging.getLogger('precog.diff.order_diffs')
+
+  diffs = {diff.produces or diff: diff for diff in diffs if diff}
+  log.debug('Diffs:')
+  #for k,v in diffs.items():
+    #log.debug("  {}: {} depends on {}".format(
+      #k.sql if isinstance(k, Diff) else k.name, v.sql,
+      #", ".join(str(dep.name) for dep in v.dependencies)))
+
   # list of obj: [dependencies, ...]
   #edges = {obj: diff.dependencies for obj, diff in diffs.items()}
   edges = {}
   # Produced objects of diffs to be sorted
-  S = diffs.keys()
+  S = [node for node, devnull in
+      sorted(diffs.items(), key=lambda x: x[1].priority)]
 
   # create edge list
   for obj, diff in diffs.items():
@@ -41,6 +61,13 @@ def order_diffs (diffs):
         print("I don't think this should happen....")
 
       edges[obj].update(diff.dependencies)
+
+  log.debug('Edge list:')
+  for k,v in edges.items():
+    edges[k] = sorted(v, key=lambda x: diffs[x].priority if x in diffs else 0)
+    #log.debug("  {} -> {}".format(
+      #k.sql if isinstance(k, Diff) else k.name,
+      #", ".join(str(dep.name) for dep in v)))
 
   # list of sorted diffs
   L = []

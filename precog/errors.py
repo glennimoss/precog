@@ -65,5 +65,8 @@ class UnsatisfiedDependencyError (PrecogError):
     self.unsatisfied = unsatisfied
 
   def __str__ (self):
-    return "\n  ".join([''] + ["{}: {}".format(type(obj).__name__, obj.name)
-        for obj in self.unsatisfied])
+    return "\n  ".join([''] + ["{} {} referenced by {}".format(
+        type(obj).__name__, obj.name,
+        ", ".join(" ".join((type(ref).__name__, str(ref.name)))
+          for ref in obj.referenced_by()))
+      for obj in self.unsatisfied])

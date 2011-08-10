@@ -2,7 +2,8 @@ create index foo_idx on foo ( id );
 
 create table foo
   ( id number
-  , text vArChaR2(128)
+  , text vArChaR2(256)
+  , moredata CLOB
 );
 
 create table bar
@@ -17,3 +18,8 @@ create table baz
   , b number(7,9)
   , c number(*,13)
 );
+
+insert into baz (fizz, a) values ('foo', 9);
+insert into baz (fizz, a) values ('foo1', 9);
+insert into baz (fizz, a) values ('foo1', 9);
+
