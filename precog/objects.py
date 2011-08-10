@@ -414,20 +414,21 @@ class Index (HasColumns, OracleObject):
   def diff (self, other):
     diffs = []
 
-    if self.name.obj != other.name.obj:
-      diffs.append(Diff("ALTER INDEX {} RENAME TO {}"
-          .format(other.name, self.name.obj), other, self))
+    if self != other:
+      if self.name.obj != other.name.obj:
+        diffs.append(Diff("ALTER INDEX {} RENAME TO {}"
+            .format(other.name, self.name.obj), other, self))
 
-    if (self.props['tablespace_name'] and
-        self.props['tablespace_name'] != other.props['tablespace_name']):
-      diffs.append(Diff("ALTER INDEX {} REBUILD TABLESPACE {}"
-          .format(other.name, self.props['tablespace_name']), other, self))
+      if (self.props['tablespace_name'] and
+          self.props['tablespace_name'] != other.props['tablespace_name']):
+        diffs.append(Diff("ALTER INDEX {} REBUILD TABLESPACE {}"
+            .format(other.name, self.props['tablespace_name']), other, self))
 
-    recreate = other.diff_subobjects(self.columns, other.columns)
-    self.log.debug("Index's columns diffs: {}".format(recreate))
-    if recreate:
-      diffs.append(self.drop())
-      diffs.append(self.create())
+      drop = other.drop()
+      create = self.create()
+      create.dependencies.add(drop)
+      diffs.append(drop)
+      diffs.append(create)
 
     return diffs
 
