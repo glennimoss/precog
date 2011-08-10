@@ -603,8 +603,7 @@ class Schema (OracleObject):
     return [obj.create() for obj in objs]
 
   def drop_subobjects (self, objs):
-    return []
-    #return [obj.drop() for obj in objs]
+    return [obj.drop() for obj in objs]
 
   @classmethod
   def from_db (class_, schema=None):
