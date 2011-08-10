@@ -1,29 +1,70 @@
 #!/usr/bin/python3
 
-import sys
-import logging
+import argparse, logging, os, sys
 
 from precog.objects import Database
 from precog.errors import OracleError
 
-#logging.basicConfig(level=logging.DEBUG)
-logging.basicConfig(level=logging.INFO)
+# TODO: silly os doesn't pass in COLUMNS envvar... so 80 is assumed :(
+class HelpyArgparser(argparse.ArgumentParser):
+  def error (self, message):
+    if len(sys.argv) != 1:
+      sys.stderr.write("error: {}\n".format(message))
+    self.print_help()
+    sys.exit(1)
 
-connect_string = sys.argv[1]
-schema_name = connect_string.split('/')[0]
-database = Database.from_file(sys.argv[2], schema_name)
+parser = HelpyArgparser(description='Generate Oracle migration script.',
+    formatter_class=argparse.RawTextHelpFormatter)
+parser.add_argument('connect_string',
+    metavar='<username>/<password>@<connect_identifier>', type=str,
+    help='Oracle connection string')
+parser.add_argument('file', type=argparse.FileType('r'),
+    help='SQL*Plus script to parse')
+parser.add_argument('-v', '--verbose', action='append_const', const=True,
+    help='Verbose logging. Specify twice for more output.')
+parser.add_argument('-q', '--quiet', action='store_true',
+    help='Suppress output')
+args = parser.parse_args()
 
-diffs = database.diff_to_db(connect_string)
+log_config = {'style': '{', 'format': '{levelname}: {message}'}
+if args.quiet:
+  sys.stdout = open(os.devnull, 'w')
+  log_config['stream'] = sys.stdout
+elif args.verbose:
+  if len(args.verbose) > 1:
+    log_config['level'] = logging.DEBUG
+  else:
+    log_config['level'] = logging.INFO
+else:
+  log_config['level'] = logging.WARN
+  logging.basicConfig(level=logging.WARN)
+logging.basicConfig(**log_config)
 
-if diffs:
-  print('Delta script:')
-  print(";\n\n".join(str(diff) for diff in diffs) + ";\n")
+try:
+  schema_name = args.connect_string.split('/')[0]
+  database = Database.from_file(args.file, schema_name)
 
-  doit = input('Run script? [yN] ')
+  diffs = database.diff_to_db(args.connect_string)
 
-  if 'y' == doit.lower():
-    for diff in diffs:
-      try:
-        diff.apply()
-      except OracleError as e:
-        print(e)
+  if diffs:
+    print("Found {} changes:".format(len(diffs)))
+    print(";\n\n".join(str(diff) for diff in diffs) + ";\n")
+
+    doit = input('Run script? [yN] ')
+
+    errors = 0
+    if 'y' == doit.lower():
+      for diff in diffs:
+        try:
+          diff.apply()
+        except OracleError as e:
+          print(e)
+          errors += 1
+    if errors:
+      print()
+      print("Unable to apply {} changes.".format(errors))
+
+  else:
+    print("Oracle is up to date with {}".format(args.file.name))
+except Exception as e:
+  print(e)
