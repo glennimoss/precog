@@ -49,7 +49,7 @@ class OracleObject (HasLog):
     return "-- Placeholder for {} {}".format(type(self).__name__, self.name)
 
   def create (self):
-    return Diff(self.sql, self.dependencies(), self)
+    return Diff(self.sql(), self.dependencies(), self)
 
   def drop (self):
     return Diff("DROP {} {}".format(self.type, self.name), self)
