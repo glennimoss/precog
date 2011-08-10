@@ -1,7 +1,43 @@
-import cx_Oracle
+import logging
+
 from precog.identifier import OracleIdentifier, name_from_oracle
-from precog.util import HasLog, InsensitiveDict
+from precog.util import InsensitiveDict
 from precog.errors import OracleError
+
+try:
+  import cx_Oracle
+except ImportError as e:
+  logging.getLogger('precog.db').warn(
+      "Unable to load cx_Oracle: {}\nUsing stub...".format(e))
+
+  class DummyModule (object):
+    class DummyConnection (object):
+      class DummyCursor (list):
+        def execute (self, *args, **kvargs):
+          return []
+
+        rowcount = 0
+
+        description = []
+
+        def close (self):
+          pass
+
+      def cursor (self):
+        return self.DummyCursor()
+
+      def close (self):
+        pass
+
+      username = 'dummy'
+
+    def connect (self, connect_string):
+      return self.DummyConnection()
+
+    def close (self):
+      pass
+
+  cx_Oracle = DummyModule()
 
 _connection = None
 _curs = None
@@ -13,27 +49,13 @@ def connect (connect_string):
     _curs.close()
   if _connection:
     _connection.close()
-  try:
-    _connection = cx_Oracle.connect(connect_string)
-    user = OracleIdentifier(_connection.username)
-    _curs = _connection.cursor()
-  except ImportError as e:
-    HasLog.log_for(connect).warn(
-        "Unable to load cx_Oracle: {}\nUsing stub...".format(e))
 
-    class DummyConnection (object):
-      class DummyCursor (list):
-        def execute (self, *args, **kvargs):
-          return []
-
-        rowcount = 0
-
-        description = []
-
-      def cursor (self):
-        return DummyCursor()
-
-    _connection = DummyConnection()
+  _connection = cx_Oracle.connect(connect_string)
+  user = OracleIdentifier(_connection.username)
+  _curs = _connection.cursor()
+  # The recyclebin causes problems when trying to drop several objects that
+  # depend on each other.
+  _curs.execute('ALTER SESSION SET RECYCLEBIN=OFF')
 
 def _rowfactory (row, cursor, oracle_names=[]):
   row = InsensitiveDict(zip((column[0] for column in cursor.description), row))
