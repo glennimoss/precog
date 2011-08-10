@@ -45,8 +45,18 @@ class OracleObject (HasLog):
   def __hash__ (self):
     return hash((type(self), self.name))
 
-  def sql (self, fq=True):
-    return "-- Placeholder for {} {}".format(type(self).__name__, self.name)
+  def sql (self, fq=None):
+    type_name = ''
+    if self.deferred:
+      type_name = 'deferred '
+    elif hasattr(self, '_sql'):
+      if fq is None:
+        return self._sql()
+      else:
+        return self._sql(fq)
+
+    type_name += type(self).__name__
+    return "-- Placeholder for {} {}".format(type_name, self.name)
 
   def create (self):
     return Diff(self.sql(), self.dependencies(), self)
@@ -223,7 +233,7 @@ class Table (HasColumns, OracleObject):
     # a Table doesn't depend on its columns
     return set()
 
-  def sql (self, fq=True):
+  def _sql (self, fq=True):
     name = self.name.obj
     if fq:
       name = self.name
@@ -305,7 +315,7 @@ class Column (HasTable, OracleObject):
         #', '.join(prop.lower() + '=' + repr(val)
           #for prop, val in self.props.items()) + ')')
 
-  def sql (self, fq=False):
+  def _sql (self, fq=False):
     parts = []
     name = self.name if fq else self.name.part
     parts.append(str(name))
@@ -394,7 +404,7 @@ class Index (HasColumns, OracleObject):
 
     self._columns = value
 
-  def sql (self, fq=True):
+  def _sql (self, fq=True):
     name = self.name.obj
     if fq:
       name = self.name
