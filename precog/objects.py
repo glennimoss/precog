@@ -160,7 +160,7 @@ class HasColumns (object):
   @columns.setter
   def columns (self, value):
     if not isinstance(value, list):
-      raise TypeError("expected list: {}".format(value))
+      raise TypeError("Expected list: {!r}".format(value))
     self._columns = value
 
   def satisfy (self, other):
@@ -186,6 +186,17 @@ class HasTable (object):
       return False
     return self.table == other.table
 
+  @property
+  def table (self):
+    return self._table
+
+  @table.setter
+  def table (self, value):
+    if value:
+      if not isinstance(value, Table):
+        raise TypeError("Expected Table: {!r}".format(value))
+      self._table = value
+
   def satisfy (self, other):
     if self.deferred:
       super().satisfy(other)
@@ -203,12 +214,9 @@ class Table (HasColumns, OracleObject):
 
   @HasColumns.columns.setter
   def columns (self, value):
-    if not isinstance(value, list):
-      raise TypeError("Table expected list: {}".format(value))
+    HasColumns.columns.__set__(self, value)
     for column in value:
       column.table = self
-
-    self._columns = value
 
   @property
   def indexes (self):
@@ -299,21 +307,11 @@ class Column (HasTable, OracleObject):
     if self.props['data_default']:
       self.props['data_default'] = self.props['data_default'].strip()
 
-  @property
-  def table (self):
-    return self._table
-
-  @table.setter
+  @HasTable.table.setter
   def table (self, value):
-    self._table = value
     if value:
-      self.name.schema = value.name.schema
-      self.name.obj = value.name.obj
-
-  #def __repr__ (self):
-    #return ("Column('" + self.name.part + "', " +
-        #', '.join(prop.lower() + '=' + repr(val)
-          #for prop, val in self.props.items()) + ')')
+      HasTable.table.__set__(self, value)
+      self.name = OracleFQN(value.name.schema, value.name.obj, self.name.part)
 
   def _sql (self, fq=False):
     parts = []
@@ -391,8 +389,7 @@ class Index (HasColumns, OracleObject):
 
   @HasColumns.columns.setter
   def columns (self, value):
-    if not isinstance(value, list):
-      raise TypeError("Index expected list: {}".format(value))
+    HasColumns.columns.__set__(self, value)
     if value:
       tablename = value[0].name.obj
 
@@ -401,8 +398,6 @@ class Index (HasColumns, OracleObject):
           raise TableConflict(column, tablename)
 
       self._tablename = tablename
-
-    self._columns = value
 
   def _sql (self, fq=True):
     name = self.name.obj
