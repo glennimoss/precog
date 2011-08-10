@@ -184,7 +184,7 @@ class HasTable (object):
   def __eq__ (self, other):
     if not super().__eq__(other):
       return False
-    return self.table == other.table
+    return self.table.name == other.table.name
 
   @property
   def table (self):
