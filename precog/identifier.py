@@ -65,12 +65,24 @@ class OracleFQN (object):
     if from_oracle:
       make_name = name_from_oracle
 
-    self.schema = make_name(schema) if schema else None
-    self.obj = make_name(obj) if obj else None
-    self.part = make_name(part) if part else None
+    self._schema = make_name(schema) if schema else None
+    self._obj = make_name(obj) if obj else None
+    self._part = make_name(part) if part else None
 
     if not (self.schema or self.obj or self.part):
       raise OracleNameError('have to have a name')
+
+  @property
+  def schema (self):
+    return self._schema
+
+  @property
+  def obj (self):
+    return self._obj
+
+  @property
+  def part (self):
+    return self._part
 
   def __str__ (self):
     return '.'.join(x for x in (self.schema, self.obj, self.part) if x)
