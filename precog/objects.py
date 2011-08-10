@@ -134,8 +134,8 @@ class HasColumns (object):
   """ Mixin for objects that have the columns property """
 
   def __init__ (self, name, columns=[], **props):
+    self._columns = []
     super().__init__(name, **props)
-
     self.columns = columns
 
   __hash__ = OracleObject.__hash__
@@ -228,6 +228,16 @@ class Table (HasColumns, OracleObject):
       index.table = self
 
     self._indexes = value
+
+  @property
+  def name (self):
+    return self._name
+
+  @name.setter
+  def name (self, value):
+    self._name = value
+    # Reset the names of all the columns
+    self.columns = self._columns
 
   def __repr__ (self):
     return super().__repr__(indexes=self.indexes)
