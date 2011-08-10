@@ -70,7 +70,6 @@ class OracleObject (HasLog):
       self.log.warn(
           "Comparing {!r} to deferred object {!r}".format(self, other))
     if self != other:
-      self.log.debug('OracleObject: self != other')
       return [Diff(self.sql(), self.dependencies(), self)]
 
     return []
@@ -545,7 +544,7 @@ class Schema (OracleObject):
                               name in self.shared_namespace):
       if name in self.deferred and type(self.deferred[name]) == obj_type:
         # Not a name conflict
-        self.log.debug('Satisfying deferred object')
+        self.log.debug("Satisfying deferred object {}".format(name))
         deferred = namespace[name]
         deferred.satisfy(obj)
         del self.deferred[name]
@@ -562,6 +561,7 @@ class Schema (OracleObject):
         self.add(col)
 
   def find (self, name, obj_type=Table, deferred=True):
+    self.log.debug("Finding {} {!r}".format(obj_type.__name__, name))
     if not isinstance(name, OracleFQN):
       name = OracleFQN(self.name.schema, name)
 
@@ -619,8 +619,8 @@ class Schema (OracleObject):
                   """, o=owner)
 
     for obj in rs:
-      schema.log.debug("Fetching {} {}".format(obj['object_type'],
-        obj['object_name']))
+      schema.log.debug(
+          "Fetching {} {}".format(obj['object_type'], obj['object_name']))
       object_name = make_name(obj['object_name'])
 
       class_name = ''.join(word.capitalize()
@@ -746,7 +746,7 @@ class Database (HasLog):
         for obj_name in sorted([obj_name for obj_name in
             schema.objects[obj_type]], key=lambda n: str(n)):
           database.log.debug(
-              " {}".format(schema.objects[obj_type][obj_name].sql(True)))
+              "    {}".format(schema.objects[obj_type][obj_name].sql(True)))
 
     return database
 
