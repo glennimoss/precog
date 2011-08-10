@@ -65,8 +65,16 @@ class HasLog (object):
   """ Mixin for making a log named after the class """
 
   def __init__ (self):
-    self.log = HasLog.log_for(type(self))
+    self.log = HasLog.log_for(self)
 
   @staticmethod
-  def log_for (class_):
-    return logging.getLogger("{}.{}".format(class_.__module__, class_.__name__))
+  def log_for (obj):
+    id_ = ''
+    if isinstance(obj, type):
+      class_ = obj
+    else:
+      class_ = type(obj)
+      id_ = ".{}".format(id(obj))
+
+    return logging.getLogger(
+        "{}.{}{}".format(class_.__module__, class_.__name__, id_))
