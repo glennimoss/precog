@@ -35,8 +35,10 @@ class OracleObject (HasLog):
     if self.name != other.name:
       return False
 
-    if self.props != other.props:
-      return False
+    common_props = self.props.keys() & other.props.keys()
+    for prop_name in common_props:
+      if self.props[prop_name] != other.props[prop_name]:
+        return False
 
     return True
 
