@@ -565,7 +565,7 @@ class Schema (OracleObject):
       for col in obj.columns:
         self.add(col)
 
-  def find (self, name, obj_type=Table, deferred=True):
+  def find (self, name, obj_type, deferred=True):
     self.log.debug("Finding {} {!r}".format(obj_type.__name__, name))
     if not isinstance(name, OracleFQN):
       name = OracleFQN(self.name.schema, name)
@@ -690,7 +690,7 @@ class Database (HasLog):
     from precog import parser
     parser.file_parser(filename).sqlplus_file(self)
 
-  def find (self, name, obj_type=Table, deferred=True):
+  def find (self, name, obj_type, deferred=True):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(self.default_schema, name)
 
