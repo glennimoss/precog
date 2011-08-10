@@ -195,7 +195,11 @@ create_index returns [obj]
   props = InsensitiveDict()
 }
 @after { obj = Index($index_name.ident, columns=columns, **props) }
-  : CREATE ( UNIQUE /*| BITMAP*/ )? INDEX index_name=identifier
+  : CREATE ( UNIQUE { props['uniqueness'] = 'UNIQUE' }
+           | kBITMAP
+           | { props['uniqueness'] = 'NONUNIQUE' }
+           )
+    INDEX index_name=identifier
     ON table_name=identifier /*table_alias=ID?*/
     LPAREN
       c=ID {
@@ -769,6 +773,7 @@ kROWCOUNT : {self.input.LT(1).text.lower() == "rowcount"}? ID;
 //kVALUES : {self.input.LT(1).text.lower() == "values"}? ID;
 
 
+kBITMAP : {self.input.LT(1).text.lower() == 'bitmap'}? ID;
 kCLOB : {self.input.LT(1).text.lower() == 'clob'}? ID;
 kTABLESPACE : {self.input.LT(1).text.lower() == 'tablespace'}? ID;
 kQUIT : {self.input.LT(1).text.lower() == 'quit' and self.aloneOnLine()}? ID;
