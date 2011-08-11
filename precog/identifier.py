@@ -11,6 +11,10 @@ class OracleIdentifier (str):
   def has_parts (name):
     return bool(re.match(r'^"[^"]+"(\."[^"]+")+$', name))
 
+  @staticmethod
+  def simple_name (name):
+    return bool(re.match('^[A-Z_$#][0-9A-Z_$#]*$', name.strip('"')))
+
   def __new__ (self, identifier):
     if isinstance(identifier, OracleIdentifier):
       return identifier
@@ -22,7 +26,12 @@ class OracleIdentifier (str):
     else:
       identifier = str(identifier)
       quoted = identifier.startswith('"') and identifier.endswith('"')
-      if not quoted:
+      # Normalize names
+      if quoted:
+        if OracleIdentifier.simple_name(identifier):
+          identifier = identifier.strip('"')
+          quoted = False
+      else:
         identifier = identifier.upper()
 
       if len(identifier) == (0 if not quoted else 2):
@@ -112,7 +121,7 @@ def name_from_oracle (name):
   if OracleIdentifier.has_parts(name):
     return OracleIdentifier(name)
 
-  if name.upper() == name:
+  if OracleIdentifier.simple_name(name):
     try:
       return OracleIdentifier(name)
     except ReservedNameError:
