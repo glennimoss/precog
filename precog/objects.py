@@ -504,6 +504,9 @@ class Lob (OracleObject):
   def drop (self):
     return None
 
+class Data (HasColumns, OracleObject):
+  pass
+
 class PlsqlCode (OracleObject):
   pass
 

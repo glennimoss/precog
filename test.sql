@@ -1,4 +1,4 @@
-create index foo_idx on foo ( id );
+create index foo_idx on foo F ( "F".id );
 
 create table foo
   ( id number

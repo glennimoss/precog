@@ -1,32 +1,19 @@
 /*
 Oracle SQL parser.
 
-Originally based on:
-| Oracle PL/SQL grammar built with ANTLR v3.2 and v3.1.3. I only vouch that it works for v3.2, though.
-|
-| Author: Patrick Higgins
-| License: GNU Lesser General Public License, version 2.1 or (at your option) any later version.
-|
-| I have used a swallow_to_semi trick to avoid parsing SQL statements and other statements that were not of value to me.
-| The idea was that a separate parser for SQL would be created (I believe this is what Oracle itself does).
-|
-| Nearly all of the PL/SQL language from 11g is in this grammar, though. It works on all files in a fairly large code
-| base.
-|
-| This has some limited support for parsing SQL*Plus files, which turns out to be pretty hard to work into ANTLR.
-|
-| It works for my usage, but I think doing it properly would mean writing a Java class to parse the SQL*Plus language
-| (which is pretty simple and shouldn't need ANTLR) and another adapter for ANTLR which enables tracking back to the
-| original source line numbers. This PL/SQL parser might be invoked many times for each SQL*Plus file.
+Originally based on a grammar by Patrick Higgins
 */
 
 grammar sql;
 
 options {
   language=Python;
+  superClass=LoggingParser;
 }
 
 scope g { database }
+
+scope aliases { map }
 
 @lexer::header {
   from antlr3.ext import NamedConstant, FileStream
@@ -37,11 +24,14 @@ scope g { database }
 @parser::header {
   from antlr3.ext import NamedConstant, FileStream
   from . import util
-  from precog.identifier import OracleFQN
+  from precog.identifier import OracleFQN, OracleIdentifier
   from precog.objects import *
   from precog.util import InsensitiveDict
 
   NL_CHANNEL = DEFAULT_CHANNEL + 1
+
+  class LoggingParser (HasLog, Parser):
+    pass
 }
 @lexer::init {
   self.aloneOnLine = util.aloneOnLine(lambda p: self.input.LT(p))
@@ -124,6 +114,36 @@ identifier returns [ident]
       $ident = OracleFQN(schema, obj, part)
     }
   ;
+
+aliasing_identifier returns [ident]
+  : i=identifier alias=ID? {
+      $ident = $i.ident
+      if $alias:
+        if not $aliases::map:
+          $aliases::map = {}
+
+        alias = OracleIdentifier($alias.text)
+        $aliases::map[alias] = $ident
+    }
+  ;
+
+aliased_identifier returns [ident]
+  : (alias=ID DOT)? i=ID {
+      if $alias:
+        alias_name = OracleIdentifier($alias.text)
+        if alias_name not in $aliases::map:
+          self.log.warn("Alias [{}] does not exist in statement on line {},{}. "
+            "Pretending there is no alias.".format(alias_name, $alias.line,
+            $alias.charPositionInLine + 1))
+          $ident = $i.text
+        else:
+          resolved = $aliases::map[alias_name]
+          $ident = OracleFQN(resolved.schema, resolved.obj, $i.text)
+      else:
+        $ident = $i.text
+    }
+  ;
+
 create_table returns [obj]
 @init {
   columns = []
@@ -191,31 +211,37 @@ user_data_type returns [props]
   ;
 
 create_index returns [obj]
+scope { columns; table }
+scope aliases;
 @init {
-  columns = []
+  $create_index::columns = []
   props = InsensitiveDict()
 }
-@after { obj = Index($index_name.ident, columns=columns, **props) }
+@after {
+  obj = Index($index_name.ident, columns=$create_index::columns, **props)
+}
   : CREATE ( UNIQUE { props['uniqueness'] = 'UNIQUE' }
            | kBITMAP
            | { props['uniqueness'] = 'NONUNIQUE' }
            )
     INDEX index_name=identifier
-    ON table_name=identifier /*table_alias=ID?*/
+    ON table_name=aliasing_identifier
+      { $create_index::table = $table_name.ident}
     LPAREN
-      c=ID {
-        columns.append($g::database.find(
-          OracleFQN($table_name.ident.schema, $table_name.ident.obj, $c.text),
-          Column))
-        }
-      (COMMA c=ID {
-        columns.append($g::database.find(
-          OracleFQN($table_name.ident.schema, $table_name.ident.obj, $c.text),
-          Column))
-        }
-      )*
+      create_index_column (COMMA create_index_column)*
     RPAREN
     (tablespace_clause { props.update($tablespace_clause.props) })?
+  ;
+
+create_index_column
+  : c=aliased_identifier {
+      fqn = $c.ident
+      if not isinstance(fqn, OracleFQN):
+        fqn = OracleFQN($create_index::table.schema,
+          $create_index::table.obj, $c.ident)
+
+      $create_index::columns.append($g::database.find(fqn, Column))
+    }
   ;
 
 tablespace_clause returns [props]
@@ -223,8 +249,12 @@ tablespace_clause returns [props]
   : kTABLESPACE ID { props['tablespace_name'] = $ID.text }
   ;
 
-insert_statement :
-        INSERT swallow_to_semi
+insert_statement
+  : INSERT INTO table_name=aliasing_identifier
+    LPAREN
+      .*
+    RPAREN
+    swallow_to_semi
     ;
 
 /*

@@ -64,8 +64,10 @@ def coerced_comparison (class_):
 class HasLog (object):
   """ Mixin for making a log named after the class """
 
-  def __init__ (self):
+  def __init__ (self, *args, **kwargs):
     self.log = HasLog.log_for(self)
+
+    super().__init__(*args, **kwargs)
 
   @staticmethod
   def log_for (obj):

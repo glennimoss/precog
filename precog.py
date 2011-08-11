@@ -55,6 +55,7 @@ prompt_group.add_argument('-n', '--no-apply', action='store_true',
 # Now GO!
 args = parser.parse_args()
 
+# Configure logger
 log_config = {'style': '{', 'format': '{levelname}: {message}'}
 if args.quiet:
   sys.stdout = open(os.devnull, 'w')
@@ -66,9 +67,9 @@ elif args.verbose:
     log_config['level'] = logging.INFO
 else:
   log_config['level'] = logging.WARN
-  logging.basicConfig(level=logging.WARN)
 logging.basicConfig(**log_config)
 
+# Precog time
 try:
   schema_name = args.username
   if args.schema:
