@@ -72,12 +72,18 @@ prog
   : stmt* EOF
   ;
 
-stmt 
-  : foo+=(WORD | SYMBOL)+ TERMINATOR -> ^(STMT $foo+)
+stmt
+  : //foo+=(WORD | SYMBOL)+ TERMINATOR
+    comma_separated[SYMBOL]
+  ;
+
+comma_separated[token]
+  : {self.input.LA(1) == $token}? . (COMMA^ {self.input.LA(1) == $token}? .)*
   ;
 
 WORD : ( 'a'..'z' | 'A'..'Z' | '0'..'9' )+ ;
-SYMBOL : ('!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')' ) { $channel=HIDDEN };
+SYMBOL : ('!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')' ) { #$channel=HIDDEN };
+COMMA : ',';
 SLASH : '/' ;
 NL : '\r'? '\n' { $channel=HIDDEN };
 SPACE	:	(' '|'\t') { $channel=HIDDEN };
@@ -86,7 +92,7 @@ SL_COMMENT
 	;
 ML_COMMENT
 	:	'/*' ( options {greedy=false;} : . )* '*/' { $channel=HIDDEN }
-	; 
+	;
 TERMINATOR
   : { self.aloneOnLine() }? SLASH
   ;

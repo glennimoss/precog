@@ -83,13 +83,14 @@ scope g;
 plsql_stmt returns [mystmt]
   : type=( DECLARE
     | BEGIN
-    | CREATE FUNCTION { $type = 'creating that function' }
+    | CREATE kFUNCTION { $type = 'creating that function' }
     ) content+=~(TERMINATOR)+ TERMINATOR { $mystmt = repr($type) + '[' + ']['.join(x.text for x in $content) + ']' }
   ;
 
 sql_stmt returns [stmt]
   : ( stmt_=create_table { $stmt = $stmt_.obj }
     | stmt_=create_index { $stmt = $stmt_.obj }
+    | stmt_=create_sequence { $stmt = $stmt_.obj }
     | insert_statement
     ) SEMI
   ;
@@ -145,69 +146,138 @@ aliased_identifier returns [ident]
   ;
 
 create_table returns [obj]
+scope { columns; }
 @init {
-  columns = []
+  $create_table::columns = []
   props = InsensitiveDict()
 }
-@after { obj = Table($ident.ident, columns=columns, **props) }
+@after { $obj = Table($ident.ident, columns=$create_table::columns, **props) }
   : CREATE TABLE ident=identifier
     LPAREN
-      c=column_specification { columns.append($c.column) }
-      (COMMA c=column_specification { columns.append($c.column) } )*
+      col_spec (COMMA col_spec)*
     RPAREN
     (tablespace_clause { props.update($tablespace_clause.props) })?
   ;
 
-column_specification returns [column]
-@after { column = Column($i.text, **$c.props) }
-  : i=ID c=column_data_type
-    ( DEFAULT e=expression { $c.props['data_default'] = $e.text } )?
-    ( NOT? NULL { $c.props['nullable'] = 'N' if $NOT else 'Y' } )?
+col_spec
+scope { props }
+@init { $col_spec::props = InsensitiveDict() }
+@after {
+  if $col_spec::props['leftovers']:
+    $col_spec::props['leftovers'] = ' '.join($col_spec::props['leftovers'])
+  else:
+    del $col_spec::props['leftovers']
+  $create_table::columns.append(Column($i.text, **$col_spec::props))
+}
+  : i=ID column_data_type
+    ( DEFAULT e=expression { $col_spec::props['data_default'] = $e.text } )?
+    { $col_spec::props['leftovers'] = [] }
+    ( ic=inline_constraint
+      {
+        #$col_spec::props.update($ic.props)
+        $col_spec::props['leftovers'].append($ic.text)
+      } )*
   ;
 
-column_data_type returns [props]
-@after { $props = $type_props.props }
-  :
-  ( type_props=numeric_data_type
-  | type_props=string_data_type
-  | type_props=other_data_type
-  | type_props=user_data_type
-  )
+column_data_type
+  : string_data_type
+  | numeric_data_type
+  | long_raw_data_type
+  | datetime_data_type
+  /*
+  | lob_data_type
+  | rowid_data_type
+  | oracle_data_type
+  */
+  | user_data_type
   ;
 
-numeric_data_type returns [props]
-@init { props = InsensitiveDict() }
-  : data_type=
-  (NUMBER
-  | FLOAT
-  ) { props['data_type'] = $data_type.text }
-  (p=numeric_data_type_precision { props.update($p.props) })?
+int_parameter returns [val]
+  : LPAREN i=tINTEGER RPAREN { $val = $i.val }
   ;
 
-numeric_data_type_precision returns [props]
-@init { $props = InsensitiveDict() }
-  : LPAREN ( precision=INTEGER
-           (COMMA scale=INTEGER { props['data_scale'] = int($scale.text) })?
-             { props['data_precision'] = int($precision.text) }
-           | ASTERISK COMMA scale=INTEGER
-             { props['data_scale'] = int($scale.text) } )
+string_data_type
+  : (t=CHAR | t=VARCHAR2) { $col_spec::props['data_type'] = $t.text }
+    ( LPAREN
+      l=tINTEGER { $col_spec::props['char_length'] = $l.val }
+      ( kBYTE { $col_spec::props['char_used'] = 'B' }
+      | CHAR { $col_spec::props['char_used'] = 'C' }
+      )?
+      RPAREN
+    )?
+  | (nt=kNCHAR | nt=kNVARCHAR2) { $col_spec::props['data_type'] = $nt.text }
+    (l=int_parameter { $col_spec::props['char_length'] = $l.val })?
+  ;
+
+numeric_data_type
+@after { $col_spec::props['data_type'] = (t or k).text }
+  : t=NUMBER number_precision?
+  | t=FLOAT (p=int_parameter { $col_spec::props['data_precision'] = $p.val })?
+  | k=kBINARY_FLOAT
+  | k=kBINARY_DOUBLE
+  ;
+
+number_precision
+  : LPAREN
+     ( precision=tINTEGER
+       { $col_spec::props['data_precision'] = $precision.val }
+       (COMMA scale=tINTEGER)?
+     | ASTERISK COMMA scale=tINTEGER
+     )
+     {
+       if $scale.val:
+         $col_spec::props['data_scale'] = $scale.val
+     }
     RPAREN
   ;
 
-string_data_type returns [props]
-@init { $props = InsensitiveDict() }
-  : type=VARCHAR2
-    ( LPAREN INTEGER RPAREN { $props['data_length'] = int($INTEGER.text) })?
-    { $props['data_type'] = $type.text }
+long_raw_data_type
+@after {
+  $col_spec::props['data_type'] = OracleIdentifier(
+    ' '.join(w.text.upper() for w in $t), True)
+}
+  : t+=LONG t+=RAW?
+  | t+=RAW i=int_parameter { $col_spec::props['data_length'] = $i.val }
   ;
 
-other_data_type returns [props]
-@init { $props = InsensitiveDict() }
-  : d=DATE { $props['data_type'] = $d.text }
+datetime_data_type
+  : DATE
+    { $col_spec::props['data_type'] = 'DATE' }
+  | kTIMESTAMP i=int_parameter? (t=WITH l=kLOCAL? kTIME kZONE)?
+    {
+      $col_spec::props['data_type'] = "TIMESTAMP({}){}".format(
+        $i.val or 6,
+        " WITH {}TIME ZONE".format('LOCAL ' if $l.text else '')
+          if $t else '')
+    }
+  | kINTERVAL
+    ( kYEAR i=int_parameter? TO kMONTH
+    {
+      $col_spec::props['data_type'] = "INTERVAL YEAR({}) TO MONTH".format(
+        $i.val or 2)
+    }
+    | kDAY d=int_parameter? TO kSECOND s=int_parameter?
+    {
+      $col_spec::props['data_type'] = "INTERVAL DAY({}) TO SECOND({})".format(
+        $d.val or 2, $s.val or 6)
+    }
+    )
   ;
 
 user_data_type returns [props]
   : i=identifier { $props = InsensitiveDict([('data_type', str($i.ident))]) }
+  ;
+
+inline_constraint returns [props]
+@init { $props = InsensitiveDict() }
+  : ( kCONSTRAINT constraint_name=ID )?
+    ( NOT? NULL { $props['nullable'] = 'N' if $NOT else 'Y' }
+    | UNIQUE
+    | kPRIMARY kKEY
+    | CHECK LPAREN expression RPAREN
+    | kREFERENCES ref=identifier (LPAREN col=ID RPAREN)?
+      (ON DELETE (kCASCADE | SET NULL))?
+    )
   ;
 
 create_index returns [obj]
@@ -218,7 +288,7 @@ scope aliases;
   props = InsensitiveDict()
 }
 @after {
-  obj = Index($index_name.ident, columns=$create_index::columns, **props)
+  $obj = Index($index_name.ident, columns=$create_index::columns, **props)
 }
   : CREATE ( UNIQUE { props['uniqueness'] = 'UNIQUE' }
            | kBITMAP
@@ -245,8 +315,43 @@ create_index_column
   ;
 
 tablespace_clause returns [props]
-@init { props = InsensitiveDict() }
-  : kTABLESPACE ID { props['tablespace_name'] = $ID.text }
+@init { $props = InsensitiveDict() }
+  : kTABLESPACE ID { $props['tablespace_name'] = $ID.text }
+  ;
+
+create_sequence returns [obj]
+scope { props }
+@init { $create_sequence::props = InsensitiveDict() }
+@after { $obj = Sequence($i.ident, **$create_sequence::props) }
+  : CREATE kSEQUENCE i=identifier
+    sequence_prop*
+  ;
+
+sequence_prop
+  : INCREMENT BY n=T_INTEGER
+    { $create_sequence::props['increment_by'] = int($n.text) }
+  | START WITH n=T_INTEGER
+    { $create_sequence::props['start_with'] = int($n.text) }
+  | kMAXVALUE n=T_INTEGER
+    { $create_sequence::props['maxvalue'] = int($n.text) }
+  | kNOMAXVALUE
+    { $create_sequence::props['maxvalue'] = 9999999999999999999999999999 }
+  | kMINVALUE n=T_INTEGER
+    { $create_sequence::props['minvalue'] = int($n.text) }
+  | kNOMINVALUE
+    { $create_sequence::props['minvalue'] = 1 }
+  | kCYCLE
+    { $create_sequence::props['cycle_flag'] = 'Y' }
+  | kNOCYCLE
+    { $create_sequence::props['cycle_flag'] = 'N' }
+  | kCACHE n=T_INTEGER
+    { $create_sequence::props['cache_size'] = int($n.text) }
+  | kNOCACHE
+    { $create_sequence::props['cache_size'] = 0 }
+  | ORDER
+    { $create_sequence::props['order_flag'] = 'Y' }
+  | kNOORDER
+    { $create_sequence::props['order_flag'] = 'N' }
   ;
 
 insert_statement
@@ -645,7 +750,7 @@ numeric_expression
     ;
 
 add_expr
-    : mul_expr ( ( MINUS | PLUS | DOUBLEVERTBAR ) mul_expr )*
+    : mul_expr ( ( HYPHEN | PLUS | DOUBLEVERTBAR ) mul_expr )*
     ;
 
 mul_expr
@@ -653,7 +758,7 @@ mul_expr
     ;
 
 unary_sign_expr
-    : ( MINUS | PLUS )? exponent_expr
+    : ( HYPHEN | PLUS )? exponent_expr
     ;
 
 exponent_expr
@@ -684,10 +789,10 @@ call
     ;
 
 attribute
-    : BULK_ROWCOUNT LPAREN expression RPAREN
+    : kBULK_ROWCOUNT LPAREN expression RPAREN
     | kFOUND
-    | ISOPEN
-    | NOTFOUND
+    | kISOPEN
+    | kNOTFOUND
     | kROWCOUNT
     ;
 
@@ -697,8 +802,8 @@ call_args
 
 boolean_atom
     : boolean_literal
-    | collection_exists
-    | conditional_predicate
+    /*| collection_exists
+    | conditional_predicate*/
     ;
 
 numeric_atom
@@ -706,19 +811,20 @@ numeric_atom
     ;
 
 numeric_literal
-    : INTEGER
+    : T_INTEGER
     | REAL_NUMBER
     ;
 
 boolean_literal
-    : TRUE
-    | FALSE
+    : kTRUE
+    | kFALSE
     ;
 
 string_literal
     : QUOTED_STRING
     ;
 
+/*
 collection_exists
     : ID DOT EXISTS LPAREN expression RPAREN
     ;
@@ -728,6 +834,7 @@ conditional_predicate
     | UPDATING ( LPAREN QUOTED_STRING RPAREN )?
     | DELETING
     ;
+    */
 
 parameter
     : ( ID ARROW )? expression
@@ -800,14 +907,62 @@ kROWCOUNT : {self.input.LT(1).text.lower() == "rowcount"}? ID;
 //kVALUES : {self.input.LT(1).text.lower() == "values"}? ID;
 
 
+kBINARY_DOUBLE : {self.input.LT(1).text.lower() == 'binary_double'}? ID;
+kBINARY_FLOAT : {self.input.LT(1).text.lower() == 'binary_float'}? ID;
 kBITMAP : {self.input.LT(1).text.lower() == 'bitmap'}? ID;
+kBULK_ROWCOUNT : {self.input.LT(1).text.lower() == 'bulk_rowcount'}? ID;
+kBYTE : {self.input.LT(1).text.lower() == 'byte'}? ID;
+kCACHE : {self.input.LT(1).text.lower() == 'cache'}? ID;
+kCASCADE : {self.input.LT(1).text.lower() == 'cascade'}? ID;
 kCLOB : {self.input.LT(1).text.lower() == 'clob'}? ID;
-kTABLESPACE : {self.input.LT(1).text.lower() == 'tablespace'}? ID;
+kCONSTRAINT : {self.input.LT(1).text.lower() == 'constraint'}? ID;
+kCYCLE : {self.input.LT(1).text.lower() == 'cycle'}? ID;
+kDAY : {self.input.LT(1).text.lower() == 'day'}? ID;
+kDELETING : {self.input.LT(1).text.lower() == 'deleting'}? ID;
+kFALSE : {self.input.LT(1).text.lower() == 'false'}? ID;
+kFUNCTION : {self.input.LT(1).text.lower() == 'function'}? ID;
+kINSERTING : {self.input.LT(1).text.lower() == 'inserting'}? ID;
+kINTERVAL : {self.input.LT(1).text.lower() == 'interval'}? ID;
+kISOPEN : {self.input.LT(1).text.lower() == 'isopen'}? ID;
+kKEY : {self.input.LT(1).text.lower() == 'key'}? ID;
+kLOCAL : {self.input.LT(1).text.lower() == 'local'}? ID;
+kMAXVALUE : {self.input.LT(1).text.lower() == 'maxvalue'}? ID;
+kMINVALUE : {self.input.LT(1).text.lower() == 'minvalue'}? ID;
+kMONTH : {self.input.LT(1).text.lower() == 'month'}? ID;
+kNCHAR : {self.input.LT(1).text.lower() == 'nchar'}? ID;
+kNOCACHE : {self.input.LT(1).text.lower() == 'nocache'}? ID;
+kNOCYCLE : {self.input.LT(1).text.lower() == 'nocycle'}? ID;
+kNOMAXVALUE : {self.input.LT(1).text.lower() == 'nomaxvalue'}? ID;
+kNOMINVALUE : {self.input.LT(1).text.lower() == 'nominvalue'}? ID;
+kNOORDER : {self.input.LT(1).text.lower() == 'noorder'}? ID;
+kNOTFOUND : {self.input.LT(1).text.lower() == 'notfound'}? ID;
+kNVARCHAR2 : {self.input.LT(1).text.lower() == 'nvarchar2'}? ID;
+kPRIMARY : {self.input.LT(1).text.lower() == 'primary'}? ID;
 kQUIT : {self.input.LT(1).text.lower() == 'quit' and self.aloneOnLine()}? ID;
+kREFERENCES : {self.input.LT(1).text.lower() == 'references'}? ID;
+kSECOND : {self.input.LT(1).text.lower() == 'second'}? ID;
+kSEQUENCE : {self.input.LT(1).text.lower() == 'sequence'}? ID;
+kTABLESPACE : {self.input.LT(1).text.lower() == 'tablespace'}? ID;
+kTIME : {self.input.LT(1).text.lower() == 'time'}? ID;
+kTIMESTAMP : {self.input.LT(1).text.lower() == 'timestamp'}? ID;
+kTRUE : {self.input.LT(1).text.lower() == 'true'}? ID;
+kUPDATING : {self.input.LT(1).text.lower() == 'updating'}? ID;
+kYEAR : {self.input.LT(1).text.lower() == 'year'}? ID;
+kZONE : {self.input.LT(1).text.lower() == 'zone'}? ID;
+// kXYZZY : {self.input.LT(1).text.lower() == 'xyzzy'}? ID;
+
+swallow_to_comma :
+        ( ~COMMA )=> ~( COMMA )+
+    ;
 
 swallow_to_semi :
         ~( SEMI )+
     ;
+
+tINTEGER returns [val]
+  : i=T_INTEGER { $val = int($i.text) }
+  ;
+
 
 /*****
  * PL/SQL Reserved words
@@ -817,117 +972,136 @@ kWHEN	:	{self.input.LT(1).text.lower() == 'when'}? ID;
 /*****
  * Keywords
  *****/
-ADD : 'add' ;
-ALTER : 'alter' ;
-AND	:	'and'	;
-ARRAY : 'array' ;
-AS : 'as' ;
-AUTHID: 'authid';
-BEGIN	:	'begin'	;
-BETWEEN : 'between' ;
-BODY	:	'body';
-BULK: 'bulk';
-BULK_ROWCOUNT: 'bulk_rowcount';
-BY	:	'by';
-CASE: 'case';
-CHAR : 'char' ;
-CHECK : 'check' ;
-CLOSE	:	'close';
-COLLECT:	'collect';
-COMMIT	:	'commit';
-CONSTANT	:	'constant'	;
-CONTINUE:	'continue';
-CREATE: 'create';
-CURRENT_USER: 'current_user';
-CURSOR	:	'cursor'	;
-DATE : 'date' ;
-DECLARE	:	'declare'	;
-DEFAULT : 'default' ;
-DEFINER: 'definer';
-DELETE	:	'delete';
-DELETING:	'deleting';
-DETERMINISTIC	: 'deterministic'	;
-DROP : 'drop' ;
-ELSE : 'else' ;
-ELSIF	:	'elsif';
-END	:	'end'	;
-EXCEPTION	:	'exception'	;
-EXECUTE	:	'execute';
-EXISTS	:	'exists';
-EXIT	:	'exit';
-EXTERNAL:	'external';
-FALSE	:	'false';
-FETCH	:	'fetch';
+ACCESS : 'access';
+ADD : 'add';
+ALL : 'all';
+ALTER : 'alter';
+AND : 'and';
+ANY : 'any';
+AS : 'as';
+ASC : 'asc';
+AT : 'at';
+AUDIT : 'audit';
+BEGIN : 'begin';
+BETWEEN : 'between';
+BY : 'by';
+CASE : 'case';
+CHAR : 'char';
+CHECK : 'check';
+CLUSTER : 'cluster';
+CLUSTERS : 'clusters';
+COLAUTH : 'colauth';
+COLUMN : 'column';
+COLUMNS : 'columns';
+COMMENT : 'comment';
+COMPRESS : 'compress';
+CONNECT : 'connect';
+CRASH : 'crash';
+CREATE : 'create';
+CURRENT : 'current';
+DATE : 'date';
+DECIMAL : 'decimal';
+DECLARE : 'declare';
+DEFAULT : 'default';
+DELETE : 'delete';
+DESC : 'desc';
+DISTINCT : 'distinct';
+DROP : 'drop';
+ELSE : 'else';
+END : 'end';
+EXCEPTION : 'exception';
+EXCLUSIVE : 'exclusive';
+EXISTS : 'exists';
+FETCH : 'fetch';
+FILE : 'file';
 FLOAT : 'float';
-FOR : 'for' ;
-FORALL : 'forall' ;
-FROM : 'from' ;
-FUNCTION	:	'function'	;
-GOTO	:	'goto';
-IF	:	'if';
-IMMEDIATE	:	'immediate';
-IN : 'in' ;
-INCREMENT : 'increment' ;
-INDEX : 'index' ;
-INSERT	:	'insert';
-INSERTING :	'inserting';
-INTO	:	'into';
-IS : 'is' ;
-ISOPEN	:	'isopen';
-LANGUAGE:	'language';
-LIKE : 'like' ;
-LIMIT : 'limit' ;
-LOCK	:	'lock';
-LOOP	:	'loop';
-NOCOPY	:	'nocopy'	;
-NOT : 'not' ;
-NOTFOUND:	'notfound';
-NULL : 'null' ;
-NUMBER : 'number' ;
-OF : 'of' ;
-ON : 'on' ;
-OPEN	:	'open';
-OR : 'or' ;
-OTHERS	:	'others'	;
-OUT	:	'out'	;
-PACKAGE: 'package';
-PARALLEL_ENABLE	:	'parallel_enable';
-PIPELINED	:	'pipelined'	;
-PRAGMA	:	'pragma'	;
-PROCEDURE	:	'procedure'	;
-RAISE	:	'raise';
-RECORD	:	'record'	;
-REF	:	'ref'	;
-RESULT_CACHE	:	'result_cache'	;
-RETURN	:	'return'	;
-RETURNING	:	'returning'	;
-ROLLBACK:	'rollback';
-ROW : 'row' ;
-ROWTYPE	:	'rowtype'	;
-SAVEPOINT	:	'savepoint';
-SELECT	:	'select';
-SET	:	'set';
-SQL	:	'sql';
-START : 'start' ;
-SUBTYPE	:	'subtype'	;
-SYSDATE : 'sysdate' ;
-TABLE	:	'table';
-THEN : 'then' ;
-TRANSACTION	:	'transaction';
-TRIGGER : 'trigger' ;
-TRUE	:	'true';
+FOR : 'for';
+FROM : 'from';
+GOTO : 'goto';
+GRANT : 'grant';
+GROUP : 'group';
+HAVING : 'having';
+IDENTIFIED : 'identified';
+IF : 'if';
+IMMEDIATE : 'immediate';
+IN : 'in';
+INCREMENT : 'increment';
+INDEX : 'index';
+INDEXES : 'indexes';
+INITIAL : 'initial';
+INSERT : 'insert';
+INTEGER : 'integer';
+INTERSECT : 'intersect';
+INTO : 'into';
+IS : 'is';
+LEVEL : 'level';
+LIKE : 'like';
+LOCK : 'lock';
+LONG : 'long';
+MAXEXTENTS : 'maxextents';
+MINUS : 'minus';
+MLSLABEL : 'mlslabel';
+MODE : 'mode';
+MODIFY : 'modify';
+NOAUDIT : 'noaudit';
+NOCOMPRESS : 'nocompress';
+NOT : 'not';
+NOWAIT : 'nowait';
+NULL : 'null';
+NUMBER : 'number';
+OF : 'of';
+OFFLINE : 'offline';
+ON : 'on';
+ONLINE : 'online';
+OPTION : 'option';
+OR : 'or';
+ORDER : 'order';
+OVERLAPS : 'overlaps';
+PCTFREE : 'pctfree';
+PRIOR : 'prior';
+PRIVILEGES : 'privileges';
+PROCEDURE : 'procedure';
+PUBLIC : 'public';
+RAW : 'raw';
+RENAME : 'rename';
+RESOURCE : 'resource';
+REVOKE : 'revoke';
+ROW : 'row';
+ROWID : 'rowid';
+ROWNUM : 'rownum';
+ROWS : 'rows';
+SELECT : 'select';
+SESSION : 'session';
+SET : 'set';
+SHARE : 'share';
+SIZE : 'size';
+SMALLINT : 'smallint';
+SQL : 'sql';
+START : 'start';
+SUCCESSFUL : 'successful';
+SYNONYM : 'synonym';
+SYSDATE : 'sysdate';
+TABAUTH : 'tabauth';
+TABLE : 'table';
+THEN : 'then';
+TO : 'to';
+TRIGGER : 'trigger';
+UID : 'uid';
+UNION : 'union';
 UNIQUE : 'unique';
-UPDATE	:	'update';
-UPDATING:	'updating';
-USING:	'using'	;
-VALUES : 'values' ;
-VARCHAR : 'varchar' ;
-VARCHAR2 : 'varchar2' ;
-VARRAY	:	'varray'	;
-VARYING	:	'varying'	;
-WHERE : 'where' ;
-WHILE	:	'while';
-WITH : 'with' ;
+UPDATE : 'update';
+USER : 'user';
+VALIDATE : 'validate';
+VALUES : 'values';
+VARCHAR : 'varchar';
+VARCHAR2 : 'varchar2';
+VIEW : 'view';
+VIEWS : 'views';
+WHEN : 'when';
+WHENEVER : 'whenever';
+WHERE : 'where';
+WITH : 'with';
+
 
 QUOTED_STRING
 	:	( 'n' )? '\'' ( '\'\'' | ~('\'') )* '\''
@@ -981,7 +1155,7 @@ LBRACK
 PLUS
 	:	'+'
 	;
-MINUS
+HYPHEN
 	:	'-'
 	;
 SLASH
@@ -1026,11 +1200,11 @@ GTH
 GEQ
 	:	'>='
 	;
-INTEGER
+T_INTEGER
     :   N
     ;
 REAL_NUMBER
-	:	NUMBER_VALUE	( 'e' ( PLUS | MINUS )? N )?
+	:	NUMBER_VALUE	( 'e' ( PLUS | HYPHEN )? N )?
 	;
 fragment
 NUMBER_VALUE

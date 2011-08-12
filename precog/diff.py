@@ -9,7 +9,7 @@ class Diff (object):
   CREATE = 2
   ALTER = 3
 
-  def __init__ (self, sql, dependencies={}, produces=None, priority=None):
+  def __init__ (self, sql, dependencies=set(), produces=None, priority=None):
     self.sql = sql
     if not isinstance(dependencies, set):
       dependencies = {dependencies}

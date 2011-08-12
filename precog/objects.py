@@ -1,3 +1,5 @@
+import logging
+
 from precog import db
 from precog.diff import Diff, order_diffs
 from precog.errors import *
@@ -86,6 +88,18 @@ class OracleObject (HasLog):
       return [self.create()]
 
     return []
+
+  def _diff_props (self, other):
+    prop_diff = InsensitiveDict((prop, expected)
+        for prop, expected in self.props.items()
+        if expected != other.props[prop])
+
+    if self.log.isEnabledFor(logging.DEBUG):
+      for prop in prop_diff:
+        self.log.debug("Prop: {} expected: {}, found {}".format(prop,
+          repr(self.props[prop]), repr(other.props[prop])))
+
+    return prop_diff
 
   def diff_subobjects (self, target_objs, current_objs):
     diffs = []
@@ -317,19 +331,28 @@ class Table (HasColumns, OracleObject):
 
 class Column (HasTable, OracleObject):
 
-  def __init__ (self, name, **props):
+  def __init__ (self, name, leftovers=None, **props):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(part=name)
     super().__init__(name, **props)
 
-    if self.props['data_type']:
+    self.leftovers = leftovers
+
+    if (self.props['data_type'] and
+        not isinstance(self.props['data_type'], OracleIdentifier)):
       try:
         self.props['data_type'] = OracleIdentifier(self.props['data_type'])
       except ReservedNameError:
         self.props['data_type'] = self.props['data_type'].upper()
+      except OracleNameError:
+        # We'll keep it as-is. Maybe it will work, maybe it will blow up later
+        pass
 
     if self.props['data_default']:
       self.props['data_default'] = self.props['data_default'].strip()
+
+  def __repr__ (self):
+    return super().__repr__(leftovers=self.leftovers)
 
   @HasTable.table.setter
   def table (self, value):
@@ -350,12 +373,17 @@ class Column (HasTable, OracleObject):
         scale = (",{}".format(self.props["data_scale"])
             if self.props['data_scale'] else '')
         data_type += "({}{})".format(precision, scale)
-    elif self.props['data_length']:
-      data_type += "({})".format(self.props['data_length'])
+    else:
+      length = self.props['char_length'] or self.props['data_length']
+      if length:
+        data_type += "({})".format(length)
     parts.append(data_type)
 
     if self.props['data_default']:
       parts.append("DEFAULT {}".format(self.props['data_default']))
+
+    if self.leftovers:
+      parts.append(self.leftovers)
 
     return " ".join(parts)
 
@@ -368,14 +396,9 @@ class Column (HasTable, OracleObject):
           .format(other.table.name, other.name.part, self.name.part),
           {other.table, other}, self))
 
-    prop_diff = InsensitiveDict((prop, other.props[prop])
-        for prop, expected in self.props.items()
-        if expected != other.props[prop])
+    prop_diff = self._diff_props(other)
 
     if prop_diff:
-      for prop in prop_diff:
-        self.log.debug("Prop: {} expected: {}, found {}".format(prop,
-          repr(self.props[prop]), repr(other.props[prop])))
       diffs.append(Diff("ALTER TABLE {} MODIFY ( {} )".format(
         other.table.name, self.sql()), {other.table, other}, self))
 
@@ -395,12 +418,14 @@ class Column (HasTable, OracleObject):
                            , data_precision
                            , data_scale
                            , data_default
+                           , char_length
+                           , char_used
                         FROM all_tab_cols
                         WHERE owner = :o
                           AND table_name = :t
                           AND (:c IS NULL OR column_name = :c)
                     """, o=name.schema, t=name.obj, c=name.part,
-                    oracle_names=['column_name', 'data_type'])
+                    oracle_names=['column_name'])
 
     return [class_(name, database=into_database, **dict(props))
       for (devnull, name), *props in (row.items() for row in rs)]
@@ -461,7 +486,7 @@ class Index (HasColumns, OracleObject):
     return diffs
 
   @classmethod
-  def from_db (class_, name, into_database=None):
+  def from_db (class_, name, into_database):
     rs = db.query(""" SELECT uniqueness
                            , tablespace_name
                            , CURSOR(SELECT table_owner
@@ -474,8 +499,8 @@ class Index (HasColumns, OracleObject):
                              ) AS columns
                       FROM all_indexes ai
                       WHERE owner = :o
-                        AND index_name = :t
-                  """, o=name.schema, t=name.obj,
+                        AND index_name = :n
+                  """, o=name.schema, n=name.obj,
                   oracle_names=['tablespace_name', 'table_owner', 'table_name',
                     'column_name'])
     if not rs:
@@ -487,7 +512,66 @@ class Index (HasColumns, OracleObject):
     return class_(name, database=into_database, columns=columns, **dict(props))
 
 class Sequence (OracleObject):
-  pass
+
+  def __init__ (self, name, start_with=None, **props):
+    super().__init__(name, **props)
+    self.start_with = start_with
+
+  def _sql (self, fq=True, operation='CREATE', props=None):
+    name = self.name.obj
+    if fq:
+      name = self.name
+
+    if not props:
+      props = self.props
+
+    parts = ["{} SEQUENCE {}".format(operation, name)]
+    if self.props['increment_by']:
+      parts.append("INCREMENT BY {}".format(self.props['increment_by']))
+    if self.props['maxvalue']:
+      parts.append("MAXVALUE {}".format(self.props['maxvalue']))
+    if self.props['minvalue']:
+      parts.append("MINVALUE {}".format(self.props['minvalue']))
+    if self.props['cycle_flag']:
+      parts.append("{}CYCLE".format(
+        'NO' if self.props['cycle_flag'] == 'N' else ''))
+    if self.props['cache_size']:
+      parts.append("CACHE {}".format(self.props['cache_size']))
+    if self.props['order_flag']:
+      parts.append("{}ORDER".format(
+        'NO' if self.props['order_flag'] == 'N' else ''))
+
+    if 'CREATE' == operation and self.start_with:
+      # START WITH only applies on creation, and can't be validated after.
+      parts.append("START WITH {}".format(self.start_with))
+
+    return ' '.join(parts)
+
+  def diff (self, other):
+    diffs = []
+
+    prop_diff = self._diff_props(other)
+    if prop_diff:
+      diffs.append(Diff(self.sql(operation='ALTER', props=prop_diff),
+        produces=self, priority=diff.ALTER))
+
+    return diffs
+
+  @classmethod
+  def from_db (class_, name, into_database=None):
+    rs = db.query(""" SELECT min_value
+                           , max_value
+                           , increment_by
+                           , cycle_flag
+                           , order_flag
+                           , cache_size
+                      FROM all_sequences
+                      WHERE sequence_owner = :o
+                        AND sequence_name = :n
+                  """, o=name.schema, n=name.obj)
+    if not rs:
+      return None
+    return class_(name, database=into_database, **rs[0])
 
 class Synonym (OracleObject):
   pass
@@ -658,6 +742,10 @@ class Schema (OracleObject):
                   """, o=owner)
 
     for obj in rs:
+      if obj['object_name'].startswith('SYS_'):
+        schema.log.info("Ignoring system object {}".format(obj['object_name']))
+        continue
+
       schema.log.debug(
           "Fetching {} {}".format(obj['object_type'], obj['object_name']))
       object_name = make_name(obj['object_name'])

@@ -15,13 +15,13 @@ class OracleIdentifier (str):
   def simple_name (name):
     return bool(re.match('^[A-Z_$#][0-9A-Z_$#]*$', name.strip('"')))
 
-  def __new__ (self, identifier):
+  def __new__ (self, identifier, trust_me=False):
     if isinstance(identifier, OracleIdentifier):
       return identifier
 
-    if OracleIdentifier.has_parts(identifier):
-      # Sometimes names can have multiple dotted parts. This is for object
-      # columns and is probably only coming from oracle, so we'll trust it.
+    if trust_me:
+      # Sometimes names can violate these conditions, but whoever is creating
+      # this object is sure they know what they're doing. Do you?
       pass
     else:
       identifier = str(identifier)
@@ -119,14 +119,14 @@ def name_from_oracle (name):
 
   # Sometimes the name has multiple parts, so we'll try and use it as-is.
   if OracleIdentifier.has_parts(name):
-    return OracleIdentifier(name)
+    return OracleIdentifier(name, True)
 
   if OracleIdentifier.simple_name(name):
     try:
       return OracleIdentifier(name)
     except ReservedNameError:
-      # built-in types will just be strings
-      return name
+      # built-in types
+      return OracleIdentifier(name, True)
     except OracleNameError:
       pass
 
