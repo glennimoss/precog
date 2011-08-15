@@ -1,5 +1,7 @@
 class PrecogError (Exception):
-  pass
+
+  def __str__ (self):
+    return "{}: {}".format(type(self).__name__, super().__str__())
 
 class OracleError (PrecogError):
   pass
@@ -65,8 +67,8 @@ class UnsatisfiedDependencyError (PrecogError):
     self.unsatisfied = unsatisfied
 
   def __str__ (self):
-    return "\n  ".join([''] + ["{} {} referenced by {}".format(
-        type(obj).__name__, obj.name,
-        ", ".join(" ".join((type(ref).__name__, str(ref.name)))
+    return super().__str__() + "\n  ".join(
+        [''] + ["{} {} referenced by {}".format(type(obj).__name__, obj.name,
+          ", ".join(" ".join((type(ref).__name__, str(ref.name)))
           for ref in obj.referenced_by()))
-      for obj in self.unsatisfied])
+        for obj in self.unsatisfied])

@@ -4,7 +4,8 @@ from precog import db
 from precog.diff import Diff, order_diffs
 from precog.errors import *
 from precog.identifier import *
-from precog.util import classproperty, HasLog, InsensitiveDict
+from precog.util import (classproperty, HasLog, InsensitiveDict, ValidatingList,
+    ValidationError)
 
 class OracleObject (HasLog):
 
@@ -447,14 +448,18 @@ class Index (HasColumns, OracleObject):
 
   @HasColumns.columns.setter
   def columns (self, value):
-    HasColumns.columns.__set__(self, value)
     if value:
       tablename = value[0].name
+      tablename = OracleFQN(tablename.schema, tablename.obj)
 
-      for column in value:
-        if (column.name.schema != tablename.schema or
-            column.name.obj != tablename.obj):
-          raise TableConflict(column, tablename)
+      try:
+        value = ValidatingList(
+          lambda i: (i.name.schema == tablename.schema and
+                     i.name.obj == tablename.obj))(value)
+      except ValidationError as e:
+        raise TableConflict(e.invalid, tablename) from e
+
+      HasColumns.columns.__set__(self, value)
 
       self._tablename = tablename
       self.database.find(tablename, Table).indexes.add(self)

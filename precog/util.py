@@ -30,6 +30,53 @@ class InsensitiveDict (OrderedDict):
 
     return super().__contains__(key)
 
+def ValidatingList (validator):
+  def validate_each (items):
+    for i in items:
+      validate(i)
+
+  def validate (item):
+    if not validator(item):
+      raise ValidationError(item)
+
+  class ValidatingList (list):
+    def __init__ (self, init):
+      validate_each(init)
+      super().__init__(init)
+
+    def __add__ (self, other):
+      return MyList(super().__add__(other))
+
+    def __iadd__ (self, other):
+      validate_each(other)
+      return super().__iadd__(other)
+
+    def __setitem__ (self, i, other):
+      validate(other)
+      super().__setitem__(i, other)
+
+    def append (self, other):
+      validate(other)
+      super().append(other)
+
+    def extend (self, other):
+      validate_each(other)
+      super().extend(other)
+
+    def insert (self, i, other):
+      validate(other)
+      super().insert(i, other)
+
+  return ValidatingList
+
+class ValidationError (Exception):
+
+  def __init__ (self, invalid):
+    self.invalid = invalid
+
+  def __str__ (self):
+    return "Item {!r} failed validation".format(self.invalid)
+
 def coerced_comparison (class_):
   def coerced_method (m):
     def c_m (self, other):
