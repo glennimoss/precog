@@ -11,7 +11,7 @@ options {
   superClass=LoggingParser;
 }
 
-scope g { database }
+scope g { database; stmt_begin }
 
 scope aliases { map }
 
@@ -26,6 +26,7 @@ scope tab_col_ref { table; columns }
 @parser::header {
   from antlr3.ext import NamedConstant, FileStream
   from . import util
+  from precog.errors import PrecogError
   from precog.identifier import OracleFQN, OracleIdentifier
   from precog.objects import *
   from precog.util import InsensitiveDict
@@ -80,6 +81,11 @@ scope g;
       /*| stmt=plsql_stmt*/
       )* EOF
     ;
+catch [PrecogError as e] {
+  self.log.error("in {}:{} {}:".format(self.input.getSourceName(),
+    $g::stmt_begin, type(e).__name__))
+  raise e
+}
 
 
 plsql_stmt returns [mystmt]
@@ -90,7 +96,8 @@ plsql_stmt returns [mystmt]
   ;
 
 sql_stmt returns [stmt]
-  : ( stmt_=create_table { $stmt = $stmt_.obj }
+  : { $g::stmt_begin = self.input.LT(1).line }
+    ( stmt_=create_table { $stmt = $stmt_.obj }
     | stmt_=create_index { $stmt = $stmt_.obj }
     | stmt_=create_sequence { $stmt = $stmt_.obj }
     | stmt_=insert_statement { $stmt = $stmt_.obj }

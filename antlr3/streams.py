@@ -539,7 +539,6 @@ class ANTLRFileStream(ANTLRStringStream):
 
         """
 
-        self.fileName = fileName
 
         fp = codecs.open(fileName, 'rb', encoding)
         try:
@@ -548,12 +547,7 @@ class ANTLRFileStream(ANTLRStringStream):
             fp.close()
 
         ANTLRStringStream.__init__(self, data)
-
-
-    def getSourceName(self):
-        """Deprecated, access o.fileName directly."""
-
-        return self.fileName
+        self.name = fileName
 
 
 class ANTLRInputStream(ANTLRStringStream):
@@ -584,6 +578,7 @@ class ANTLRInputStream(ANTLRStringStream):
         data = file.read()
 
         ANTLRStringStream.__init__(self, data)
+        self.name = file.name
 
 
 # I guess the ANTLR prefix exists only to avoid a name clash with some Java
