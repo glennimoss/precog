@@ -234,8 +234,10 @@ class HasTable (object):
 
 class Table (HasColumns, OracleObject):
 
-  def __init__ (self, name, indexes=set(), **props):
+  def __init__ (self, name, indexes=None, **props):
     super().__init__(name, **props)
+    if not indexes:
+      indexes = set()
     self.indexes = indexes
 
   @HasColumns.columns.setter
@@ -326,7 +328,6 @@ class Table (HasColumns, OracleObject):
       return None
     return class_(name, database=into_database,
         columns=Column.from_db(name, into_database), **rs[0])
-
 
 
 class Column (HasTable, OracleObject):
@@ -444,13 +445,16 @@ class Index (HasColumns, OracleObject):
   def columns (self, value):
     HasColumns.columns.__set__(self, value)
     if value:
-      tablename = value[0].name.obj
+      tablename = value[0].name
 
       for column in value:
-        if column.name.obj != tablename:
+        if (column.name.schema != tablename.schema or
+            column.name.obj != tablename.obj):
           raise TableConflict(column, tablename)
 
       self._tablename = tablename
+      self.database.find(tablename, Table).indexes.add(self)
+
 
   def _sql (self, fq=True):
     name = self.name.obj
