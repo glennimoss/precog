@@ -160,7 +160,10 @@ scope { columns; }
   $create_table::columns = []
   props = InsensitiveDict()
 }
-@after { $obj = Table($ident.ident, columns=$create_table::columns, **props) }
+@after {
+  $obj = Table($ident.ident, columns=$create_table::columns,
+    database=$g::database, **props)
+}
   : CREATE TABLE ident=identifier
     LPAREN
       col_spec (COMMA col_spec)*
@@ -329,7 +332,8 @@ scope aliases, tab_col_ref;
   props = InsensitiveDict()
 }
 @after {
-  $obj = Index($index_name.ident, columns=$create_index::columns, **props)
+  $obj = Index($index_name.ident, columns=$tab_col_ref::columns,
+    database=$g::database, **props)
 }
   : CREATE ( UNIQUE { props['uniqueness'] = 'UNIQUE' }
            | kBITMAP
@@ -352,7 +356,9 @@ tablespace_clause returns [props]
 create_sequence returns [obj]
 scope { props }
 @init { $create_sequence::props = InsensitiveDict() }
-@after { $obj = Sequence($i.ident, **$create_sequence::props) }
+@after {
+  $obj = Sequence($i.ident, database=$g::database, **$create_sequence::props)
+}
   : CREATE kSEQUENCE i=identifier
     sequence_prop*
   ;
