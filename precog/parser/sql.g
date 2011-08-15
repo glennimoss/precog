@@ -15,6 +15,8 @@ scope g { database }
 
 scope aliases { map }
 
+scope tab_col_ref { table; columns }
+
 @lexer::header {
   from antlr3.ext import NamedConstant, FileStream
   from . import util
@@ -91,7 +93,7 @@ sql_stmt returns [stmt]
   : ( stmt_=create_table { $stmt = $stmt_.obj }
     | stmt_=create_index { $stmt = $stmt_.obj }
     | stmt_=create_sequence { $stmt = $stmt_.obj }
-    | insert_statement
+    | stmt_=insert_statement { $stmt = $stmt_.obj }
     ) SEMI
   ;
 
@@ -302,11 +304,21 @@ inline_constraint returns [props]
     )
   ;
 
+column_ref
+  : c=aliased_identifier {
+      fqn = $c.ident
+      if not isinstance(fqn, OracleFQN):
+        fqn = OracleFQN($tab_col_ref::table.schema,
+          $tab_col_ref::table.obj, $c.ident)
+
+      $tab_col_ref::columns.append($g::database.find(fqn, Column))
+    }
+  ;
+
 create_index returns [obj]
-scope { columns; table }
-scope aliases;
+scope aliases, tab_col_ref;
 @init {
-  $create_index::columns = []
+  $tab_col_ref::columns = []
   props = InsensitiveDict()
 }
 @after {
@@ -318,22 +330,11 @@ scope aliases;
            )
     INDEX index_name=identifier
     ON table_name=aliasing_identifier
-      { $create_index::table = $table_name.ident}
+      { $tab_col_ref::table = $table_name.ident}
     LPAREN
-      create_index_column (COMMA create_index_column)*
+      column_ref (COMMA column_ref)*
     RPAREN
     (tablespace_clause { props.update($tablespace_clause.props) })?
-  ;
-
-create_index_column
-  : c=aliased_identifier {
-      fqn = $c.ident
-      if not isinstance(fqn, OracleFQN):
-        fqn = OracleFQN($create_index::table.schema,
-          $create_index::table.obj, $c.ident)
-
-      $create_index::columns.append($g::database.find(fqn, Column))
-    }
   ;
 
 tablespace_clause returns [props]
@@ -376,12 +377,23 @@ sequence_prop
     { $create_sequence::props['order_flag'] = 'N' }
   ;
 
-insert_statement
+insert_statement returns [obj]
+scope aliases, tab_col_ref;
+@init {
+  $tab_col_ref::columns = []
+}
+@after {
+  $obj = Data()
+
   : INSERT INTO table_name=aliasing_identifier
+    { $tab_col_ref::insert = $table_name.ident }
     LPAREN
-      .*
+      column_ref (COMMA column_ref)*
     RPAREN
-    swallow_to_semi
+    VALUES
+    LPAREN
+      expression (COMMA expression)*
+    RPAREN
     ;
 
 /*
@@ -926,7 +938,6 @@ kROWCOUNT : {self.input.LT(1).text.lower() == "rowcount"}? ID;
 //kSAVE : {self.input.LT(1).text.lower() == "save"}? ID;
 //kSHOW : {self.input.LT(1).text.lower() == "show"}? ID;
 //kTYPE : {self.input.LT(1).text.lower() == "type"}? ID;
-//kVALUES : {self.input.LT(1).text.lower() == "values"}? ID;
 
 
 kBFILE : {self.input.LT(1).text.lower() == 'bfile'}? ID;
