@@ -7,6 +7,10 @@ from precog.identifier import *
 from precog.util import (classproperty, HasLog, InsensitiveDict, ValidatingList,
     ValidationError)
 
+def _type_to_class (type):
+  class_name = ''.join(word.capitalize() for word in type.split())
+  return globals()[class_name]
+
 class OracleObject (HasLog):
 
   @classproperty
@@ -602,7 +606,34 @@ class Lob (OracleObject):
     return None
 
 class PlsqlCode (OracleObject):
-  pass
+
+  @staticmethod
+  def new (type, name, source, **props):
+    # Create object of subclass, based on the Oracle type passed in
+    class_ = _type_to_class(type)
+    return class_(name, source, **props)
+
+  def __init__ (self, name, source, **props):
+    props['source'] = source
+    super().__init__(name, **props)
+
+  def _sql (self, fq=True):
+    return "CREATE OR REPLACE {}".format(self.props['source'])
+
+  @classmethod
+  def from_db (class_, name, into_database=None):
+    rs = db.query(""" SELECT text
+                      FROM all_source
+                      WHERE owner = :o
+                        AND name = :n
+                        AND type = :t
+                      ORDER BY line
+                  """, o=name.schema, n=name.obj, t=class_.type)
+    if not rs:
+      return None
+    return class_(name, ''.join(row['text'] for row in rs),
+        database=into_database)
+
 
 #######################################
 # PL/SQL Code Objects
@@ -760,10 +791,8 @@ class Schema (OracleObject):
           "Fetching {} {}".format(obj['object_type'], obj['object_name']))
       object_name = make_name(obj['object_name'])
 
-      class_name = ''.join(word.capitalize()
-          for word in obj['object_type'].split())
       try:
-        class_ = globals()[class_name]
+        class_ = _type_to_class(obj['object_type'])
         obj = class_.from_db(object_name, into_database=schema.database)
         schema.add(obj)
       except (NameError, KeyError) as e:

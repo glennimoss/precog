@@ -62,13 +62,12 @@ scope tab_col_ref { table; columns }
 
   def main(argv):
     from precog import reserved
+    from antlr3.ext import IterableTokenStream
 
     #from antlr3.ext import MultiChannelTokenStream
     inStream = FileStream(argv[1])
     lexer = sqlLexer(inStream)
-    #tokenStream = MultiChannelTokenStream(lexer)
-    #tokenStream.add(NL_CHANNEL, HIDDEN)
-    tokenStream = CommonTokenStream(lexer)
+    tokenStream = IterableTokenStream(lexer)
     for t in tokenStream:
       print(t)
 }
@@ -76,9 +75,11 @@ scope tab_col_ref { table; columns }
 sqlplus_file[database]
 scope g;
 @init { $g::database = database }
-    : ( stmt=sql_stmt { $g::database.add($stmt.stmt) }
-      | stmt=sqlplus_stmt { print($stmt.stmt) }
-      /*| stmt=plsql_stmt*/
+    : ( { $g::stmt_begin = self.input.LT(1).line }
+        ( stmt=sql_stmt
+        | stmt=plsql_stmt
+        )  { $g::database.add($stmt.obj) }
+      /*| stmt=sqlplus_stmt { print($stmt.obj) }*/
       )* EOF
     ;
 catch [PrecogError as e] {
@@ -88,19 +89,34 @@ catch [PrecogError as e] {
 }
 
 
-plsql_stmt returns [mystmt]
-  : type=( DECLARE
-    | BEGIN
-    | CREATE kFUNCTION { $type = 'creating that function' }
-    ) content+=~(TERMINATOR)+ TERMINATOR { $mystmt = repr($type) + '[' + ']['.join(x.text for x in $content) + ']' }
+plsql_stmt returns [obj]
+scope { type; name }
+@after {
+  $obj = PlsqlCode.new($plsql_stmt::type, $plsql_stmt::name, $source.text)
+}
+  : CREATE (OR kREPLACE)? source=plsql_object_def
   ;
 
-sql_stmt returns [stmt]
-  : { $g::stmt_begin = self.input.LT(1).line }
-    ( stmt_=create_table { $stmt = $stmt_.obj }
-    | stmt_=create_index { $stmt = $stmt_.obj }
-    | stmt_=create_sequence { $stmt = $stmt_.obj }
-    | stmt_=insert_statement { $stmt = $stmt_.obj }
+plsql_object_def
+  : ( kFUNCTION { $plsql_stmt::type = 'FUNCTION' }
+    | PROCEDURE { $plsql_stmt::type = 'PROCEDURE' }
+    | kPACKAGE b=kBODY?
+      { $plsql_stmt::type = "PACKAGE{}".format(' BODY' if $b.text else '') }
+    | TRIGGER { $plsql_stmt::type = 'TRIGGER' }
+    | kTYPE b=kBODY?
+      { $plsql_stmt::type = "TYPE{}".format(' BODY' if $b.text else '') }
+    ) i=identifier { $plsql_stmt::name = $i.ident }
+    ( IS | AS )
+    ( (~TERMINATOR)=> ~TERMINATOR )+
+    TERMINATOR
+  ;
+
+
+sql_stmt returns [obj]
+  : ( stmt_=create_table { $obj = $stmt_.obj }
+    | stmt_=create_index { $obj = $stmt_.obj }
+    | stmt_=create_sequence { $obj = $stmt_.obj }
+    | stmt_=insert_statement { $obj = $stmt_.obj }
     ) SEMI
   ;
 
@@ -943,11 +959,9 @@ kFOUND : {self.input.LT(1).text.lower() == "found"}? ID;
 kMOD : {self.input.LT(1).text.lower() == "mod"}? ID;
 //kNAME : {self.input.LT(1).text.lower() == "name"}? ID;
 //kOF : {self.input.LT(1).text.lower() == "of"}? ID;
-//kREPLACE : {self.input.LT(1).text.lower() == "replace"}? ID;
 kROWCOUNT : {self.input.LT(1).text.lower() == "rowcount"}? ID;
 //kSAVE : {self.input.LT(1).text.lower() == "save"}? ID;
 //kSHOW : {self.input.LT(1).text.lower() == "show"}? ID;
-//kTYPE : {self.input.LT(1).text.lower() == "type"}? ID;
 
 
 kBFILE : {self.input.LT(1).text.lower() == 'bfile'}? ID;
@@ -955,6 +969,7 @@ kBINARY_DOUBLE : {self.input.LT(1).text.lower() == 'binary_double'}? ID;
 kBINARY_FLOAT : {self.input.LT(1).text.lower() == 'binary_float'}? ID;
 kBITMAP : {self.input.LT(1).text.lower() == 'bitmap'}? ID;
 kBLOB : {self.input.LT(1).text.lower() == 'blob'}? ID;
+kBODY : {self.input.LT(1).text.lower() == 'body'}? ID;
 kBULK_ROWCOUNT : {self.input.LT(1).text.lower() == 'bulk_rowcount'}? ID;
 kBYTE : {self.input.LT(1).text.lower() == 'byte'}? ID;
 kCACHE : {self.input.LT(1).text.lower() == 'cache'}? ID;
@@ -983,15 +998,18 @@ kNOMINVALUE : {self.input.LT(1).text.lower() == 'nominvalue'}? ID;
 kNOORDER : {self.input.LT(1).text.lower() == 'noorder'}? ID;
 kNOTFOUND : {self.input.LT(1).text.lower() == 'notfound'}? ID;
 kNVARCHAR2 : {self.input.LT(1).text.lower() == 'nvarchar2'}? ID;
+kPACKAGE : {self.input.LT(1).text.lower() == 'package'}? ID;
 kPRIMARY : {self.input.LT(1).text.lower() == 'primary'}? ID;
 kQUIT : {self.input.LT(1).text.lower() == 'quit' and self.aloneOnLine()}? ID;
 kREFERENCES : {self.input.LT(1).text.lower() == 'references'}? ID;
+kREPLACE : {self.input.LT(1).text.lower() == 'replace'}? ID;
 kSECOND : {self.input.LT(1).text.lower() == 'second'}? ID;
 kSEQUENCE : {self.input.LT(1).text.lower() == 'sequence'}? ID;
 kTABLESPACE : {self.input.LT(1).text.lower() == 'tablespace'}? ID;
 kTIME : {self.input.LT(1).text.lower() == 'time'}? ID;
 kTIMESTAMP : {self.input.LT(1).text.lower() == 'timestamp'}? ID;
 kTRUE : {self.input.LT(1).text.lower() == 'true'}? ID;
+kTYPE : {self.input.LT(1).text.lower() == 'type'}? ID;
 kUPDATING : {self.input.LT(1).text.lower() == 'updating'}? ID;
 kURITYPE : {self.input.LT(1).text.lower() == 'uritype'}? ID;
 kUROWID : {self.input.LT(1).text.lower() == 'urowid'}? ID;
@@ -1000,13 +1018,11 @@ kYEAR : {self.input.LT(1).text.lower() == 'year'}? ID;
 kZONE : {self.input.LT(1).text.lower() == 'zone'}? ID;
 // kXYZZY : {self.input.LT(1).text.lower() == 'xyzzy'}? ID;
 
-swallow_to_comma :
-        ( ~COMMA )=> ~( COMMA )+
-    ;
-
-swallow_to_semi :
-        ~( SEMI )+
-    ;
+/*
+swallow_to_semi
+  : ~( SEMI )+
+  ;
+  */
 
 tINTEGER returns [val]
   : i=T_INTEGER { $val = int($i.text) }
