@@ -389,11 +389,8 @@ scope aliases, tab_col_ref;
 @init {
   $tab_col_ref::columns = []
 }
-@after {
-  $obj = Data()
-
   : INSERT INTO table_name=aliasing_identifier
-    { $tab_col_ref::insert = $table_name.ident }
+    { $tab_col_ref::table = $table_name.ident }
     LPAREN
       column_ref (COMMA column_ref)*
     RPAREN

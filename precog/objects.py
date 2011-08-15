@@ -239,6 +239,7 @@ class Table (HasColumns, OracleObject):
     if not indexes:
       indexes = set()
     self.indexes = indexes
+    self.data = []
 
   @HasColumns.columns.setter
   def columns (self, value):
@@ -591,9 +592,6 @@ class Lob (OracleObject):
   # Can't drop lobs like this
   def drop (self):
     return None
-
-class Data (HasColumns, OracleObject):
-  pass
 
 class PlsqlCode (OracleObject):
   pass
