@@ -73,8 +73,8 @@ scope aliases { map }
 sqlplus_file[database]
 scope g;
 @init { $g::database = database }
-    : ( stmt=sql_stmt { $g::database.add(stmt) }
-      | stmt=sqlplus_stmt { print($stmt.mystmt) }
+    : ( stmt=sql_stmt { $g::database.add($stmt.stmt) }
+      | stmt=sqlplus_stmt { print($stmt.stmt) }
       /*| stmt=plsql_stmt*/
       )* EOF
     ;
@@ -95,9 +95,9 @@ sql_stmt returns [stmt]
     ) SEMI
   ;
 
-sqlplus_stmt returns [mystmt]
-  : TERMINATOR { $mystmt = 'Repeat me!' }
-  | kQUIT  { $mystmt = "Quittin' time!" }
+sqlplus_stmt returns [stmt]
+  : TERMINATOR { $stmt = 'Repeat me!' }
+  | kQUIT  { $stmt = "Quittin' time!" }
   ;
 
 /*
@@ -184,11 +184,9 @@ column_data_type
   | numeric_data_type
   | long_raw_data_type
   | datetime_data_type
-  /*
   | lob_data_type
   | rowid_data_type
   | oracle_data_type
-  */
   | user_data_type
   ;
 
@@ -210,23 +208,25 @@ string_data_type
   ;
 
 numeric_data_type
-@after { $col_spec::props['data_type'] = (t or k).text }
+@after {
+  $col_spec::props['data_type'] = ($t and $t.text) or $k1.text or $k2.text
+}
   : t=NUMBER number_precision?
   | t=FLOAT (p=int_parameter { $col_spec::props['data_precision'] = $p.val })?
-  | k=kBINARY_FLOAT
-  | k=kBINARY_DOUBLE
+  | k1=kBINARY_FLOAT
+  | k2=kBINARY_DOUBLE
   ;
 
 number_precision
   : LPAREN
      ( precision=tINTEGER
        { $col_spec::props['data_precision'] = $precision.val }
-       (COMMA scale=tINTEGER)?
-     | ASTERISK COMMA scale=tINTEGER
+       (COMMA neg=HYPHEN? scale=tINTEGER)?
+     | ASTERISK COMMA neg=HYPHEN? scale=tINTEGER
      )
      {
        if $scale.val:
-         $col_spec::props['data_scale'] = $scale.val
+         $col_spec::props['data_scale'] = $scale.val * (-1 if $neg else 1)
      }
     RPAREN
   ;
@@ -264,8 +264,30 @@ datetime_data_type
     )
   ;
 
-user_data_type returns [props]
-  : i=identifier { $props = InsensitiveDict([('data_type', str($i.ident))]) }
+lob_data_type
+@after {
+  $col_spec::props['data_type'] = $t1.text or $t2.text or $t3.text or $t4.text
+}
+  : t1=kBLOB
+  | t2=kCLOB
+  | t3=kNCLOB
+  | t4=kBFILE
+  ;
+
+rowid_data_type
+@after { $col_spec::props['data_type'] = ($t and $t.text) or $k.text }
+  : t=ROWID
+  | k=kUROWID (i=int_parameter { $col_spec::props['data_length'] = $i.val })?
+  ;
+
+oracle_data_type
+@after { $col_spec::props['data_type'] = $t1.text or $t2.text }
+  : t1=kXMLTYPE
+  | t2=kURITYPE
+  ;
+
+user_data_type
+  : i=identifier { $col_spec::props['data_type'] = $i.ident }
   ;
 
 inline_constraint returns [props]
@@ -907,9 +929,11 @@ kROWCOUNT : {self.input.LT(1).text.lower() == "rowcount"}? ID;
 //kVALUES : {self.input.LT(1).text.lower() == "values"}? ID;
 
 
+kBFILE : {self.input.LT(1).text.lower() == 'bfile'}? ID;
 kBINARY_DOUBLE : {self.input.LT(1).text.lower() == 'binary_double'}? ID;
 kBINARY_FLOAT : {self.input.LT(1).text.lower() == 'binary_float'}? ID;
 kBITMAP : {self.input.LT(1).text.lower() == 'bitmap'}? ID;
+kBLOB : {self.input.LT(1).text.lower() == 'blob'}? ID;
 kBULK_ROWCOUNT : {self.input.LT(1).text.lower() == 'bulk_rowcount'}? ID;
 kBYTE : {self.input.LT(1).text.lower() == 'byte'}? ID;
 kCACHE : {self.input.LT(1).text.lower() == 'cache'}? ID;
@@ -930,6 +954,7 @@ kMAXVALUE : {self.input.LT(1).text.lower() == 'maxvalue'}? ID;
 kMINVALUE : {self.input.LT(1).text.lower() == 'minvalue'}? ID;
 kMONTH : {self.input.LT(1).text.lower() == 'month'}? ID;
 kNCHAR : {self.input.LT(1).text.lower() == 'nchar'}? ID;
+kNCLOB : {self.input.LT(1).text.lower() == 'nclob'}? ID;
 kNOCACHE : {self.input.LT(1).text.lower() == 'nocache'}? ID;
 kNOCYCLE : {self.input.LT(1).text.lower() == 'nocycle'}? ID;
 kNOMAXVALUE : {self.input.LT(1).text.lower() == 'nomaxvalue'}? ID;
@@ -947,6 +972,9 @@ kTIME : {self.input.LT(1).text.lower() == 'time'}? ID;
 kTIMESTAMP : {self.input.LT(1).text.lower() == 'timestamp'}? ID;
 kTRUE : {self.input.LT(1).text.lower() == 'true'}? ID;
 kUPDATING : {self.input.LT(1).text.lower() == 'updating'}? ID;
+kURITYPE : {self.input.LT(1).text.lower() == 'uritype'}? ID;
+kUROWID : {self.input.LT(1).text.lower() == 'urowid'}? ID;
+kXMLTYPE : {self.input.LT(1).text.lower() == 'xmltype'}? ID;
 kYEAR : {self.input.LT(1).text.lower() == 'year'}? ID;
 kZONE : {self.input.LT(1).text.lower() == 'zone'}? ID;
 // kXYZZY : {self.input.LT(1).text.lower() == 'xyzzy'}? ID;
@@ -964,14 +992,15 @@ tINTEGER returns [val]
   ;
 
 
-/*****
- * PL/SQL Reserved words
- *****/
-kWHEN	:	{self.input.LT(1).text.lower() == 'when'}? ID;
+/*
+    PL/SQL Reserved words
+*/
 
-/*****
- * Keywords
- *****/
+//kWHEN	:	{self.input.LT(1).text.lower() == 'when'}? ID;
+
+/*
+    Keywords
+*/
 ACCESS : 'access';
 ADD : 'add';
 ALL : 'all';

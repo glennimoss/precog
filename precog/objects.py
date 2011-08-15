@@ -420,7 +420,7 @@ class Column (HasTable, OracleObject):
                            , data_default
                            , char_length
                            , char_used
-                        FROM all_tab_cols
+                        FROM all_tab_columns
                         WHERE owner = :o
                           AND table_name = :t
                           AND (:c IS NULL OR column_name = :c)

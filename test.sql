@@ -1,4 +1,4 @@
-create index foo_idx on foo F ( "F".id );
+create unique index foo_idx on foo F ( "F".id );
 
 create table foo
   ( id number
@@ -8,7 +8,7 @@ create table foo
 
 create table bar
   ( bar_id number
-  , when date default SYSDATE + 3
+  , whee date default SYSDATE + 3
   , data varchar2(32)
 );
 
