@@ -80,3 +80,11 @@ class HasLog (object):
 
     return logging.getLogger(
         "{}.{}{}".format(class_.__module__, class_.__name__, id_))
+
+class classproperty (object):
+
+  def __init__ (self, getter):
+    self.getter = getter
+
+  def __get__ (self, obj, class_):
+    return self.getter(class_)

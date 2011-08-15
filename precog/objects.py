@@ -4,9 +4,13 @@ from precog import db
 from precog.diff import Diff, order_diffs
 from precog.errors import *
 from precog.identifier import *
-from precog.util import HasLog, InsensitiveDict
+from precog.util import classproperty, HasLog, InsensitiveDict
 
 class OracleObject (HasLog):
+
+  @classproperty
+  def type (class_):
+    return class_.__name__.upper()
 
   def __init__ (self, name, deferred=False, database=None, **props):
     super().__init__()
@@ -16,7 +20,6 @@ class OracleObject (HasLog):
     self.deferred = deferred
     self.database = database
     self.props = InsensitiveDict(props)
-    self.type = type(self).__name__.upper()
     self._referenced_by = set()
 
   def __repr__ (self, **other_props):
@@ -610,9 +613,9 @@ class Package (PlsqlCode):
 
 class PackageBody (PlsqlCode):
 
-  def __init__ (self, name, **props):
-    super().__init__(name, **props)
-    self.type = 'PACKAGE BODY'
+  @classproperty
+  def type (class_):
+    return 'PACKAGE BODY'
 
 class Trigger (PlsqlCode):
   pass
@@ -622,9 +625,9 @@ class Type (PlsqlCode):
 
 class TypeBody (PlsqlCode):
 
-  def __init__ (self, name, **props):
-    super().__init__(name, **props)
-    self.type = 'TYPE BODY'
+  @classproperty
+  def type (class_):
+    return 'TYPE BODY'
 
 class Schema (OracleObject):
 
