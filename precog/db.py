@@ -56,6 +56,8 @@ def connect (connect_string):
   # The recyclebin causes problems when trying to drop several objects that
   # depend on each other.
   _curs.execute('ALTER SESSION SET RECYCLEBIN=OFF')
+  # TODO: pass this in as a command-line parameter
+  #_curs.execute("ALTER SESSION SET PLSQL_WARNINGS='ENABLE:ALL'")
 
 def _rowfactory (row, cursor, oracle_names=[]):
   row = InsensitiveDict(zip((column[0] for column in cursor.description), row))

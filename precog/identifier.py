@@ -15,7 +15,7 @@ class OracleIdentifier (str):
   def simple_name (name):
     return bool(re.match('^[A-Z_$#][0-9A-Z_$#]*$', name.strip('"')))
 
-  def __new__ (self, identifier, trust_me=False):
+  def __new__ (class_, identifier, trust_me=False):
     if isinstance(identifier, OracleIdentifier):
       return identifier
 
@@ -59,27 +59,36 @@ class OracleIdentifier (str):
           "Quoted object name {} cannot contain \" or \\0"
           .format(repr(identifier)))
 
-    return super().__new__(self, identifier)
+    return super().__new__(class_, identifier)
 
   def __repr__ (self):
     return "OracleIdentifier({})".format(super().__repr__())
 
-class OracleFQN (object):
+class OracleFQN (OracleIdentifier):
   """
   Create a fully-qualified Oracle identifier. If from_oracle is True, it will
   try to guess if the name should be quoted.
   """
-  def __init__ (self, schema=None, obj=None, part=None, from_oracle=False):
+  def __new__ (class_, schema=None, obj=None, part=None, from_oracle=False):
     make_name = OracleIdentifier
     if from_oracle:
       make_name = name_from_oracle
+
+    schema = make_name(schema) if schema else None
+    obj = make_name(obj) if obj else None
+    part = make_name(part) if part else None
+
+    if not (schema or obj or part):
+      raise OracleNameError('have to have a name')
+
+    text = '.'.join(x for x in (schema, obj, part) if x)
+    self = super().__new__(class_, text, True)
 
     self._schema = make_name(schema) if schema else None
     self._obj = make_name(obj) if obj else None
     self._part = make_name(part) if part else None
 
-    if not (self.schema or self.obj or self.part):
-      raise OracleNameError('have to have a name')
+    return self
 
   @property
   def schema (self):
@@ -93,25 +102,11 @@ class OracleFQN (object):
   def part (self):
     return self._part
 
-  def __str__ (self):
-    return '.'.join(x for x in (self.schema, self.obj, self.part) if x)
-
   def __repr__ (self):
     return "OracleFQN({})".format(', '.join(
         "{}='{}'".format(arg, val) for arg, val in
           (('schema', self.schema), ('obj', self.obj), ('part', self.part))
           if val))
-
-  def __hash__ (self):
-    return self.__str__().__hash__()
-
-  def __eq__ (self, other):
-    if not isinstance(other, OracleFQN):
-      return False
-
-    return (self.schema == other.schema and
-            self.obj == other.obj and
-            self.part == other.part)
 
 def name_from_oracle (name):
   if not name:

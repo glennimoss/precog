@@ -11,30 +11,28 @@ options {
   superClass=LoggingParser;
 }
 
-scope g { database; stmt_begin }
+scope g { database }
 
 scope aliases { map }
 
 scope tab_col_ref { table; columns }
 
 @lexer::header {
-  from antlr3.ext import NamedConstant, FileStream
+  from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
   from . import util
-
-  NL_CHANNEL = DEFAULT_CHANNEL + 1
 }
 @parser::header {
-  from antlr3.ext import NamedConstant, FileStream
+  from antlr3.exceptions import RecognitionException
+  from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
   from . import util
-  from precog.errors import PrecogError
+  from precog.errors import SqlParseError, PrecogError
   from precog.identifier import OracleFQN, OracleIdentifier
   from precog.objects import *
   from precog.util import InsensitiveDict
 
-  NL_CHANNEL = DEFAULT_CHANNEL + 1
-
   class LoggingParser (HasLog, Parser):
-    pass
+    def displayRecognitionError(self, tokenNames, e):
+      self.log.error(SqlParseError(e))
 }
 @lexer::init {
   self.aloneOnLine = util.aloneOnLine(lambda p: self.input.LT(p))
@@ -73,42 +71,61 @@ scope tab_col_ref { table; columns }
 }
 
 sqlplus_file[database]
+scope { stmt_begin; }
 scope g;
 @init { $g::database = database }
-    : ( { $g::stmt_begin = self.input.LT(1).line }
+    : ( { $sqlplus_file::stmt_begin = self.input.LT(1) }
         ( stmt=sql_stmt
         | stmt=plsql_stmt
         )  { $g::database.add($stmt.obj) }
       /*| stmt=sqlplus_stmt { print($stmt.obj) }*/
       )* EOF
     ;
+    /*
 catch [PrecogError as e] {
   self.log.error("in {}:{} {}:".format(self.input.getSourceName(),
-    $g::stmt_begin, type(e).__name__))
+    $sqlplus_file::stmt_begin.line, type(e).__name__))
   raise e
 }
+catch [RecognitionException as e] {
+  raise ParseError(e)
+}
+catch [Exception as e] {
+  print(e)
+}
+*/
 
 
 plsql_stmt returns [obj]
-scope { type; name }
+scope { type; name; props }
+@init { $plsql_stmt::props = InsensitiveDict() }
 @after {
-  $obj = PlsqlCode.new($plsql_stmt::type, $plsql_stmt::name, $source.text)
+  $obj = PlsqlCode.new($plsql_stmt::type, $plsql_stmt::name, $source.text,
+    **$plsql_stmt::props)
 }
   : CREATE (OR kREPLACE)? source=plsql_object_def
+    TERMINATOR
   ;
 
 plsql_object_def
+@after {
+  if $pb.text or $tb.text:
+    # This is a body, so it depends on its header.
+    header_type = Package if $pb.text else Type
+    $plsql_stmt::props['header'] = $g::database.find($i.ident, header_type)
+}
   : ( kFUNCTION { $plsql_stmt::type = 'FUNCTION' }
     | PROCEDURE { $plsql_stmt::type = 'PROCEDURE' }
-    | kPACKAGE b=kBODY?
-      { $plsql_stmt::type = "PACKAGE{}".format(' BODY' if $b.text else '') }
+    | kPACKAGE pb=kBODY?
+      {
+        $plsql_stmt::type = "PACKAGE{}".format(' BODY' if $pb.text else '')
+      }
     | TRIGGER { $plsql_stmt::type = 'TRIGGER' }
-    | kTYPE b=kBODY?
-      { $plsql_stmt::type = "TYPE{}".format(' BODY' if $b.text else '') }
+    | kTYPE tb=kBODY?
+      { $plsql_stmt::type = "TYPE{}".format(' BODY' if $tb.text else '') }
     ) i=identifier { $plsql_stmt::name = $i.ident }
     ( IS | AS )
     ( (~TERMINATOR)=> ~TERMINATOR )+
-    TERMINATOR
   ;
 
 
@@ -315,7 +332,10 @@ oracle_data_type
   ;
 
 user_data_type
-  : i=identifier { $col_spec::props['data_type'] = $i.ident }
+  : i=identifier {
+      user_type = $g::database.find($i.ident, Type)
+      $col_spec::props['user_type'] = user_type
+    }
   ;
 
 inline_constraint returns [props]
