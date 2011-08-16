@@ -1,16 +1,20 @@
 import logging
-from pprint import pprint, pformat
 
 from precog import db
-from precog.errors import PrecogError
+from precog.errors import PlsqlParseError, PrecogError
+from precog.util import HasLog
 
 class Diff (object):
   DROP = 1
   CREATE = 2
   ALTER = 3
 
-  def __init__ (self, sql, dependencies=set(), produces=None, priority=None):
+  def __init__ (self, sql, dependencies=None, produces=None, priority=None,
+      terminator=';'):
     self.sql = sql
+
+    if dependencies is None and produces is not None:
+      dependencies = produces.dependencies
     if not isinstance(dependencies, set):
       dependencies = {dependencies}
     self.dependencies = dependencies
@@ -22,15 +26,25 @@ class Diff (object):
       priority = Diff.ALTER
     self.priority=priority
 
+    self.terminator = terminator
+
   def __repr__ (self):
     return "Diff({!r}, {!r}, {!r})".format(self.sql, self.dependencies,
         self.produces)
 
   def __str__ (self):
-    return self.sql
+    return self.sql + self.terminator
 
   def apply (self):
     return db.execute(self.sql)
+
+class PlsqlDiff (HasLog, Diff):
+
+  def apply (self):
+    super().apply()
+
+    # log compile errors
+    self.produces.diff(self.produces)
 
 class DiffCycleError (PrecogError):
   pass
@@ -39,11 +53,11 @@ def order_diffs (diffs):
   log = logging.getLogger('precog.diff.order_diffs')
 
   diffs = {diff.produces or diff: diff for diff in diffs if diff}
-  log.debug('Diffs:')
+  #log.debug('Diffs:')
   #for k,v in diffs.items():
-    #log.debug("  {}: {} depends on {}".format(
-      #k.sql if isinstance(k, Diff) else k.name, v.sql,
-      #", ".join(str(dep.name) for dep in v.dependencies)))
+    #log.debug("  {} {}: depends on {}".format(type(k).__name__,
+      #k.sql if isinstance(k, Diff) else k.name,
+      #", ".join(dep.pretty_name for dep in v.dependencies) or 'nothing'))
 
   # list of obj: [dependencies, ...]
   #edges = {obj: diff.dependencies for obj, diff in diffs.items()}
@@ -65,9 +79,9 @@ def order_diffs (diffs):
   log.debug('Edge list:')
   for k,v in edges.items():
     edges[k] = sorted(v, key=lambda x: diffs[x].priority if x in diffs else 0)
-    #log.debug("  {} -> {}".format(
-      #k.sql if isinstance(k, Diff) else k.name,
-      #", ".join(str(dep.name) for dep in v)))
+    log.debug("  {} {} -> {}".format(type(k).__name__,
+      k.sql if isinstance(k, Diff) else k.name,
+      ", ".join(dep.pretty_name for dep in v)))
 
   # list of sorted diffs
   L = []

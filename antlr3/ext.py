@@ -2,6 +2,8 @@ from antlr3.streams import (CommonTokenStream, StringStream, FileStream,
   InputStream)
 from antlr3.constants import DEFAULT_CHANNEL, EOF
 
+NL_CHANNEL = DEFAULT_CHANNEL + 1
+
 class IterableTokenStream(CommonTokenStream):
 
   def __iter__ (self):

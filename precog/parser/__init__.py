@@ -8,13 +8,15 @@ __all__ = ['file_parser', 'string_parser']
 
 def file_parser (filename):
   stream = FileStream
-  name = filename
+  #name = filename
   if not isinstance(filename, str):
     stream = InputStream
-    name = filename.name
+    #name = filename.name
+  sql_parser = parser(stream(filename))
+  name = sql_parser.getSourceName()
   logging.getLogger('precog.parser.file_parser()').info(
       "Parsing file {}".format(name))
-  return parser(stream(filename))
+  return sql_parser
 
 def string_parser (string):
   return parser(StringStream(string))

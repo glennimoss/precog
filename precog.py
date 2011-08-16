@@ -79,8 +79,9 @@ try:
   diffs = database.diff_to_db(args.connect_string)
 
   if diffs:
-    print("Found {} changes:".format(len(diffs)))
-    print(";\n\n".join(str(diff) for diff in diffs) + ";\n")
+    changes = len(diffs)
+    print("Found {} changes".format(changes), file=sys.stderr)
+    print("\n\n".join(str(diff) for diff in diffs))
 
     if not (args.apply or args.no_apply):
       doit = input('Run script? [yN] ')
@@ -89,17 +90,19 @@ try:
 
     errors = 0
     if 'y' == doit.lower():
+      print("Applying {} changes...".format(changes), file=sys.stderr)
       for diff in diffs:
         try:
           diff.apply()
         except OracleError as e:
-          print(e)
+          print(e, file=sys.stderr)
           errors += 1
-    if errors:
-      print()
-      print("Unable to apply {} changes.".format(errors))
-
+      if errors:
+        print("\nUnable to apply {} changes".format(errors))
+      print("Successfully applied {} changes".format(changes - errors),
+          file=sys.stderr)
   else:
-    print("Oracle is up to date with {}".format(args.file.name))
+    print("Oracle is up to date with {}".format(args.file.name),
+        file=sys.stderr)
 except PrecogError as e:
-  print(e)
+  print(e, file=sys.stderr)

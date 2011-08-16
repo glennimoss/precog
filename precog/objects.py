@@ -1,7 +1,7 @@
 import logging
 
 from precog import db
-from precog.diff import Diff, order_diffs
+from precog.diff import Diff, order_diffs, PlsqlDiff
 from precog.errors import *
 from precog.identifier import *
 from precog.util import (classproperty, HasLog, InsensitiveDict, ValidatingList,
@@ -10,6 +10,10 @@ from precog.util import (classproperty, HasLog, InsensitiveDict, ValidatingList,
 def _type_to_class (type):
   class_name = ''.join(word.capitalize() for word in type.split())
   return globals()[class_name]
+
+def _assert_type (value, type):
+  if value is not None and not isinstance(value, type):
+    raise TypeError("Expected {}: {!r}".format(type.__name__, value))
 
 class OracleObject (HasLog):
 
@@ -26,6 +30,7 @@ class OracleObject (HasLog):
     self.database = database
     self.props = InsensitiveDict(props)
     self._referenced_by = set()
+    self._dependencies = set()
 
   def __repr__ (self, **other_props):
     if self.deferred:
@@ -57,21 +62,23 @@ class OracleObject (HasLog):
   def __hash__ (self):
     return hash((type(self), self.name))
 
+  @property
+  def pretty_name (self):
+    return " ".join((type(self).__name__, self.name))
+
   def sql (self, fq=None):
-    type_name = ''
-    if self.deferred:
-      type_name = 'deferred '
-    elif hasattr(self, '_sql'):
+    if not self.deferred and hasattr(self, '_sql'):
       if fq is None:
         return self._sql()
       else:
         return self._sql(fq)
 
-    type_name += type(self).__name__
-    return "-- Placeholder for {} {}".format(type_name, self.name)
+    name += self.prett_name
+    return "-- Placeholder for {}{}".format(
+        'deferred ' if self.deferred else '', self.pretty_name)
 
   def create (self):
-    return Diff(self.sql(), self.dependencies(), self, priority=Diff.CREATE)
+    return Diff(self.sql(), produces=self, priority=Diff.CREATE)
 
   def drop (self):
     return Diff("DROP {} {}".format(self.type, self.name), self,
@@ -143,8 +150,22 @@ class OracleObject (HasLog):
 
     return diffs
 
+  def depends_on (self, other):
+    self._dependencies.add(other)
+    other.referenced_by(self)
+
+  @property
   def dependencies (self):
-    return set()
+    deps = set()
+
+    def recurse (obj):
+      for dep in obj._dependencies:
+        if dep not in deps and dep is not self:
+          deps.add(dep)
+          recurse(dep)
+
+    recurse(self)
+    return deps
 
   def referenced_by (self, value=None):
     if value is None:
@@ -190,19 +211,15 @@ class HasColumns (object):
 
   @columns.setter
   def columns (self, value):
-    if not isinstance(value, list):
-      raise TypeError("Expected list: {!r}".format(value))
+    _assert_type(value, list)
     self._columns = value
     for column in self._columns:
-      column.referenced_by(self)
+      self.depends_on(column)
 
   def satisfy (self, other):
     if self.deferred:
       super().satisfy(other)
       self.columns = other.columns
-
-  def dependencies (self):
-    return super().dependencies() | set(self.columns)
 
 class HasTable (object):
   """ Mixin for objects that have the table property """
@@ -226,19 +243,15 @@ class HasTable (object):
   @table.setter
   def table (self, value):
     if value:
-      if not isinstance(value, Table):
-        raise TypeError("Expected Table: {!r}".format(value))
-      self._table = value
-      self.referenced_by(self._table)
+      _assert_type(value, Table)
+      self.depends_on(value)
+
+    self._table = value
 
   def satisfy (self, other):
     if self.deferred:
       super().satisfy(other)
       self.table = other.table
-
-  def dependencies (self):
-    return super().dependencies() | {self.table}
-
 
 class Table (HasColumns, OracleObject):
 
@@ -284,9 +297,10 @@ class Table (HasColumns, OracleObject):
           #if self.indexes else '') +
         #')')
 
-  def dependencies (self):
-    # a Table doesn't depend on its columns
-    return set()
+  #def depends_on (self, other):
+    ## a Table doesn't depend on its columns
+    #if not isinstance(other, Column):
+      #super().depends_on(other)
 
   def _sql (self, fq=True):
     name = self.name.obj
@@ -298,28 +312,25 @@ class Table (HasColumns, OracleObject):
           if self.props['tablespace_name'] else '')
 
   def add_subobjects (self, columns):
-    return [Diff("ALTER TABLE {} ADD ( {} )".format(self.name, column.sql()),
-      self, column, priority=Diff.CREATE) for column in columns]
+    return [column.create() for column in columns]
 
   def drop_subobjects (self, columns):
-    return [Diff("ALTER TABLE {} DROP ( {} )".format(
-      self.name, column.name.part), {self, column}, priority=Diff.DROP)
-      for column in columns]
+    return [column.drop() for column in columns]
 
   def diff (self, other):
     diffs = []
 
     if self.name.obj != other.name.obj:
       diffs.append(Diff("ALTER TABLE {} RENAME TO {}"
-          .format(other.name, self.name.obj), other, self))
+          .format(other.name, self.name.obj), produces=self))
 
     if (self.props['tablespace_name'] and
         self.props['tablespace_name'] != other.props['tablespace_name']):
       diffs.append(Diff("ALTER TABLE {} MOVE TABLESPACE {}"
-          .format(other.name, self.props['tablespace_name']), other, self))
+          .format(other.name, self.props['tablespace_name']), produces=self))
 
       for i in other.indexes:
-        diffs.append(Diff("ALTER INDEX {} REBUILD".format(i.name), i, i))
+        diffs.append(Diff("ALTER INDEX {} REBUILD".format(i.name), produces=i))
 
     diffs.extend(other.diff_subobjects(self.columns, other.columns))
 
@@ -341,10 +352,14 @@ class Table (HasColumns, OracleObject):
 
 class Column (HasTable, OracleObject):
 
-  def __init__ (self, name, leftovers=None, **props):
+  def __init__ (self, name, user_type=None, leftovers=None, **props):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(part=name)
     super().__init__(name, **props)
+
+    self.user_type = user_type
+    if self.user_type:
+      self.props['data_type'] = self.user_type.name
 
     self.leftovers = leftovers
 
@@ -369,6 +384,18 @@ class Column (HasTable, OracleObject):
     if value:
       HasTable.table.__set__(self, value)
       self.name = OracleFQN(value.name.schema, value.name.obj, self.name.part)
+
+  @property
+  def user_type (self):
+    return self._user_type
+
+  @user_type.setter
+  def user_type (self, value):
+    if value:
+      _assert_type(value, Type)
+      self.props['data_type'] = value.name
+      self.depends_on(value)
+    self._user_type = value
 
   def _sql (self, fq=False):
     parts = []
@@ -397,6 +424,15 @@ class Column (HasTable, OracleObject):
 
     return " ".join(parts)
 
+  def create (self):
+    return Diff("ALTER TABLE {} ADD ( {} )".format(self.table.name, self.sql()),
+        produces=self, priority=Diff.CREATE)
+
+  def drop (self):
+    return Diff(
+        "ALTER TABLE {} DROP ( {} )".format(self.table.name, column.name.part),
+        self, priority=Diff.DROP)
+
   def diff (self, other):
     super().diff(other)
     diffs = []
@@ -404,19 +440,19 @@ class Column (HasTable, OracleObject):
     if self.name.part != other.name.part:
       diffs.append(Diff("ALTER TABLE {} RENAME COLUMN {} TO {}"
           .format(other.table.name, other.name.part, self.name.part),
-          {other.table, other}, self))
+          produces=self))
 
     prop_diff = self._diff_props(other)
 
     if prop_diff:
       diffs.append(Diff("ALTER TABLE {} MODIFY ( {} )".format(
-        other.table.name, self.sql()), {other.table, other}, self))
+        other.table.name, self.sql()), produces=self))
 
     if (other.props['data_default'] and
         other.props['data_default'] != 'NULL' and
         not self.props['data_default']):
       diffs.append(Diff("ALTER TABLE {} MODIFY ( {} DEFAULT NULL)".format(
-        other.table.name, other.name.part), {other.table, other}, self))
+        other.table.name, other.name.part), produces=self))
 
     return diffs
 
@@ -424,6 +460,10 @@ class Column (HasTable, OracleObject):
   def from_db (class_, name, into_database=None):
     rs = db.query(""" SELECT column_name
                            , data_type
+                           , CASE WHEN data_type_owner = 'PUBLIC'
+                                    OR data_type_owner LIKE '%SYS' THEN NULL
+                                  ELSE data_type_owner
+                             END AS data_type_owner
                            , data_length
                            , data_precision
                            , data_scale
@@ -435,7 +475,13 @@ class Column (HasTable, OracleObject):
                           AND table_name = :t
                           AND (:c IS NULL OR column_name = :c)
                     """, o=name.schema, t=name.obj, c=name.part,
-                    oracle_names=['column_name'])
+                    oracle_names=['column_name', 'data_type_owner'])
+
+    for row in rs:
+      if row['data_type_owner']:
+        row['user_type'] = into_database.find(
+            OracleFQN(row['data_type_owner'], row['data_type']), Type)
+        del row['data_type_owner']
 
     return [class_(name, database=into_database, **dict(props))
       for (devnull, name), *props in (row.items() for row in rs)]
@@ -487,12 +533,12 @@ class Index (HasColumns, OracleObject):
     if self != other:
       if self.name.obj != other.name.obj:
         diffs.append(Diff("ALTER INDEX {} RENAME TO {}"
-            .format(other.name, self.name.obj), other, self))
+            .format(other.name, self.name.obj), produces=self))
 
       if (self.props['tablespace_name'] and
           self.props['tablespace_name'] != other.props['tablespace_name']):
         diffs.append(Diff("ALTER INDEX {} REBUILD TABLESPACE {}"
-            .format(other.name, self.props['tablespace_name']), other, self))
+            .format(other.name, self.props['tablespace_name']), produces=self))
 
       drop = other.drop()
       create = self.create()
@@ -610,15 +656,71 @@ class PlsqlCode (OracleObject):
   @staticmethod
   def new (type, name, source, **props):
     # Create object of subclass, based on the Oracle type passed in
-    class_ = _type_to_class(type)
-    return class_(name, source, **props)
+    try:
+      class_ = _type_to_class(type)
+      return class_(name, source=source, **props)
+    except KeyError as e:
+      self.log.warn("{} [{}]: unexpected type".format(
+        class_name, obj['object_name']))
+      raise
 
-  def __init__ (self, name, source, **props):
+  def __init__ (self, name, source=None, **props):
     props['source'] = source
     super().__init__(name, **props)
 
   def _sql (self, fq=True):
     return "CREATE OR REPLACE {}".format(self.props['source'])
+
+  def create (self):
+    return PlsqlDiff(self.sql(), produces=self, priority=Diff.CREATE,
+        terminator='\n/')
+
+  def diff (self, other):
+    diffs = super().diff(other)
+
+    if not diffs:
+      errors = other.errors()
+      err_num = sum(1 for e in errors if e.error['attribute'] == 'ERROR')
+      warn_num = len(errors) - err_num
+
+      log = False
+      if err_num:
+        log = self.log.error
+      elif warn_num:
+        log = self.log.warn
+
+      if log:
+        log("{} has {} errors and {} warnings".format(
+          other.pretty_name, err_num, warn_num))
+
+        for err in errors:
+          if err.error['attribute'] == 'ERROR':
+            err_log = self.log.error
+          elif err.error['attribute'] == 'WARNING':
+            err_log = self.log.warn
+          else:
+            self.log.debug(
+                "Unknown all_errors.attribute: {}".format(row['attribute']))
+          err_log(err)
+
+        if err_num:
+          self.log.info("Suggest reapplying {}".format(self.pretty_name))
+          diffs.append(self.create())
+
+    return diffs
+
+  def errors (self):
+    rs= db.query(""" SELECT line
+                           , position
+                           , text
+                           , attribute
+                      FROM all_errors
+                      WHERE owner = :o
+                        AND name = :n
+                        AND type = :t
+                      ORDER BY sequence
+                  """, o=self.name.schema, n=self.name.obj, t=self.type)
+    return [PlsqlParseError(self, row) for row in rs]
 
   @classmethod
   def from_db (class_, name, into_database=None):
@@ -631,9 +733,29 @@ class PlsqlCode (OracleObject):
                   """, o=name.schema, n=name.obj, t=class_.type)
     if not rs:
       return None
-    return class_(name, ''.join(row['text'] for row in rs),
+    return class_(name, source=''.join(row['text'] for row in rs),
         database=into_database)
 
+class PlsqlHeader (PlsqlCode):
+  pass
+
+class PlsqlBody (PlsqlCode):
+
+  def __init__ (self, name, header=None, **props):
+    super().__init__(name, **props)
+    self.header = header
+
+  @property
+  def header (self):
+    return self._header
+
+  @header.setter
+  def header (self, value):
+    if value:
+      _assert_type(value, PlsqlHeader)
+      self.depends_on(value)
+
+    self._header = value
 
 #######################################
 # PL/SQL Code Objects
@@ -644,11 +766,10 @@ class Function (PlsqlCode):
 class Procedure (PlsqlCode):
   pass
 
-class Package (PlsqlCode):
+class Package (PlsqlHeader):
   pass
 
-class PackageBody (PlsqlCode):
-
+class PackageBody (PlsqlBody):
   @classproperty
   def type (class_):
     return 'PACKAGE BODY'
@@ -656,11 +777,10 @@ class PackageBody (PlsqlCode):
 class Trigger (PlsqlCode):
   pass
 
-class Type (PlsqlCode):
+class Type (PlsqlHeader):
   pass
 
-class TypeBody (PlsqlCode):
-
+class TypeBody (PlsqlBody):
   @classproperty
   def type (class_):
     return 'TYPE BODY'
@@ -695,39 +815,41 @@ class Schema (OracleObject):
     obj_type = type(obj)
     name = OracleFQN(self.name.schema, obj.name.obj, obj.name.part)
     self.log.debug(
-        "Adding {}{} {} as {}".format('deferred ' if obj.deferred else '',
-          obj_type.__name__, obj.name, name))
+        "Adding {}{} as {}".format('deferred ' if obj.deferred else '',
+          obj.pretty_name, name))
 
     if not obj_type in self.objects:
       self.objects[obj_type] = {}
     namespace = self.objects[obj_type]
 
-    if (name in namespace) or (obj_type in self.share_namespace and
-                               name in self.shared_namespace):
-      if name in self.deferred and type(self.deferred[name]) == obj_type:
-        # Not a name conflict
-        self.log.debug("Satisfying deferred object {}".format(name))
-        deferred = namespace[name]
-        deferred.satisfy(obj)
-        del self.deferred[name]
-      else:
-        raise SchemaConflict(obj, self.shared_namespace[name])
+    if (name, obj_type) in self.deferred:
+      # Not a name conflict
+      self.log.debug("Satisfying deferred object {}".format(name))
+      deferred = self.deferred[(name, obj_type)]
+      deferred.satisfy(obj)
+      del self.deferred[(name, obj_type)]
     else:
-      obj.name = name
-      obj.database = self.database
-      # TODO: is there a more general way to do this?
-      if obj_type is not Column:
-        obj.referenced_by(self)
-      namespace[name] = obj
-      if obj_type in self.share_namespace:
-        self.shared_namespace[name] = obj
+      if name in namespace:
+        raise SchemaConflict(obj, namespace[name])
+      elif obj_type in self.share_namespace and name in self.shared_namespace:
+        raise SchemaConflict(obj, self.shared_namespace[name])
+      else:
+        obj.name = name
+        obj.database = self.database
+        # TODO: is there a more general way to do this? Also, do we want to have
+        # every object referenced by the Schema? It's kind of a given.
+        #if obj_type is not Column:
+          #obj.referenced_by(self)
+        namespace[name] = obj
+        if obj_type in self.share_namespace:
+          self.shared_namespace[name] = obj
 
     if Table == obj_type:
       for col in obj.columns:
         self.add(col)
 
   def find (self, name, obj_type, deferred=True):
-    self.log.debug("Finding {} {!r}".format(obj_type.__name__, name))
+    self.log.debug("Finding {} {}".format(obj_type.__name__, name))
     if not isinstance(name, OracleFQN):
       name = OracleFQN(self.name.schema, name)
 
@@ -740,7 +862,7 @@ class Schema (OracleObject):
     if deferred:
       obj = obj_type(name, deferred=True)
       self.add(obj)
-      self.deferred[name] = obj
+      self.deferred[(name, obj_type)] = obj
       return obj
 
     return None
@@ -771,7 +893,7 @@ class Schema (OracleObject):
 
     owner = schema.name.schema
 
-    schema.log.info("Fetching schema {}".format(owner))
+    schema.log.info("Fetching schema {}...".format(owner))
 
     def make_name (name):
       return OracleFQN(owner, name, from_oracle=True)
@@ -784,7 +906,7 @@ class Schema (OracleObject):
 
     for obj in rs:
       if obj['object_name'].startswith('SYS_'):
-        schema.log.info("Ignoring system object {}".format(obj['object_name']))
+        schema.log.debug("Ignoring system object {}".format(obj['object_name']))
         continue
 
       schema.log.debug(
@@ -795,7 +917,7 @@ class Schema (OracleObject):
         class_ = _type_to_class(obj['object_type'])
         obj = class_.from_db(object_name, into_database=schema.database)
         schema.add(obj)
-      except (NameError, KeyError) as e:
+      except KeyError as e:
         schema.log.warn("{} [{}]: unexpected type".format(
           class_name, obj['object_name']))
         raise
