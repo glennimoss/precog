@@ -703,7 +703,7 @@ class Schema (OracleObject):
     namespace = self.objects[obj_type]
 
     if (name in namespace) or (obj_type in self.share_namespace and
-                              name in self.shared_namespace):
+                               name in self.shared_namespace):
       if name in self.deferred and type(self.deferred[name]) == obj_type:
         # Not a name conflict
         self.log.debug("Satisfying deferred object {}".format(name))
@@ -711,7 +711,7 @@ class Schema (OracleObject):
         deferred.satisfy(obj)
         del self.deferred[name]
       else:
-        raise SchemaConflict(obj, namespace[name])
+        raise SchemaConflict(obj, self.shared_namespace[name])
     else:
       obj.name = name
       obj.database = self.database
