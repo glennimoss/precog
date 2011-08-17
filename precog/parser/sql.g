@@ -19,26 +19,24 @@ scope tab_col_ref { table; columns }
 
 @lexer::header {
   from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
-  from . import util
+  from precog.parser.util import *
+
+  # Monkey patch in our lexer superclass
+  Lexer = LoggingLexer
 }
 @parser::header {
   from antlr3.exceptions import RecognitionException
   from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
-  from . import util
-  from precog.errors import SqlParseError, PrecogError
+  from precog.parser.util import *
   from precog.identifier import OracleFQN, OracleIdentifier
   from precog.objects import *
   from precog.util import InsensitiveDict
-
-  class LoggingParser (HasLog, Parser):
-    def displayRecognitionError(self, tokenNames, e):
-      self.log.error(SqlParseError(e))
 }
 @lexer::init {
-  self.aloneOnLine = util.aloneOnLine(lambda p: self.input.LT(p))
+  self.aloneOnLine = aloneOnLine(lambda p: self.input.LT(p))
 }
 @parser::init {
-  self._aloneOnLine = util.aloneOnLine(lambda p: self.input.LT(p).text)
+  self._aloneOnLine = aloneOnLine(lambda p: self.input.LT(p).text)
 }
 @lexer::members {
   # needed for things like BETWEEN 1..2 where 1. would be treated as a literal
@@ -81,20 +79,6 @@ scope g;
       /*| stmt=sqlplus_stmt { print($stmt.obj) }*/
       )* EOF
     ;
-    /*
-catch [PrecogError as e] {
-  self.log.error("in {}:{} {}:".format(self.input.getSourceName(),
-    $sqlplus_file::stmt_begin.line, type(e).__name__))
-  raise e
-}
-catch [RecognitionException as e] {
-  raise ParseError(e)
-}
-catch [Exception as e] {
-  print(e)
-}
-*/
-
 
 plsql_stmt returns [obj]
 scope { type; name; props }

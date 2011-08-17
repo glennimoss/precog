@@ -1,5 +1,10 @@
 from antlr3 import EOF
+from antlr3.recognizers import Lexer, Parser
+from precog.errors import SqlSyntaxError
+from precog.util import HasLog
 #import logging
+
+__all__ = ['aloneOnLine', 'LoggingLexer', 'LoggingParser']
 
 def aloneOnLine (LT):
   #log = logging.getLogger('precog.parser.util.aloneOnLine')
@@ -24,3 +29,13 @@ def aloneOnLine (LT):
     # EOF is as good as a line terminator
     return True
   return _aloneOnLine
+
+class LoggingRecognizer (HasLog):
+  def displayRecognitionError(self, tokenNames, e):
+    self.log.error(SqlSyntaxError(e))
+
+class LoggingLexer (LoggingRecognizer, Lexer):
+  pass
+
+class LoggingParser (LoggingRecognizer, Parser):
+  pass

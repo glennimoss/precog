@@ -7,6 +7,14 @@ class PrecogError (Exception):
 
 class ParseError (PrecogError):
 
+  def __init__ (self, num_errors):
+    self.num_errors = num_errors
+
+  def __str__ (self):
+    return "{}{} error{} in schema definition".format(super().__str__(),
+        self.num_errors, 's' if self.num_errors > 1 else '')
+
+class SyntaxError (ParseError):
   def __init__ (self, title, source_name, line, column, line_text,
       explanation=''):
     self.title = title
@@ -17,11 +25,12 @@ class ParseError (PrecogError):
     self.explanation = explanation
 
   def __str__ (self):
-    return '{}{}\n  {}, line {}\n    {}\n    {}^\n{}'.format(
-      super().__str__(), self.title, self.source_name, self.line,
-      self.line_text, ' '*(self.column), self.explanation)
+    return '{}{}\n  {}, line {}\n    {}\n    {}^{}'.format(
+      super(ParseError, self).__str__(), self.title, self.source_name,
+      self.line, self.line_text, ' '*(self.column),
+      "\n{}".format(self.explanation) if self.explanation else '')
 
-class SqlParseError (ParseError):
+class SqlSyntaxError (SyntaxError):
   def __init__ (self, error):
     from precog.parser.sqlParser import NL, EOF
     self.error = error
@@ -48,13 +57,13 @@ class SqlParseError (ParseError):
       .lstrip(start_token.text).rstrip(end_token.text))
 
     super().__init__(type(error).__name__,
-        'File "{}"'.format(error.getSourceName()), error.line,
+        'File "{}"'.format(error.input.getSourceName()), error.line,
         error.charPositionInLine, line_text)
 
 class OracleError (PrecogError):
   pass
 
-class PlsqlParseError (ParseError, OracleError):
+class PlsqlSyntaxError (SyntaxError, OracleError):
 
   def __init__ (self, plsql_obj, error_props):
     self.error = error_props

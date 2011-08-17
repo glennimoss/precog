@@ -1,7 +1,7 @@
 import logging
 
 from precog import db
-from precog.errors import PlsqlParseError, PrecogError
+from precog.errors import PlsqlSyntaxError, PrecogError
 from precog.util import HasLog
 
 class Diff (object):
@@ -44,7 +44,7 @@ class PlsqlDiff (HasLog, Diff):
     super().apply()
 
     # log compile errors
-    self.produces.diff(self.produces)
+    self.produces.errors()
 
 class DiffCycleError (PrecogError):
   pass

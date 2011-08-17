@@ -20,6 +20,26 @@ create table baz
 );
 
 insert into baz (fizz, a) values ('foo', 9);
-insert into baz (fizz, a) values ('foo1', 9);
+insert in!to baz (fizz, a) values ('foo1', 9);
 insert into baz (fizz, a) values ('foo1', 9);
 
+CREATE OR REPLACE PACKAGE pack AS
+  PROCEDURE bar (
+    p_param NUMBER
+  , o_return OUT VARCHAR2
+  );
+END pack;
+/
+
+create;
+CREATE OR REPLACE PACKAGE BODY pack AS
+  PROCEDURE bar (
+    p_param NUMBER
+    o_return OUT VARCHAR2
+  ) IS
+  BEGIN
+    dbms_output.put_line(p_param);
+    o_return := 'awesome sauce';
+  END bar;
+END pack;
+/

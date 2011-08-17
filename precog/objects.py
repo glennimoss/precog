@@ -680,32 +680,9 @@ class PlsqlCode (OracleObject):
 
     if not diffs:
       errors = other.errors()
-      err_num = sum(1 for e in errors if e.error['attribute'] == 'ERROR')
-      warn_num = len(errors) - err_num
-
-      log = False
-      if err_num:
-        log = self.log.error
-      elif warn_num:
-        log = self.log.warn
-
-      if log:
-        log("{} has {} errors and {} warnings".format(
-          other.pretty_name, err_num, warn_num))
-
-        for err in errors:
-          if err.error['attribute'] == 'ERROR':
-            err_log = self.log.error
-          elif err.error['attribute'] == 'WARNING':
-            err_log = self.log.warn
-          else:
-            self.log.debug(
-                "Unknown all_errors.attribute: {}".format(row['attribute']))
-          err_log(err)
-
-        if err_num:
-          self.log.info("Suggest reapplying {}".format(self.pretty_name))
-          diffs.append(self.create())
+      if errors:
+        self.log.info("Suggest reapplying {}".format(self.pretty_name))
+        diffs.append(self.create())
 
     return diffs
 
@@ -720,7 +697,31 @@ class PlsqlCode (OracleObject):
                         AND type = :t
                       ORDER BY sequence
                   """, o=self.name.schema, n=self.name.obj, t=self.type)
-    return [PlsqlParseError(self, row) for row in rs]
+    errors = [PlsqlSyntaxError(self, row) for row in rs]
+    err_num = sum(1 for e in errors if e.error['attribute'] == 'ERROR')
+    warn_num = len(errors) - err_num
+
+    log = False
+    if err_num:
+      log = self.log.error
+    elif warn_num:
+      log = self.log.warn
+
+    if log:
+      log("{} has {} errors and {} warnings".format(
+        self.pretty_name, err_num, warn_num))
+
+      for err in errors:
+        if err.error['attribute'] == 'ERROR':
+          err_log = self.log.error
+        elif err.error['attribute'] == 'WARNING':
+          err_log = self.log.warn
+        else:
+          self.log.debug(
+              "Unknown all_errors.attribute: {}".format(row['attribute']))
+        err_log(err)
+
+    return errors
 
   @classmethod
   def from_db (class_, name, into_database=None):
@@ -972,7 +973,12 @@ class Database (HasLog):
 
   def add_file (self, filename):
     from precog import parser
-    parser.file_parser(filename).sqlplus_file(self)
+    sql_parser = parser.file_parser(filename)
+    sql_parser.sqlplus_file(self)
+    num_errors = sql_parser.getNumberOfSyntaxErrors()
+    if num_errors:
+      # we don't want to compare to the database when our spec is incomplete
+      raise ParseError(num_errors)
 
   def find (self, name, obj_type, deferred=True):
     if not isinstance(name, OracleFQN):
