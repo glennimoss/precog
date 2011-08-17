@@ -1,5 +1,3 @@
-from antlr3.ext import NL_CHANNEL
-
 class PrecogError (Exception):
 
   def __str__ (self):
@@ -31,34 +29,7 @@ class SyntaxError (ParseError):
       "\n{}".format(self.explanation) if self.explanation else '')
 
 class SqlSyntaxError (SyntaxError):
-  def __init__ (self, error):
-    from precog.parser.sqlParser import NL, EOF
-    self.error = error
-
-    error.input.mark()
-    error.input.seek(error.index)
-    error.input.add(NL_CHANNEL)
-
-    def find (dir, test):
-      p = dir
-      while True:
-        this_token = error.input.LT(p)
-        if test(this_token):
-          break;
-        p += dir
-      return this_token
-
-    start_token = find(-1, lambda t: t is None or t.type == NL)
-    end_token = find(1, lambda t: t.type in (NL, EOF))
-    error.input.drop(NL_CHANNEL)
-    error.input.rewind()
-
-    line_text = (error.input.toString(start_token, end_token)
-      .lstrip(start_token.text).rstrip(end_token.text))
-
-    super().__init__(type(error).__name__,
-        'File "{}"'.format(error.input.getSourceName()), error.line,
-        error.charPositionInLine, line_text)
+  pass
 
 class OracleError (PrecogError):
   pass
@@ -70,7 +41,7 @@ class PlsqlSyntaxError (SyntaxError, OracleError):
     line = error_props['line']
     super().__init__(
         "PL/SQL compile {}:".format(error_props['attribute'].lower()),
-        plsql_obj.pretty_name, line, error_props['position'],
+        plsql_obj.pretty_name, line, error_props['position'] - 1,
         plsql_obj.sql().split('\n')[line-1], error_props['text'])
 
 class ObjectError (PrecogError):
@@ -136,5 +107,5 @@ class UnsatisfiedDependencyError (PrecogError):
   def __str__ (self):
     return super().__str__() + "\n  ".join(
         [''] + ["{} referenced by {}".format(obj.pretty_name,
-          ", ".join(ref.pretty_name for ref in obj.referenced_by()))
+          ", ".join(ref.obj.pretty_name for ref in obj.referenced_by()))
         for obj in self.unsatisfied])

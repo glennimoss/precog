@@ -133,7 +133,7 @@ show_errors
     */
 
 identifier returns [ident]
-  : first=ID ( DOT second=ID ( DOT third=ID )? )?
+  : first=ID ( DOT second=ID ( DOT third=multipart_identifier )? )?
     {
       schema = $first.text if $second else None
       obj = $second.text if $second else $first.text
@@ -142,32 +142,58 @@ identifier returns [ident]
     }
   ;
 
+multipart_identifier returns [ident]
+scope { parts; }
+@init { $multipart_identifier::parts = [] }
+  : first=tID (DOT part_identifier)*
+    {
+      $ident = $first.id
+      if $multipart_identifier::parts:
+        $multipart_identifier::parts.insert(0, $first.id)
+
+        $ident = OracleIdentifier($multipart_identifier::parts)
+    }
+  ;
+
+part_identifier
+  : part=tID { $multipart_identifier::parts.append($part.id) }
+  ;
+
+tID returns [id, token]
+  : i=ID
+    {
+      $id = OracleIdentifier($i.text)
+      $token = $i
+    }
+  ;
+
 aliasing_identifier returns [ident]
-  : i=identifier alias=ID? {
+  : i=identifier alias=tID? {
       $ident = $i.ident
-      if $alias:
+      if $alias.id:
         if not $aliases::map:
           $aliases::map = {}
 
-        alias = OracleIdentifier($alias.text)
-        $aliases::map[alias] = $ident
+        $aliases::map[$alias.id] = $ident
     }
   ;
 
 aliased_identifier returns [ident]
-  : (alias=ID DOT)? i=ID {
-      if $alias:
-        alias_name = OracleIdentifier($alias.text)
-        if alias_name not in $aliases::map:
-          self.log.warn("Alias [{}] does not exist in statement on line {},{}. "
-            "Pretending there is no alias.".format(alias_name, $alias.line,
-            $alias.charPositionInLine + 1))
-          $ident = $i.text
+  : ({ $aliases::map }? (alias=tID DOT)?)? i=multipart_identifier {
+      if $alias.id:
+        if $alias.id not in $aliases::map:
+          self.logSyntaxWarning("Alias [{}] does not exist".format($alias.id),
+            self.input, $alias.token.index, $alias.token.line,
+            $alias.token.charPositionInLine)
+          #self.log.warn("Alias [{}] does not exist in statement on line {},{}. "
+            #"Pretending there is no alias.".format($alias.id, $alias.token.line,
+            #$alias.token.charPositionInLine + 1))
+          $ident = $i.ident
         else:
-          resolved = $aliases::map[alias_name]
-          $ident = OracleFQN(resolved.schema, resolved.obj, $i.text)
+          resolved = $aliases::map[$alias.id]
+          $ident = OracleFQN(resolved.schema, resolved.obj, $i.ident)
       else:
-        $ident = $i.text
+        $ident = $i.ident
     }
   ;
 
@@ -384,24 +410,24 @@ scope { props }
   ;
 
 sequence_prop
-  : INCREMENT BY n=T_INTEGER
-    { $create_sequence::props['increment_by'] = int($n.text) }
-  | START WITH n=T_INTEGER
-    { $create_sequence::props['start_with'] = int($n.text) }
-  | kMAXVALUE n=T_INTEGER
-    { $create_sequence::props['maxvalue'] = int($n.text) }
+  : INCREMENT BY n=tINTEGER
+    { $create_sequence::props['increment_by'] = $n.val }
+  | START WITH n=tINTEGER
+    { $create_sequence::props['start_with'] = $n.val }
+  | kMAXVALUE n=tINTEGER
+    { $create_sequence::props['maxvalue'] = $n.val }
   | kNOMAXVALUE
     { $create_sequence::props['maxvalue'] = 9999999999999999999999999999 }
-  | kMINVALUE n=T_INTEGER
-    { $create_sequence::props['minvalue'] = int($n.text) }
+  | kMINVALUE n=tINTEGER
+    { $create_sequence::props['minvalue'] = $n.val }
   | kNOMINVALUE
     { $create_sequence::props['minvalue'] = 1 }
   | kCYCLE
     { $create_sequence::props['cycle_flag'] = 'Y' }
   | kNOCYCLE
     { $create_sequence::props['cycle_flag'] = 'N' }
-  | kCACHE n=T_INTEGER
-    { $create_sequence::props['cache_size'] = int($n.text) }
+  | kCACHE n=tINTEGER
+    { $create_sequence::props['cache_size'] = $n.val }
   | kNOCACHE
     { $create_sequence::props['cache_size'] = 0 }
   | ORDER
@@ -1207,6 +1233,9 @@ EXPONENT
 ASTERISK
 	:	'*'
 	;
+BANG
+  : '!'
+  ;
 AT_SIGN
 	:	'@'
 	;

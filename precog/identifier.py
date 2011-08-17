@@ -19,6 +19,16 @@ class OracleIdentifier (str):
     if isinstance(identifier, OracleIdentifier):
       return identifier
 
+    parts = None
+    if isinstance(identifier, list):
+      if len(identifier) > 1:
+        parts = identifier
+        identifier = ".".join(OracleIdentifier(id).force_quoted()
+            for id in identifier)
+        trust_me = True
+      else:
+        identifier = identifier[0]
+
     if trust_me:
       # Sometimes names can violate these conditions, but whoever is creating
       # this object is sure they know what they're doing. Do you?
@@ -59,7 +69,13 @@ class OracleIdentifier (str):
           "Quoted object name {} cannot contain \" or \\0"
           .format(repr(identifier)))
 
-    return super().__new__(class_, identifier)
+    self = super().__new__(class_, identifier)
+    self.parts = parts
+
+    return self
+
+  def force_quoted (self):
+    return OracleIdentifier('"{}"'.format(self.strip('"')), True)
 
   def __repr__ (self):
     return "OracleIdentifier({})".format(super().__repr__())
@@ -112,17 +128,15 @@ def name_from_oracle (name):
   if not name:
     return name
 
-  # Sometimes the name has multiple parts, so we'll try and use it as-is.
   if OracleIdentifier.has_parts(name):
+    # Sometimes the name has multiple parts, and we want to have access to parts
+    names = name.strip('"').split('"."')
+    return OracleIdentifier(names, True)
+
+  try:
+    return OracleIdentifier(name)
+  except ReservedNameError:
+    # built-in types
     return OracleIdentifier(name, True)
-
-  if OracleIdentifier.simple_name(name):
-    try:
-      return OracleIdentifier(name)
-    except ReservedNameError:
-      # built-in types
-      return OracleIdentifier(name, True)
-    except OracleNameError:
-      pass
-
-  return OracleIdentifier('"{}"'.format(name))
+  except OracleNameError:
+    return OracleIdentifier('"{}"'.format(name))

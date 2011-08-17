@@ -15,13 +15,25 @@ def _assert_type (value, type):
   if value is not None and not isinstance(value, type):
     raise TypeError("Expected {}: {!r}".format(type.__name__, value))
 
+class _Reference (object):
+  SOFT = "SOFT"
+  HARD = "HARD"
+  AUTODROP = "AUTODROP"
+
+  def __init__ (self, obj, integrity=HARD):
+    self.obj = obj
+    self.integrity = integrity
+
+  def __str__ (self):
+    return "{} reference to {}".format(self.integrity, self.obj.pretty_name)
+
 class OracleObject (HasLog):
 
   @classproperty
   def type (class_):
     return class_.__name__.upper()
 
-  def __init__ (self, name, deferred=False, database=None, **props):
+  def __init__ (self, name, deferred=False, database=None, aka=None, **props):
     super().__init__()
     if not isinstance(name, OracleFQN):
       name = OracleFQN(obj=name)
@@ -31,10 +43,16 @@ class OracleObject (HasLog):
     self.props = InsensitiveDict(props)
     self._referenced_by = set()
     self._dependencies = set()
+    self.aka = name
+    if aka:
+      self.aka = aka
 
   def __repr__ (self, **other_props):
     if self.deferred:
       other_props['deferred'] = True
+
+    if self.aka:
+      other_props['aka'] = self.aka
 
     other_props.update(self.props)
     return "{}({!r}, {})".format(type(self).__name__,
@@ -72,8 +90,6 @@ class OracleObject (HasLog):
         return self._sql()
       else:
         return self._sql(fq)
-
-    name += self.prett_name
     return "-- Placeholder for {}{}".format(
         'deferred ' if self.deferred else '', self.pretty_name)
 
@@ -81,8 +97,35 @@ class OracleObject (HasLog):
     return Diff(self.sql(), produces=self, priority=Diff.CREATE)
 
   def drop (self):
-    return Diff("DROP {} {}".format(self.type, self.name), self,
+    self.log.debug("{} has {}".format(self.pretty_name,
+      ", ".join(str(ref) for ref in self._referenced_by)))
+    drop = self._drop()
+    ref_diffs = [diff
+        for ref in self._referenced_by if ref.integrity is _Reference.HARD
+        for diff in ref.obj.drop()]
+    self.log.debug(ref_diffs)
+    drop.dependencies.update(ref_diffs)
+    return [drop] + ref_diffs
+
+  def _drop (self):
+    return Diff("DROP {} {}".format(self.type, self.name), #self,
         priority=Diff.DROP)
+
+  def recreate (self, other):
+    drop, *diffs = self.drop()
+    diffs.extend(ref.obj.create()
+        for ref in self._referenced_by
+        if ref.integrity in (_Reference.AUTODROP, _Reference.HARD))
+    create = self.create()
+    create.dependencies.add(drop)
+    diffs.append(drop)
+    diffs.append(create)
+    return diffs
+
+    drops = other.drop()
+    create = self.create()
+    create.dependencies.add(drops[0])
+    return drops + [create]
 
   def satisfy (self, other):
     if self.deferred:
@@ -150,28 +193,53 @@ class OracleObject (HasLog):
 
     return diffs
 
-  def depends_on (self, other):
-    self._dependencies.add(other)
-    other.referenced_by(self)
+  def add_subobjects (self, subobjects):
+    return [obj.create() for obj in subobjects]
+
+  def drop_subobjects (self, subobjects):
+    return [diff for obj in subobjects for diff in obj.drop()]
+
+  def depends_on (self, other, integrity=_Reference.HARD):
+    ref = _Reference(other, integrity)
+    self._dependencies.add(ref)
+    other.referenced_by(self, integrity)
+
+  def _build_set (self, get_objects):
+    all = set()
+
+    def recurse (_object):
+      for ref in get_objects(_object):
+        obj = ref.obj
+        if obj not in all and obj is not self:
+          all.add(obj)
+          recurse(obj)
+
+    recurse(self)
+    return all
 
   @property
   def dependencies (self):
-    deps = set()
+    return self._build_set(lambda self: self._dependencies)
+    #deps = set()
 
-    def recurse (obj):
-      for dep in obj._dependencies:
-        if dep not in deps and dep is not self:
-          deps.add(dep)
-          recurse(dep)
+    #def recurse (obj):
+      #for dep in obj._dependencies:
+        #if dep not in deps and dep is not self:
+          #deps.add(dep)
+          #recurse(dep)
 
-    recurse(self)
-    return deps
+    #recurse(self)
+    #return deps
 
-  def referenced_by (self, value=None):
-    if value is None:
+  def referenced_by (self, other=None, integrity=_Reference.SOFT):
+    if other is None:
       return self._referenced_by
 
-    self._referenced_by.add(value)
+    ref = _Reference(other, integrity)
+    self._referenced_by.add(ref)
+
+  def _all_references (self):
+    return self._build_set(lambda self: self._referenced_by)
 
   warned = False
   @classmethod
@@ -185,7 +253,9 @@ class OracleObject (HasLog):
 class HasColumns (object):
   """ Mixin for objects that have the columns property """
 
-  def __init__ (self, name, columns=[], **props):
+  def __init__ (self, name, columns=[], column_reference=_Reference.AUTODROP,
+      **props):
+    self._column_reference = column_reference
     self._columns = []
     super().__init__(name, **props)
     self.columns = columns
@@ -214,7 +284,7 @@ class HasColumns (object):
     _assert_type(value, list)
     self._columns = value
     for column in self._columns:
-      self.depends_on(column)
+      self.depends_on(column, self._column_reference)
 
   def satisfy (self, other):
     if self.deferred:
@@ -244,7 +314,7 @@ class HasTable (object):
   def table (self, value):
     if value:
       _assert_type(value, Table)
-      self.depends_on(value)
+      self.depends_on(value, _Reference.AUTODROP)
 
     self._table = value
 
@@ -256,7 +326,7 @@ class HasTable (object):
 class Table (HasColumns, OracleObject):
 
   def __init__ (self, name, indexes=None, **props):
-    super().__init__(name, **props)
+    super().__init__(name, column_reference=_Reference.SOFT, **props)
     if not indexes:
       indexes = set()
     self.indexes = indexes
@@ -291,16 +361,6 @@ class Table (HasColumns, OracleObject):
 
   def __repr__ (self):
     return super().__repr__(indexes=self.indexes)
-    #return ("Table('" + self.name.obj + "', columns=[" +
-        #', '.join(repr(c) for c in self.columns) + ']' +
-        #(', indexes={' + ', '.join(repr(i) for i in self.indexes) + '}'
-          #if self.indexes else '') +
-        #')')
-
-  #def depends_on (self, other):
-    ## a Table doesn't depend on its columns
-    #if not isinstance(other, Column):
-      #super().depends_on(other)
 
   def _sql (self, fq=True):
     name = self.name.obj
@@ -310,12 +370,6 @@ class Table (HasColumns, OracleObject):
         ', '.join(c.sql() for c in self.columns),
         " TABLESPACE {}".format(self.props['tablespace_name'])
           if self.props['tablespace_name'] else '')
-
-  def add_subobjects (self, columns):
-    return [column.create() for column in columns]
-
-  def drop_subobjects (self, columns):
-    return [column.drop() for column in columns]
 
   def diff (self, other):
     diffs = []
@@ -428,10 +482,10 @@ class Column (HasTable, OracleObject):
     return Diff("ALTER TABLE {} ADD ( {} )".format(self.table.name, self.sql()),
         produces=self, priority=Diff.CREATE)
 
-  def drop (self):
+  def _drop (self):
     return Diff(
-        "ALTER TABLE {} DROP ( {} )".format(self.table.name, column.name.part),
-        self, priority=Diff.DROP)
+        "ALTER TABLE {} DROP ( {} )".format(self.table.name, self.name.part),
+        self.table, priority=Diff.DROP)
 
   def diff (self, other):
     super().diff(other)
@@ -490,7 +544,7 @@ class Column (HasTable, OracleObject):
 class Constraint (HasTable, OracleObject):
 
   # Can't drop constraints like this
-  def drop (self):
+  def _drop (self):
     return None
 
 
@@ -523,7 +577,9 @@ class Index (HasColumns, OracleObject):
         'UNIQUE ' if self.props['uniqueness'] == 'UNIQUE' else '',
         name,
         self._tablename,
-        ', '.join(c.name.part for c in self.columns),
+        # TODO: what to do with column objects
+        #', '.join(c.name.part for c in self.columns),
+        ', '.join(c.aka.part for c in self.columns),
         " TABLESPACE {}".format(self.props['tablespace_name'])
           if self.props['tablespace_name'] else '')
 
@@ -540,11 +596,7 @@ class Index (HasColumns, OracleObject):
         diffs.append(Diff("ALTER INDEX {} REBUILD TABLESPACE {}"
             .format(other.name, self.props['tablespace_name']), produces=self))
 
-      drop = other.drop()
-      create = self.create()
-      create.dependencies.add(drop)
-      diffs.append(drop)
-      diffs.append(create)
+      diffs.extend(self.recreate(other))
 
     return diffs
 
@@ -615,8 +667,8 @@ class Sequence (OracleObject):
 
     prop_diff = self._diff_props(other)
     if prop_diff:
-      diffs.append(Diff(self.sql(operation='ALTER', props=prop_diff),
-        produces=self, priority=diff.ALTER))
+      diffs.append(Diff(self._sql(operation='ALTER', props=prop_diff),
+        produces=self, priority=Diff.ALTER))
 
     return diffs
 
@@ -648,7 +700,7 @@ class View (OracleObject): # Table??
 class Lob (OracleObject):
 
   # Can't drop lobs like this
-  def drop (self):
+  def _drop (self):
     return None
 
 class PlsqlCode (OracleObject):
@@ -754,7 +806,7 @@ class PlsqlBody (PlsqlCode):
   def header (self, value):
     if value:
       _assert_type(value, PlsqlHeader)
-      self.depends_on(value)
+      self.depends_on(value, _Reference.AUTODROP)
 
     self._header = value
 
@@ -779,7 +831,13 @@ class Trigger (PlsqlCode):
   pass
 
 class Type (PlsqlHeader):
-  pass
+
+  def diff (self, other):
+    if self != other:
+      return self.recreate(other)
+    else:
+      return super().diff(other)
+
 
 class TypeBody (PlsqlBody):
   @classproperty
@@ -837,10 +895,6 @@ class Schema (OracleObject):
       else:
         obj.name = name
         obj.database = self.database
-        # TODO: is there a more general way to do this? Also, do we want to have
-        # every object referenced by the Schema? It's kind of a given.
-        #if obj_type is not Column:
-          #obj.referenced_by(self)
         namespace[name] = obj
         if obj_type in self.share_namespace:
           self.shared_namespace[name] = obj
@@ -856,6 +910,13 @@ class Schema (OracleObject):
 
     if not name.schema:
       name = OracleFQN(self.name.schema, name.obj, name.part)
+
+    if name.part and name.part.parts:
+      # TODO: how to look up multiple parts...
+      lookup_by = OracleFQN(name.schema, name.obj, name.part.parts[0])
+      obj = self.find(lookup_by, obj_type, deferred)
+      obj.aka = name
+      return obj
 
     if obj_type in self.objects and name in self.objects[obj_type]:
       return self.objects[obj_type][name]
@@ -880,12 +941,6 @@ class Schema (OracleObject):
       diffs.extend(other.diff_subobjects(target_objs, current_objs))
 
     return diffs
-
-  def add_subobjects (self, objs):
-    return [obj.create() for obj in objs]
-
-  def drop_subobjects (self, objs):
-    return [obj.drop() for obj in objs]
 
   @classmethod
   def from_db (class_, schema=None, into_database=None):
@@ -920,8 +975,8 @@ class Schema (OracleObject):
         schema.add(obj)
       except KeyError as e:
         schema.log.warn("{} [{}]: unexpected type".format(
-          class_name, obj['object_name']))
-        raise
+          obj['object_type'], obj['object_name']))
+        #raise
 
     # Constraints handled differently
     # in fact, probably not like this
@@ -1025,6 +1080,25 @@ class Database (HasLog):
     for schema_name in self.schemas:
       diffs.extend(self.schemas[schema_name].diff(
         oracle_database.schemas[schema_name]))
+
+    if diffs:
+      diffs = order_diffs(diffs)
+
+    return diffs
+
+  @classmethod
+  def dump_schema (class_, connection_string, schema_name):
+    db.connect(connection_string)
+
+    oracle_database = Database()
+
+    diffs = []
+    db_schema = Schema(schema_name, database=oracle_database)
+    oracle_database.add(db_schema)
+
+    Schema.from_db(db_schema)
+
+    diffs = db_schema.diff(Schema(schema_name))
 
     if diffs:
       diffs = order_diffs(diffs)

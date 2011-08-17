@@ -1,6 +1,7 @@
+from antlr3.constants import DEFAULT_CHANNEL, EOF
+from antlr3 import exceptions
 from antlr3.streams import (CommonTokenStream, StringStream, FileStream,
   InputStream)
-from antlr3.constants import DEFAULT_CHANNEL, EOF
 
 NL_CHANNEL = DEFAULT_CHANNEL + 1
 

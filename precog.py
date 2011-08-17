@@ -30,9 +30,8 @@ parser = HelpyArgparser(description='Generate Oracle migration script.')
 parser.add_argument('connect_string',
     metavar=ConnectionStringAction.metavar, action=ConnectionStringAction,
     help='Oracle connection string')
-parser.add_argument('file', type=argparse.FileType('r'),
-    help='SQL*Plus script to parse'
-    )
+parser.add_argument('file', nargs='?', type=argparse.FileType('r'),
+    help='SQL*Plus script to parse')
 
 # Output control options
 output_group = parser.add_mutually_exclusive_group()
@@ -44,6 +43,8 @@ output_group.add_argument('-q', '--quiet', action='store_true',
 # Configuration options
 parser.add_argument('--schema',
     help='Schema name for unqualified object names. Defaults to <username>.')
+parser.add_argument('--dump', action='store_true',
+    help='Dump specified schema.')
 
 # User-input options
 prompt_group = parser.add_mutually_exclusive_group()
@@ -54,6 +55,10 @@ prompt_group.add_argument('-n', '--no-apply', action='store_true',
 
 # Now GO!
 args = parser.parse_args()
+
+if not args.file and not args.dump:
+  print('Provide a file, or --dump', file=sys.stderr)
+  sys.exit()
 
 # Configure logger
 log_config = {'style': '{', 'format': '{levelname}: {message}'}
@@ -74,35 +79,43 @@ try:
   schema_name = args.username
   if args.schema:
     schema_name = args.schema
-  database = Database.from_file(args.file, schema_name)
 
-  diffs = database.diff_to_db(args.connect_string)
+  if args.file:
+    database = Database.from_file(args.file, schema_name)
 
-  if diffs:
-    changes = len(diffs)
-    print("Found {} changes".format(changes), file=sys.stderr)
+    diffs = database.diff_to_db(args.connect_string)
+
+    if diffs:
+      changes = len(diffs)
+      print("Found {} changes".format(changes), file=sys.stderr)
+      print("\n\n".join(str(diff) for diff in diffs))
+
+      if not (args.apply or args.no_apply):
+        doit = input('Run script? [yN] ')
+      else:
+        doit = 'y' if args.apply else 'n'
+
+      errors = 0
+      if 'y' == doit.lower():
+        print("Applying {} changes...".format(changes), file=sys.stderr)
+        for diff in diffs:
+          try:
+            diff.apply()
+          except OracleError as e:
+            print(e, file=sys.stderr)
+            errors += 1
+        if errors:
+          print("\nUnable to apply {} changes".format(errors))
+        print("Successfully applied {} changes".format(changes - errors),
+            file=sys.stderr)
+    else:
+      print("Oracle is up to date with {}".format(args.file.name),
+          file=sys.stderr)
+
+  elif args.dump:
+    diffs = Database.dump_schema(args.connect_string, schema_name)
     print("\n\n".join(str(diff) for diff in diffs))
 
-    if not (args.apply or args.no_apply):
-      doit = input('Run script? [yN] ')
-    else:
-      doit = 'y' if args.apply else 'n'
-
-    errors = 0
-    if 'y' == doit.lower():
-      print("Applying {} changes...".format(changes), file=sys.stderr)
-      for diff in diffs:
-        try:
-          diff.apply()
-        except OracleError as e:
-          print(e, file=sys.stderr)
-          errors += 1
-      if errors:
-        print("\nUnable to apply {} changes".format(errors))
-      print("Successfully applied {} changes".format(changes - errors),
-          file=sys.stderr)
-  else:
-    print("Oracle is up to date with {}".format(args.file.name),
-        file=sys.stderr)
 except PrecogError as e:
   print(e, file=sys.stderr)
+  raise
