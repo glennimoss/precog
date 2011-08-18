@@ -724,8 +724,7 @@ class PlsqlCode (OracleObject):
     return "CREATE OR REPLACE {}".format(self.props['source'])
 
   def create (self):
-    return PlsqlDiff(self.sql(), produces=self, priority=Diff.CREATE,
-        terminator='\n/')
+    return PlsqlDiff(self.sql(), produces=self, priority=Diff.CREATE)
 
   def diff (self, other):
     diffs = super().diff(other)
@@ -733,10 +732,19 @@ class PlsqlCode (OracleObject):
     if not diffs:
       errors = other.errors()
       if errors:
-        self.log.info("Suggest reapplying {}".format(self.pretty_name))
-        diffs.append(self.create())
+        diffs.append(self.recompile())
 
     return diffs
+
+  def recompile (self, plsql_type=None, extra_parameters=None):
+    if not plsql_type:
+      plsql_type = self.type
+    parts = ['ALTER', plsql_type, name, 'COMPILE']
+    if extra_parameters:
+      parts.append(extra_parameters)
+    parts.append("REUSE SETTINGS")
+
+    return Diff(" ".join(parts), produces=self)
 
   def errors (self):
     rs= db.query(""" SELECT line
@@ -820,9 +828,15 @@ class Procedure (PlsqlCode):
   pass
 
 class Package (PlsqlHeader):
-  pass
+
+  def recompile(self):
+    return super().recompile(extra_parameters='SPECIFICATION')
 
 class PackageBody (PlsqlBody):
+
+  def recompile(self):
+    return super().recompile('PACKAGE', 'BODY')
+
   @classproperty
   def type (class_):
     return 'PACKAGE BODY'
@@ -838,8 +852,15 @@ class Type (PlsqlHeader):
     else:
       return super().diff(other)
 
+  def recompile(self):
+    return super().recompile(extra_parameters='SPECIFICATION')
+
 
 class TypeBody (PlsqlBody):
+
+  def recompile(self):
+    return super().recompile('TYPE', 'BODY')
+
   @classproperty
   def type (class_):
     return 'TYPE BODY'

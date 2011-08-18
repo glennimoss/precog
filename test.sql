@@ -1,4 +1,4 @@
-create index bar_idx on bar ( id);
+create index baz_idx on baz ( obj.num );
 
 create table foo
   ( id number
@@ -13,7 +13,7 @@ create table bar
   , data varchar2(32)
 );
 
-create type test_type as object (num number, other2 varchar2(100));
+create type test_type as object (num number(6), other2 varchar2(100));
 /
 
 create table baz

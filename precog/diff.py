@@ -53,6 +53,9 @@ class Diff (object):
 
 class PlsqlDiff (HasLog, Diff):
 
+  def __init__ (self, sql, dependencies=None, produces=None, priority=None):
+    super().__init__(sql, dependencies, produces, priority, '\n/')
+
   def apply (self):
     super().apply()
 
