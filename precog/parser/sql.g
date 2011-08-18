@@ -133,30 +133,13 @@ show_errors
     */
 
 identifier returns [ident]
-  : first=ID ( DOT second=ID ( DOT third=multipart_identifier )? )?
+  : first=ID ( DOT second=ID ( DOT third=ID )? )?
     {
       schema = $first.text if $second else None
       obj = $second.text if $second else $first.text
       part = $third.text if $first and $second else None
       $ident = OracleFQN(schema, obj, part)
     }
-  ;
-
-multipart_identifier returns [ident]
-scope { parts; }
-@init { $multipart_identifier::parts = [] }
-  : first=tID (DOT part_identifier)*
-    {
-      $ident = $first.id
-      if $multipart_identifier::parts:
-        $multipart_identifier::parts.insert(0, $first.id)
-
-        $ident = OracleIdentifier($multipart_identifier::parts)
-    }
-  ;
-
-part_identifier
-  : part=tID { $multipart_identifier::parts.append($part.id) }
   ;
 
 tID returns [id, token]
@@ -179,22 +162,28 @@ aliasing_identifier returns [ident]
   ;
 
 aliased_identifier returns [ident]
-  : ({ $aliases::map }? (alias=tID DOT)?)? i=multipart_identifier {
-      if $alias.id:
-        if $alias.id not in $aliases::map:
-          self.logSyntaxWarning("Alias [{}] does not exist".format($alias.id),
-            self.input, $alias.token.index, $alias.token.line,
-            $alias.token.charPositionInLine)
-          #self.log.warn("Alias [{}] does not exist in statement on line {},{}. "
-            #"Pretending there is no alias.".format($alias.id, $alias.token.line,
-            #$alias.token.charPositionInLine + 1))
-          $ident = $i.ident
-        else:
-          resolved = $aliases::map[$alias.id]
-          $ident = OracleFQN(resolved.schema, resolved.obj, $i.ident)
+scope { parts; }
+@init { $aliased_identifier::parts = [] }
+  : first=tID (DOT part_identifier)*
+    {
+      resolved = None
+      if $aliases::map and $first.id in $aliases::map:
+        resolved = $aliases::map[$first.id]
       else:
-        $ident = $i.ident
+        $aliased_identifier::parts.insert(0, $first.id)
+
+      $ident = OracleIdentifier($aliased_identifier::parts)
+      if resolved:
+        $ident = OracleFQN(resolved.schema, resolved.obj, $ident)
+
+      #self.logSyntaxWarning("Alias [{}] does not exist".format($alias.id),
+        #self.input, $alias.token.index, $alias.token.line,
+        #$alias.token.charPositionInLine)
     }
+  ;
+
+part_identifier
+  : part=tID { $aliased_identifier::parts.append($part.id) }
   ;
 
 create_table returns [obj]
@@ -222,9 +211,9 @@ scope { props }
     $col_spec::props['leftovers'] = ' '.join($col_spec::props['leftovers'])
   else:
     del $col_spec::props['leftovers']
-  $create_table::columns.append(Column($i.text, **$col_spec::props))
+  $create_table::columns.append(Column($i.id, **$col_spec::props))
 }
-  : i=ID column_data_type
+  : i=tID column_data_type
     ( DEFAULT e=expression { $col_spec::props['data_default'] = $e.text } )?
     { $col_spec::props['leftovers'] = [] }
     ( ic=inline_constraint
@@ -350,12 +339,12 @@ user_data_type
 
 inline_constraint returns [props]
 @init { $props = InsensitiveDict() }
-  : ( kCONSTRAINT constraint_name=ID )?
+  : ( kCONSTRAINT constraint_name=tID )?
     ( NOT? NULL { $props['nullable'] = 'N' if $NOT else 'Y' }
     | UNIQUE
     | kPRIMARY kKEY
     | CHECK LPAREN expression RPAREN
-    | kREFERENCES ref=identifier (LPAREN col=ID RPAREN)?
+    | kREFERENCES ref=identifier (LPAREN col=tID RPAREN)?
       (ON DELETE (kCASCADE | SET NULL))?
     )
   ;
