@@ -1,4 +1,4 @@
-import logging
+import logging, pprint, inspect
 
 from antlr3.ext import NamedConstant
 from precog import db
@@ -6,6 +6,7 @@ from precog.errors import PlsqlSyntaxError, PrecogError
 from precog.util import HasLog
 
 class Diff (object):
+  COMMIT = 0
   DROP = 1
   CREATE = 2
   ALTER = 3
@@ -14,13 +15,25 @@ class Diff (object):
   def __init__ (self, sql, dependencies=None, produces=None, priority=None,
       terminator=';'):
     self.sql = sql
+    stack = inspect.stack()
+    self.created = []
+    ininit = True
+    for pop in stack:
+      frame = inspect.getframeinfo(pop[0])
+      if frame.function != '__init__':
+        ininit = False
+      if not ininit:
+        self.created.append("{} line {}: {}".format(frame.filename,
+          frame.lineno, frame.function))
+      del frame
+    del stack
 
     if dependencies is None:
       if produces is not None:
         dependencies = produces.dependencies
       else:
         dependencies = set()
-    if not isinstance(dependencies, set):
+    if not isinstance(dependencies, set) and not isinstance(dependencies, list):
       dependencies = {dependencies}
     self.dependencies = dependencies
     self.produces = produces
@@ -51,10 +64,11 @@ class Diff (object):
         self.produces.pretty_name if self.produces
         else self.sql if self.priority == Diff.DROP else ", ".join(pretty_deps))
 
-class PlsqlDiff (HasLog, Diff):
+class PlsqlDiff (Diff):
 
-  def __init__ (self, sql, dependencies=None, produces=None, priority=None):
-    super().__init__(sql, dependencies, produces, priority, '\n/')
+  def __init__ (self, sql, dependencies=None, produces=None, priority=None,
+      terminator='\n/'):
+    super().__init__(sql, dependencies, produces, priority, terminator)
 
   def apply (self):
     super().apply()
@@ -62,10 +76,14 @@ class PlsqlDiff (HasLog, Diff):
     # log compile errors
     self.produces.errors()
 
+class Commit (Diff):
+
+  def __init__ (self, dependencies):
+    super().__init__('COMMIT', dependencies, priority=Diff.COMMIT)
+
 def _edge_list (edges):
-  return "\n".join("  {} -> {}".format(k.pretty_name,
-    ", ".join(dep.pretty_name for dep in v))
-    for k,v in edges.items())
+  return pprint.pformat({k.pretty_name: set(dep.pretty_name for dep in v)
+        for k,v in edges.items()})
 
 class DiffCycleError (PrecogError):
 
@@ -80,17 +98,18 @@ class DiffCycleError (PrecogError):
 
 def order_diffs (diffs):
   log = logging.getLogger('precog.diff.order_diffs')
-  log.debug("!!!!!!!!!!!!!!!!!".join(diff.pretty_name + repr(diff) for diff in diffs))
 
   diffs = {diff.produces or diff: diff for diff in diffs if diff}
-  #log.debug('Diffs:')
-  #for k,v in diffs.items():
-    #log.debug("  {} {}: depends on {}".format(type(k).__name__,
-      #k.sql if isinstance(k, Diff) else k.name,
-      #", ".join(dep.pretty_name for dep in v.dependencies) or 'nothing'))
+  log.debug("All diffs:\n{}".format(pprint.pformat(
+    {label.pretty_name: {'sql': diff.sql,
+                        'dependencies':
+                          set(dep.pretty_name for dep in diff.dependencies),
+                        'produces': diff.produces and diff.produces.pretty_name,
+                        'created': diff.created
+                       }
+    for label, diff in diffs.items()})))
 
   # list of obj: [dependencies, ...]
-  #edges = {obj: diff.dependencies for obj, diff in diffs.items()}
   edges = {}
   # Produced objects of diffs to be sorted
   S = [node for node, devnull in
@@ -124,12 +143,17 @@ def order_diffs (diffs):
 
     if not node in visited:
       visited.add(node)
+      if node in diffs:
+        log.debug("Can I apply {}?".format(diffs[node].pretty_name))
+      else:
+        log.debug("Visiting {}".format(node.pretty_name))
 
       if node in edges:
         for dependent in edges[node]:
           visit(dependent, this_visit)
 
       if node in diffs:
+        log.debug("Apply {}".format(diffs[node].pretty_name))
         L.append(diffs[node])
 
   for node in S:

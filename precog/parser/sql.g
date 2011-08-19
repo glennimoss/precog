@@ -426,20 +426,32 @@ sequence_prop
   ;
 
 insert_statement returns [obj]
+scope { expressions; }
 scope aliases, tab_col_ref;
 @init {
+  $insert_statement::expressions = []
   $tab_col_ref::columns = []
 }
+@after {
+  table.add_data($tab_col_ref::columns, $insert_statement::expressions)
+}
   : INSERT INTO table_name=aliasing_identifier
-    { $tab_col_ref::table = $table_name.ident }
+    {
+      $tab_col_ref::table = $table_name.ident
+      table = $g::database.find($tab_col_ref::table, Table)
+    }
     LPAREN
       column_ref (COMMA column_ref)*
     RPAREN
     VALUES
     LPAREN
-      expression (COMMA expression)*
+      insert_expression (COMMA insert_expression)*
     RPAREN
     ;
+
+insert_expression
+  : exp=expression { $insert_statement::expressions.append($exp.text) }
+  ;
 
 /*
 

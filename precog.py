@@ -67,6 +67,7 @@ if args.quiet:
   log_config['stream'] = sys.stdout
 elif args.verbose:
   if len(args.verbose) > 1:
+    log_config = {'style': '{', 'format': '{levelname} {name}: {message}'}
     log_config['level'] = logging.DEBUG
   else:
     log_config['level'] = logging.INFO
@@ -86,7 +87,8 @@ try:
     diffs = database.diff_to_db(args.connect_string)
 
     if diffs:
-      changes = len(diffs)
+      #changes = len(filter(lambda diff: diff.priority != Diff.COMMIT, diffs))
+      changes = sum(1 for diff in diffs if diff.priority)
       print("Found {} changes".format(changes), file=sys.stderr)
       print("\n\n".join(str(diff) for diff in diffs))
 
