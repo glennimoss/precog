@@ -40,24 +40,21 @@ except ImportError as e:
   cx_Oracle = DummyModule()
 
 _connection = None
-_curs = None
+_numbers_as_strings = False
 user = None
 
 def connect (connect_string):
-  global _connection, _curs, user
-  if _curs:
-    _curs.close()
+  global _connection, user
   if _connection:
     _connection.close()
 
   _connection = cx_Oracle.connect(connect_string)
   user = OracleIdentifier(_connection.username)
-  _curs = _connection.cursor()
   # The recyclebin causes problems when trying to drop several objects that
   # depend on each other.
-  _curs.execute('ALTER SESSION SET RECYCLEBIN=OFF')
+  execute('ALTER SESSION SET RECYCLEBIN=OFF')
   # TODO: pass this in as a command-line parameter
-  #_curs.execute("ALTER SESSION SET PLSQL_WARNINGS='ENABLE:ALL'")
+  #execute("ALTER SESSION SET PLSQL_WARNINGS='ENABLE:ALL'")
 
 def _rowfactory (row, cursor, oracle_names=[]):
   row = InsensitiveDict(zip((column[0] for column in cursor.description), row))
@@ -95,9 +92,20 @@ def _execute(*args, **kvargs):
 
   _unquote(kvargs)
   cursor = _connection.cursor()
+  cursor.numbersAsStrings = _numbers_as_strings
   try:
     cursor.execute(*args, **kvargs)
   except cx_Oracle.DatabaseError as e:
     raise OracleError("{}SQL: {}".format(e, args[0])) from e
   return cursor
 
+class all_strings (object):
+  def __enter__ (self):
+    global _numbers_as_strings
+    self.orig_str_setting = _numbers_as_strings
+    _numbers_as_strings = True
+    return self
+
+  def __exit__ (self, *args):
+    global _numbers_as_strings
+    _numbers_as_strings = self.orig_str_setting

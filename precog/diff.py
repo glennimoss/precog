@@ -13,7 +13,7 @@ class Diff (object):
   NamedConstant.name(locals())
 
   def __init__ (self, sql, dependencies=None, produces=None, priority=None,
-      terminator=';'):
+      terminator=';', binds={}):
     self.sql = sql
     stack = inspect.stack()
     self.created = []
@@ -42,16 +42,21 @@ class Diff (object):
     self.priority=priority
 
     self.terminator = terminator
+    self.binds = binds
 
   def __repr__ (self):
     return "Diff({!r}, {!r}, {!r})".format(self.sql, self.dependencies,
         self.produces)
 
   def __str__ (self):
-    return self.sql + self.terminator
+    binds = ''
+    if self.binds:
+      binds = "-- {}\n".format(", ".join(":{} = {}".format(col, val)
+                                       for col,val in self.binds.items()))
+    return binds + self.sql + self.terminator
 
   def apply (self):
-    return db.execute(self.sql)
+    return db.execute(self.sql, **self.binds)
 
   @property
   def pretty_name (self):
