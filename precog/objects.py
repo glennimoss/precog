@@ -190,13 +190,19 @@ class OracleObject (HasLog):
 
     if self.log.isEnabledFor(logging.DEBUG):
       for prop in prop_diff:
-        self.log.debug("Prop: {} expected: {}, found {}".format(prop,
-          repr(self.props[prop]), repr(other.props[prop])))
+        self.log.debug("{}['{}']: expected {}, found {}".format(
+          self.pretty_name, prop, repr(self.props[prop]),
+          repr(other.props[prop])))
 
     return prop_diff
 
-  def diff_subobjects (self, target_objs, current_objs):
+  def diff_subobjects (self, other, get_objects): #target_objs, current_objs):
+    self.log.debug("Diffing definition {} to live {}".format(self.pretty_name,
+      other.pretty_name))
     diffs = []
+
+    target_objs = get_objects(self)
+    current_objs = get_objects(other)
 
     if not isinstance(target_objs, dict):
       target_objs = {obj.name: obj for obj in target_objs}
@@ -217,15 +223,17 @@ class OracleObject (HasLog):
                    (current_objs and
                     type(next(iter(current_objs.values()))).pretty_type) or
                    'Object')
-    self.log.debug("  Adding {} {}s".format(len(addobjs), pretty_type))
-    self.log.debug("  Dropping {} {}s".format(len(dropobjs), pretty_type))
+    self.log.debug("  Adding {} {}s: {}".format(len(addobjs), pretty_type,
+      ", ".join(target_objs[obj].pretty_name for obj in addobjs)))
+    self.log.debug("  Dropping {} {}s: {}".format(len(dropobjs), pretty_type,
+      ", ".join(current_objs[obj].pretty_name for obj in dropobjs)))
 
     if addobjs:
       diffs.extend(
-          self.add_subobjects(target_objs[addobj] for addobj in addobjs))
+          other.add_subobjects(target_objs[addobj] for addobj in addobjs))
     if dropobjs:
       diffs.extend(
-          self.drop_subobjects(current_objs[dropobj] for dropobj in dropobjs))
+          other.drop_subobjects(current_objs[dropobj] for dropobj in dropobjs))
 
     modify_diffs = [diff
         for target_obj in target_objs.values()
@@ -438,7 +446,7 @@ class Table (HasColumns, OracleObject):
     return super().__repr__(indexes=self.indexes, data=self.data)
 
   def add_data (self, columns, values):
-    self.data.append((columns, values))
+    self.data.append(Data(self, columns, values))
 
   def _sql (self, fq=True):
     name = self.name.obj
@@ -460,13 +468,10 @@ class Table (HasColumns, OracleObject):
       for i in other.indexes:
         diffs.append(Diff("ALTER INDEX {} REBUILD".format(i.name), produces=i))
 
-    diffs.extend(other.diff_subobjects(self.columns, other.columns))
+    diffs.extend(self.diff_subobjects(other, lambda o: o.columns))
 
-    if self.data:
-      inserts = [Diff("INSERT INTO {} ({}) VALUES ({})".format(self.name,
-          ", ".join(col.name.part for col in datum[0]), ", ".join(datum[1])),
-          dependencies=datum[0], priority=Diff.CREATE)
-        for datum in self.data]
+    inserts = self.diff_subobjects(other, lambda o: o.data)
+    if inserts:
       diffs.extend(inserts)
       diffs.append(Commit(inserts))
 
@@ -605,12 +610,12 @@ class Column (HasTable, OracleObject):
                            , data_default
                            , char_length
                            , char_used
-                        FROM all_tab_columns
-                        WHERE owner = :o
-                          AND table_name = :t
-                          AND (:c IS NULL OR column_name = :c)
-                    """, o=name.schema, t=name.obj, c=name.part,
-                    oracle_names=['column_name', 'data_type_owner'])
+                      FROM all_tab_columns
+                      WHERE owner = :o
+                        AND table_name = :t
+                        AND (:c IS NULL OR column_name = :c)
+                  """, o=name.schema, t=name.obj, c=name.part,
+                  oracle_names=['column_name', 'data_type_owner'])
 
     for row in rs:
       if row['data_type_owner']:
@@ -621,6 +626,38 @@ class Column (HasTable, OracleObject):
     return [class_(name, database=into_database, **dict(props))
       for (devnull, name), *props in (row.items() for row in rs)]
 
+class Data (HasColumns, OracleObject):
+
+  def __init__ (self, table, columns, expressions, **props):
+    super().__init__(OracleFQN(table.name.schema, table.name.obj,
+      "__DATA_{}".format(len(table.data))), columns=columns, **props)
+
+    self.table = table
+    self.expressions = expressions
+
+  def _sql (self, fq=True):
+    table_name = self.table.name
+    if not fq:
+      table_name = table_name.obj
+    return "INSERT INTO {} ({}) VALUES ({})".format(self.table.name,
+      ", ".join(c.name.part for c in self.columns), ", ".join(self.expressions))
+
+  def diff (self, other):
+    pass
+
+
+  @classmethod
+  def from_db (class_, table, into_database):
+    rs = db.query(""" SELECT *
+                      FROM {}
+                  """.format(table.name))
+
+    if rs:
+      columns = [into_databas.find(OracleFQN(table.name.schema, table.name.obj,
+        column_name), Column) for column_name in rs[0])]
+
+      for row in rs:
+        table.add_data(columns, row.values())
 
 class Constraint (HasTable, OracleObject):
 
@@ -1036,11 +1073,8 @@ class Schema (OracleObject):
 
     types = set(self.objects).union(other.objects) - {Column}
     for t in types:
-      self.log.debug("Diffing {}s".format(t.__name__))
-      target_objs = self.objects[t] if t in self.objects else []
-      current_objs = other.objects[t] if t in other.objects else []
-
-      diffs.extend(other.diff_subobjects(target_objs, current_objs))
+      diffs.extend(self.diff_subobjects(other,
+        lambda o: o.objects[t] if t in o.objects else []))
 
     return diffs
 

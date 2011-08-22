@@ -93,7 +93,7 @@ try:
       print("\n\n".join(str(diff) for diff in diffs))
 
       if not (args.apply or args.no_apply):
-        doit = input('Run script? [yN] ')
+        doit = input("Apply {} changes? [yN] ".format(changes))
       else:
         doit = 'y' if args.apply else 'n'
 

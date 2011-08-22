@@ -29,10 +29,7 @@ class Diff (object):
     del stack
 
     if dependencies is None:
-      if produces is not None:
-        dependencies = produces.dependencies
-      else:
-        dependencies = set()
+      dependencies = set()
     if not isinstance(dependencies, set) and not isinstance(dependencies, list):
       dependencies = {dependencies}
     self.dependencies = dependencies
@@ -60,9 +57,10 @@ class Diff (object):
   def pretty_name (self):
     pretty_deps = [dep.pretty_name for dep in self.dependencies
         if not isinstance(dep, Diff)]
-    return "Diff {} [{}]".format(self.priority,
+    return "Diff {} [{}] {}".format(self.priority,
         self.produces.pretty_name if self.produces
-        else self.sql if self.priority == Diff.DROP else ", ".join(pretty_deps))
+        else self.sql if self.priority == Diff.DROP else ", ".join(pretty_deps),
+        id(self))
 
 class PlsqlDiff (Diff):
 
@@ -99,34 +97,37 @@ class DiffCycleError (PrecogError):
 def order_diffs (diffs):
   log = logging.getLogger('precog.diff.order_diffs')
 
-  diffs = {diff.produces or diff: diff for diff in diffs if diff}
   log.debug("All diffs:\n{}".format(pprint.pformat(
-    {label.pretty_name: {'sql': diff.sql,
+    {diff.pretty_name: {'sql': diff.sql,
                         'dependencies':
                           set(dep.pretty_name for dep in diff.dependencies),
                         'produces': diff.produces and diff.produces.pretty_name,
                         'created': diff.created
                        }
-    for label, diff in diffs.items()})))
+    for diff in diffs})))
 
   # list of obj: [dependencies, ...]
   edges = {}
   # Produced objects of diffs to be sorted
-  S = [node for node, devnull in
-      sorted(diffs.items(), key=lambda x: x[1].priority)]
+  S = sorted(diffs, key=lambda x: x.priority)
 
   # create edge list
-  for obj, diff in diffs.items():
-    if diff.dependencies:
-      if obj not in edges:
-        edges[obj] = set()
-      else:
-        print("I don't think this should happen....")
+  def add_edge (from_, to):
+    if from_ not in edges:
+      edges[from_] = set()
+    try:
+      edges[from_].update(to)
+    except TypeError:
+      edges[from_].add(to)
 
-      edges[obj].update(diff.dependencies)
+  for diff in diffs:
+    add_edge(diff, diff.dependencies)
+    if diff.produces:
+      add_edge(diff, diff.produces.dependencies)
+      add_edge(diff.produces, diff)
 
   for k,v in edges.items():
-    edges[k] = sorted(v, key=lambda x: diffs[x].priority if x in diffs else 0)
+    edges[k] = sorted(v, key=lambda x: x.priority if isinstance(x, Diff) else 0)
   log.debug("Edge list:\n{}".format(_edge_list(edges)))
 
   # list of sorted diffs
@@ -143,8 +144,8 @@ def order_diffs (diffs):
 
     if not node in visited:
       visited.add(node)
-      if node in diffs:
-        log.debug("Can I apply {}?".format(diffs[node].pretty_name))
+      if isinstance(node, Diff):
+        log.debug("Can I apply {}?".format(node.pretty_name))
       else:
         log.debug("Visiting {}".format(node.pretty_name))
 
@@ -152,9 +153,9 @@ def order_diffs (diffs):
         for dependent in edges[node]:
           visit(dependent, this_visit)
 
-      if node in diffs:
-        log.debug("Apply {}".format(diffs[node].pretty_name))
-        L.append(diffs[node])
+      if isinstance(node, Diff):
+        log.debug("Apply {}".format(node.pretty_name))
+        L.append(node)
 
   for node in S:
     visit(node)

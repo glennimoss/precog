@@ -1,13 +1,13 @@
 create index baz_idx on baz ( obj.num );
 
-create index foo_idx on foo ( foo_id );
+create unique index foo_idx on foo ( foo_id );
 
 create table foo
   ( foo_id number
   , text vArChaR2(156)
   , bar_id varchar2(256)
   , moredata CLOB
-) tablespace ris_ts;
+);
 
 create table bar
   ( id number
