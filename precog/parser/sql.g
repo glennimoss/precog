@@ -25,6 +25,8 @@ scope tab_col_ref { table; columns }
   Lexer = LoggingLexer
 }
 @parser::header {
+  import os
+
   from antlr3.exceptions import RecognitionException
   from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
   from precog.parser.util import *
@@ -71,12 +73,12 @@ scope tab_col_ref { table; columns }
 sqlplus_file[database]
 scope { stmt_begin; }
 scope g;
-@init { $g::database = database }
+@init { $g::database = $database }
     : ( { $sqlplus_file::stmt_begin = self.input.LT(1) }
         ( stmt=sql_stmt
         | stmt=plsql_stmt
         )  { $g::database.add($stmt.obj) }
-      /*| stmt=sqlplus_stmt { print($stmt.obj) }*/
+        | sqlplus_stmt
       )* EOF
     ;
 
@@ -124,7 +126,23 @@ sql_stmt returns [obj]
 sqlplus_stmt returns [stmt]
   : TERMINATOR { $stmt = 'Repeat me!' }
   | kQUIT  { $stmt = "Quittin' time!" }
+  | (AT_SIGN | relative=DOUBLE_AT_SIGN) { self.input.add(NL_CHANNEL) }
+    file_name=swallow_to_nl NL
+    {
+      file_name = $file_name.text
+      if $relative:
+        relative_dir = os.path.dirname(self.input.getSourceName())
+
+        file_name = ''.join((relative_dir,
+                             os.sep if relative_dir else '',
+                             file_name))
+
+      $g::database.add_file(file_name)
+    }
   ;
+finally {
+  self.input.drop(NL_CHANNEL)
+}
 
 /*
 show_errors
@@ -134,10 +152,12 @@ show_errors
 
 identifier returns [ident]
   : first=ID ( DOT second=ID ( DOT third=ID )? )?
+    // TODO: this should probably check for schemas to determine if it's
+    // schema.obj or obj.part
     {
       schema = $first.text if $second else None
       obj = $second.text if $second else $first.text
-      part = $third.text if $first and $second else None
+      part = $third.text if $third else None
       $ident = OracleFQN(schema, obj, part)
     }
   ;
@@ -1055,6 +1075,10 @@ swallow_to_semi
   ;
   */
 
+swallow_to_nl
+  : ~( NL )+
+  ;
+
 tINTEGER returns [val]
   : i=T_INTEGER { $val = int($i.text) }
   ;
@@ -1239,6 +1263,9 @@ BANG
   ;
 AT_SIGN
 	:	'@'
+	;
+DOUBLE_AT_SIGN
+	:	'@@'
 	;
 RPAREN
 	:	')'
