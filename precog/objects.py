@@ -548,7 +548,10 @@ class Column (HasTable, OracleObject):
     else:
       length = self.props['char_length'] or self.props['data_length']
       if length:
-        data_type += "({})".format(length)
+        data_type += "({}{})".format(length,
+                                     (" CHAR" if self.props['char_used'] == 'C'
+                                              else " BYTE")
+                                     if self.props['char_used'] else '')
     parts.append(data_type)
 
     if self.props['data_default']:
