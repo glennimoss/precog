@@ -836,7 +836,34 @@ class Sequence (OracleObject):
     return class_(name, database=into_database, **rs[0])
 
 class Synonym (OracleObject):
-  pass
+
+  def __init__ (self, name, for_object=None, **props):
+    super().__init__(name, **props)
+    self.for_object = for_object
+
+  def _sql (self, fq=True):
+    name = self.name.obj
+    if fq:
+      name = self.name
+
+    return "CREATE OR REPLACE SYNONYM {} FOR {}".format(name,
+                                                        self.for_object.name)
+
+  @classmethod
+  def from_db (class_, name, into_database=None):
+    rs = db.query(""" SELECT table_owner
+                           , table_name
+                      FROM all_synonyms
+                      WHERE owner = :o
+                        AND synonym_name = :n
+                  """, o=name.schema, n=name.obj)
+    if not rs:
+      return None
+    rs = rs[0]
+    return class_(name, into_database.find(OracleFQN(rs['table_owner'],
+                                                     rs['table_name']),
+                                           OracleObject),
+                  database=into_database)
 
 class Grant (OracleObject):
   pass
@@ -1022,7 +1049,8 @@ class Schema (OracleObject):
         Procedure,
         Function,
         Package,
-        Type
+        Type,
+        OracleObject
       }
 
   def __init__ (self, name=None, **props):
@@ -1049,6 +1077,18 @@ class Schema (OracleObject):
     if not obj_type in self.objects:
       self.objects[obj_type] = {}
     namespace = self.objects[obj_type]
+
+    if (name, OracleObject) in self.deferred:
+      untyped_obj = self.deferred[(name, OracleObject)]
+      self.log.debug("Untyped object {} is now {}".format(
+        untyped_obj.pretty_name, obj))
+      # clean up OracleObject references because we don't really want them
+      del self.deferred[(name, OracleObject)]
+      del self.objects[OracleObject][name]
+      # Pretend it was of obj_type all along
+      untyped_obj.__class__ = obj_type
+      namespace[name] = untyped_obj
+      self.deferred[(name, obj_type)] = untyped_obj
 
     if (name, obj_type) in self.deferred:
       # Not a name conflict
@@ -1088,7 +1128,10 @@ class Schema (OracleObject):
       obj.aka = name
       return obj
 
-    if obj_type in self.objects and name in self.objects[obj_type]:
+    if obj_type is OracleObject:
+      if name in self.shared_namespace:
+        return self.shared_namespace[name]
+    elif obj_type in self.objects and name in self.objects[obj_type]:
       return self.objects[obj_type][name]
 
     if deferred:
