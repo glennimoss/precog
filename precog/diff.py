@@ -30,9 +30,11 @@ class Diff (object):
 
     if dependencies is None:
       dependencies = set()
-    if not isinstance(dependencies, set) and not isinstance(dependencies, list):
+    if isinstance(dependencies, list):
+      dependencies = set(dependencies)
+    if not isinstance(dependencies, set):
       dependencies = {dependencies}
-    self.dependencies = dependencies
+    self._dependencies = dependencies
     self.produces = produces
 
     if produces is None and priority is None:
@@ -57,6 +59,11 @@ class Diff (object):
 
   def apply (self):
     return db.execute(self.sql, **self.binds)
+
+  @property
+  def dependencies (self):
+    return self._dependencies | (self.produces.dependencies
+                                 if self.produces else set())
 
   @property
   def pretty_name (self):
@@ -105,7 +112,7 @@ def order_diffs (diffs):
   log.debug("All diffs:\n{}".format(pprint.pformat(
     {diff.pretty_name: {'sql': diff.sql,
                         'dependencies':
-                          set(dep.pretty_name for dep in diff.dependencies),
+                          set(dep.pretty_name for dep in diff._dependencies),
                         'produces': diff.produces and diff.produces.pretty_name,
                         'created': diff.created
                        }
@@ -128,7 +135,6 @@ def order_diffs (diffs):
   for diff in diffs:
     add_edge(diff, diff.dependencies)
     if diff.produces:
-      add_edge(diff, diff.produces.dependencies)
       add_edge(diff.produces, diff)
 
   for k,v in edges.items():

@@ -1,7 +1,7 @@
 import argparse, logging, os, re, sys
 
 from precog.objects import Database
-from precog.errors import PrecogError, OracleError
+from precog.errors import PrecogError, OracleError, UnappliedDependencyError
 
 #Always print help
 class HelpyArgparser(argparse.ArgumentParser):
@@ -98,13 +98,21 @@ try:
         doit = 'y' if args.apply else 'n'
 
       errors = 0
+      errored_objs = set()
       if 'y' == doit.lower():
         print("Applying {} changes...".format(changes), file=sys.stderr)
         for diff in diffs:
           try:
+            if diff.dependencies & errored_objs:
+              raise UnappliedDependencyError(
+                "Unable to apply change due to an error in a dependency\n"
+                "SQL: {}".format(diff.sql))
             diff.apply()
-          except OracleError as e:
+          except PrecogError as e:
             print(e, file=sys.stderr)
+            errored_objs.add(diff)
+            if diff.produces:
+              errored_objs.add(diff.produces)
             errors += 1
         if errors:
           print("\nUnable to apply {} changes".format(errors))

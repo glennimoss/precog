@@ -34,6 +34,9 @@ class SqlSyntaxError (SyntaxError):
 class OracleError (PrecogError):
   pass
 
+class UnappliedDependencyError (PrecogError):
+  pass
+
 class PlsqlSyntaxError (SyntaxError, OracleError):
 
   def __init__ (self, plsql_obj, error_props):
