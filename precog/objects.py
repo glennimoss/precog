@@ -1,4 +1,4 @@
-import logging, re
+import logging, re, collections
 
 from precog import db
 from precog.diff import Commit, Diff, order_diffs, PlsqlDiff
@@ -107,41 +107,39 @@ class OracleObject (HasLog):
         'deferred ' if self.deferred else '', self.pretty_name)
 
   def create (self):
-    return Diff(self.sql(), produces=self, priority=Diff.CREATE)
+    return [Diff(self.sql(), produces=self, priority=Diff.CREATE)]
 
   def drop (self):
     if self._referenced_by:
-      self.log.debug("{} has {}".format(self.pretty_name,
-        ", ".join(str(ref) for ref in self._referenced_by)))
+      self.log.debug("{} has {}".format(
+        self.pretty_name, ", ".join(str(ref) for ref in self._referenced_by)))
     drop = self._drop()
     ref_diffs = [diff
-        for ref in self._referenced_by if ref.integrity is _Reference.HARD
-        for diff in ref.obj.drop()]
+                 for ref in self._referenced_by
+                   if ref.integrity is _Reference.HARD
+                 for diff in ref.obj.drop()]
     drop.dependencies.update(ref_diffs)
     return [drop] + ref_diffs
 
   def _drop (self):
-    return Diff("DROP {} {}".format(self.type, self.name), #self,
-        priority=Diff.DROP)
+    return Diff("DROP {} {}".format(self.type, self.name), self,
+                priority=Diff.DROP)
 
   def recreate (self, other):
     """
     Recreate this object from scratch. Usually means a drop and a create.
     """
     drop, *diffs = other.drop()
-    diffs.extend(ref.obj.create()
+    diffs.extend(diff
         for ref in self._referenced_by
-        if ref.integrity in (_Reference.AUTODROP, _Reference.HARD))
-    create = self.create()
-    create.dependencies.add(drop)
+          if ref.integrity in (_Reference.AUTODROP, _Reference.HARD)
+        for diff in ref.obj.create())
+    creates = self.create()
+    for diff in creates:
+      diff.dependencies.add(drop)
     diffs.append(drop)
-    diffs.append(create)
+    diffs.extend(creates)
     return diffs
-
-    drops = other.drop()
-    create = self.create()
-    create.dependencies.add(drops[0])
-    return drops + [create]
 
   def rebuild (self):
     """
@@ -172,7 +170,7 @@ class OracleObject (HasLog):
           "Comparing {!r} to deferred object {!r}".format(self, other))
     if self != other:
       if create:
-        return [self.create()]
+        return self.create()
       elif self.name.obj != other.name.obj:
         return [self.rename(other)]
     else:
@@ -196,7 +194,7 @@ class OracleObject (HasLog):
 
     return prop_diff
 
-  def diff_subobjects (self, other, get_objects): #target_objs, current_objs):
+  def diff_subobjects (self, other, get_objects, label=lambda x: x.name):
     self.log.debug("Diffing definition {} to live {}".format(self.pretty_name,
       other.pretty_name))
     diffs = []
@@ -205,15 +203,15 @@ class OracleObject (HasLog):
     current_objs = get_objects(other)
 
     if not isinstance(target_objs, dict):
-      target_objs = {obj.name: obj for obj in target_objs}
+      target_objs = {label(obj): obj for obj in target_objs}
     if not isinstance(current_objs, dict):
-      current_objs = {obj.name: obj for obj in current_objs}
-
-    #self.log.debug("target_objs = {}".format(target_objs))
-    #self.log.debug("current_objs = {}".format(current_objs))
+      current_objs = {label(obj): obj for obj in current_objs}
 
     target_obj_names = set(target_objs)
     current_obj_names = set(current_objs)
+
+    self.log.debug("target_obj_names = {}".format(target_obj_names))
+    self.log.debug("current_obj_names = {}".format(current_obj_names))
 
     addobjs = target_obj_names - current_obj_names
     dropobjs = current_obj_names - target_obj_names
@@ -246,7 +244,7 @@ class OracleObject (HasLog):
     return diffs
 
   def add_subobjects (self, subobjects):
-    return [obj.create() for obj in subobjects]
+    return [diff for obj in subobjects for diff in obj.create()]
 
   def drop_subobjects (self, subobjects):
     return [diff for obj in subobjects for diff in obj.drop()]
@@ -280,8 +278,6 @@ class OracleObject (HasLog):
 
     def recurse (_object):
       for ref in get_objects(_object):
-        #self.log.debug("{} linked to {}".format(_object.pretty_name,
-          #ref.obj.pretty_name))
         obj = ref.obj
         if obj not in all and obj != self:
           all.add(obj)
@@ -293,16 +289,6 @@ class OracleObject (HasLog):
   @property
   def dependencies (self):
     return self._build_set(lambda self: self._dependencies)
-    #deps = set()
-
-    #def recurse (obj):
-      #for dep in obj._dependencies:
-        #if dep not in deps and dep is not self:
-          #deps.add(dep)
-          #recurse(dep)
-
-    #recurse(self)
-    #return deps
 
   def referenced_by (self, other=None, integrity=_Reference.SOFT):
     if other is None:
@@ -457,6 +443,11 @@ class Table (HasColumns, OracleObject):
         " TABLESPACE {}".format(self.props['tablespace_name'])
           if self.props['tablespace_name'] else '')
 
+  def create (self):
+    diffs = super().create()
+    diffs.extend(diff for datum in self.data for diff in datum.create())
+    return diffs
+
   def diff (self, other):
     diffs = super().diff(other, False)
 
@@ -470,7 +461,10 @@ class Table (HasColumns, OracleObject):
 
     diffs.extend(self.diff_subobjects(other, lambda o: o.columns))
 
-    inserts = self.diff_subobjects(other, lambda o: o.data)
+    if self.data:
+      Data.from_db(other)
+
+    inserts = self.diff_subobjects(other, lambda o: o.data, lambda o: o._comp())
     if inserts:
       diffs.extend(inserts)
       diffs.append(Commit(inserts))
@@ -566,8 +560,8 @@ class Column (HasTable, OracleObject):
     return " ".join(parts)
 
   def create (self):
-    return Diff("ALTER TABLE {} ADD ( {} )".format(self.table.name, self.sql()),
-        produces=self, priority=Diff.CREATE)
+    return [Diff("ALTER TABLE {} ADD ( {} )".format(
+      self.table.name, self.sql()), produces=self, priority=Diff.CREATE)]
 
   def _drop (self):
     return Diff(
@@ -635,29 +629,63 @@ class Data (HasColumns, OracleObject):
     self.table = table
     self.expressions = expressions
 
+  def __eq__ (self, other):
+    if not isinstance(other, type(self)):
+      return False
+
+    return self.table.name == other.table.name and self._comp() == other._comp()
+
+  def __hash__ (self):
+    return hash((self.table.name, self._comp()))
+
+  def _comp (self):
+    """ A tuple view for hashing, comparing, etc. """
+    return tuple(sorted((col, val) for col, val in self.values().items()
+                        if val is not None))
+
+  def values (self):
+    return collections.OrderedDict(zip((col.name.part for col in self.columns),
+                                       self.expressions))
+
   def _sql (self, fq=True):
     table_name = self.table.name
     if not fq:
       table_name = table_name.obj
+    values = self.values()
     return "INSERT INTO {} ({}) VALUES ({})".format(self.table.name,
-      ", ".join(c.name.part for c in self.columns), ", ".join(self.expressions))
+      ", ".join(values.keys()), ", ".join(values.values()))
+
+  def _drop (self):
+    return Diff("DELETE FROM {} WHERE {}".format(
+      self.table.name, " AND ".join(" = ".join((col, val)) if val is not None
+                                    else "{} IS NULL".format(col)
+                                    for col, val in self.values().items())))
 
   def diff (self, other):
-    pass
+    return []
 
+  @staticmethod
+  def escape (string):
+    if isinstance(string, str):
+      return "'{}'".format(string.replace("'", "''"))
+    elif string is not None:
+      return str(string)
+    else:
+      return string
 
   @classmethod
-  def from_db (class_, table, into_database):
+  def from_db (class_, table):
     rs = db.query(""" SELECT *
                       FROM {}
                   """.format(table.name))
 
     if rs:
-      columns = [into_databas.find(OracleFQN(table.name.schema, table.name.obj,
-        column_name), Column) for column_name in rs[0])]
+      columns = [table.database.find(
+        OracleFQN(table.name.schema, table.name.obj, column_name), Column)
+        for column_name in rs[0]]
 
       for row in rs:
-        table.add_data(columns, row.values())
+        table.add_data(columns, [Data.escape(col) for col in row.values()])
 
 class Constraint (HasTable, OracleObject):
 
@@ -840,7 +868,7 @@ class PlsqlCode (OracleObject):
     return "CREATE OR REPLACE {}".format(self.props['source'])
 
   def create (self):
-    return PlsqlDiff(self.sql(), produces=self, priority=Diff.CREATE)
+    return [PlsqlDiff(self.sql(), produces=self, priority=Diff.CREATE)]
 
   def diff (self, other):
     diffs = super().diff(other)
