@@ -574,13 +574,18 @@ class Column (HasTable, OracleObject):
   def _drop (self):
     return Diff(
         "ALTER TABLE {} DROP ( {} )".format(self.table.name, self.name.part),
-        self.table, priority=Diff.DROP)
-
+        self, priority=Diff.DROP)
 
   def rename (self, other):
     return Diff("ALTER TABLE {} RENAME COLUMN {} TO {}"
           .format(other.table.name, other.name.part, self.name.part),
           produces=self)
+
+  def satisfy (self, other):
+    if self.deferred:
+      super().satisfy(other)
+      self.user_type = other.user_type
+      self.leftovers = other.leftovers
 
   def diff (self, other):
     diffs = super().diff(other, False)
