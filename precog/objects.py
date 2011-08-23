@@ -310,7 +310,7 @@ class OracleObject (HasLog):
 
   warned = False
   @classmethod
-  def from_db (class_, name, into_database=None):
+  def from_db (class_, name, into_database):
     if not class_.warned:
       HasLog.log_for(class_).warn(
           "Unimplemented from_db for {}".format(class_.__name__))
@@ -480,7 +480,7 @@ class Table (HasColumns, OracleObject):
     return diffs
 
   @classmethod
-  def from_db (class_, name, into_database=None):
+  def from_db (class_, name, into_database):
     rs = db.query(""" SELECT tablespace_name
                       FROM all_tables
                       WHERE owner = :o
@@ -602,7 +602,7 @@ class Column (HasTable, OracleObject):
     return diffs
 
   @classmethod
-  def from_db (class_, name, into_database=None):
+  def from_db (class_, name, into_database):
     rs = db.query(""" SELECT column_name
                            , data_type
                            , CASE WHEN data_type_owner = 'PUBLIC'
@@ -828,7 +828,7 @@ class Sequence (OracleObject):
     return diffs
 
   @classmethod
-  def from_db (class_, name, into_database=None):
+  def from_db (class_, name, into_database):
     rs = db.query(""" SELECT min_value
                            , max_value
                            , increment_by
@@ -868,7 +868,7 @@ class Synonym (OracleObject):
                                                         self.for_object.name)
 
   @classmethod
-  def from_db (class_, name, into_database=None):
+  def from_db (class_, name, into_database):
     rs = db.query(""" SELECT table_owner
                            , table_name
                       FROM all_synonyms
@@ -976,7 +976,7 @@ class PlsqlCode (OracleObject):
     return errors
 
   @classmethod
-  def from_db (class_, name, into_database=None):
+  def from_db (class_, name, into_database):
     rs = db.query(""" SELECT text
                       FROM all_source
                       WHERE owner = :o
@@ -1029,10 +1029,6 @@ class PackageBody (PlsqlBody):
   def rebuild(self):
     return super().rebuild('PACKAGE', 'BODY')
 
-  #@classproperty
-  #def type (class_):
-    #return 'PACKAGE BODY'
-
 class Trigger (PlsqlCode):
   pass
 
@@ -1052,10 +1048,6 @@ class TypeBody (PlsqlBody):
 
   def rebuild(self):
     return super().rebuild('TYPE', 'BODY')
-
-  #@classproperty
-  #def type (class_):
-    #return 'TYPE BODY'
 
 class Schema (OracleObject):
 
@@ -1208,7 +1200,7 @@ class Schema (OracleObject):
 
       try:
         class_ = _type_to_class(obj['object_type'])
-        db_obj = class_.from_db(object_name, into_database=schema.database)
+        db_obj = class_.from_db(object_name, schema.database)
         db_obj.props['status'] = obj['status']
         schema.add(db_obj)
       except KeyError as e:
