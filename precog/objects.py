@@ -471,6 +471,12 @@ class Table (HasColumns, OracleObject):
 
     return diffs
 
+  @property
+  def dependencies (self):
+    deps = OracleObject.dependencies.__get__(self)
+    return deps | {dep for col in self.columns
+                       for dep in col.dependencies if dep != self}
+
   @classmethod
   def from_db (class_, name, into_database):
     rs = db.query(""" SELECT tablespace_name
