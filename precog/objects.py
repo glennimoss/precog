@@ -37,17 +37,20 @@ class OracleObject (HasLog):
   def pretty_type (class_):
     return " ".join(re.sub('([A-Z])', r' \1', class_.__name__).split())
 
-  def __init__ (self, name, deferred=False, database=None, aka=None, **props):
-    super().__init__()
+  def __init__ (self, name, deferred=False, database=None, aka=None,
+                reinit=False, **props):
+    if not reinit:
+      super().__init__()
+      self.deferred = deferred
+      self.database = database
+      self.props = InsensitiveDict(props)
+      self._referenced_by = set()
+      self._dependencies = set()
+      self.aka = aka
+
     if not isinstance(name, OracleFQN):
       name = OracleFQN(obj=name)
     self.name = name
-    self.deferred = deferred
-    self.database = database
-    self.props = InsensitiveDict(props)
-    self._referenced_by = set()
-    self._dependencies = set()
-    self.aka = aka
 
   def __repr__ (self, **other_props):
     if self.deferred:
@@ -285,6 +288,11 @@ class OracleObject (HasLog):
 
     recurse(self)
     return all
+
+  def become (self, other_type):
+    name = self.name
+    self.__class__ = other_type
+    self.__init__(name, reinit=True)
 
   @property
   def dependencies (self):
@@ -841,6 +849,16 @@ class Synonym (OracleObject):
     super().__init__(name, **props)
     self.for_object = for_object
 
+  @property
+  def for_object (self):
+    return self._for_object
+
+  @for_object.setter
+  def for_object (self, obj):
+    _assert_type(obj, OracleObject)
+    self._depends_on(obj, '_for_object', Reference.SOFT)
+    self.props['for_object'] = obj.name
+
   def _sql (self, fq=True):
     name = self.name.obj
     if fq:
@@ -1063,6 +1081,19 @@ class Schema (OracleObject):
     self.objects = {}
     self.deferred = {}
 
+  def _resolve_unknown_type (self, name, obj_type):
+    if obj_type is not OracleObject and (name, OracleObject) in self.deferred:
+      untyped_obj = self.deferred[(name, OracleObject)]
+      self.log.debug("Untyped object {} is now {}".format(
+        untyped_obj.pretty_name, obj_type.pretty_type))
+      # clean up OracleObject references because we don't really want them
+      del self.deferred[(name, OracleObject)]
+      del self.objects[OracleObject][name]
+      # Pretend it was of obj_type all along
+      untyped_obj.become(obj_type)
+      self.objects[obj_type][name] = untyped_obj
+      self.deferred[(name, obj_type)] = untyped_obj
+
   def add (self, obj):
     if not obj:
       return
@@ -1078,17 +1109,7 @@ class Schema (OracleObject):
       self.objects[obj_type] = {}
     namespace = self.objects[obj_type]
 
-    if (name, OracleObject) in self.deferred:
-      untyped_obj = self.deferred[(name, OracleObject)]
-      self.log.debug("Untyped object {} is now {}".format(
-        untyped_obj.pretty_name, obj))
-      # clean up OracleObject references because we don't really want them
-      del self.deferred[(name, OracleObject)]
-      del self.objects[OracleObject][name]
-      # Pretend it was of obj_type all along
-      untyped_obj.__class__ = obj_type
-      namespace[name] = untyped_obj
-      self.deferred[(name, obj_type)] = untyped_obj
+    self._resolve_unknown_type(name, obj_type)
 
     if (name, obj_type) in self.deferred:
       # Not a name conflict
@@ -1109,7 +1130,7 @@ class Schema (OracleObject):
         if obj_type in self.share_namespace:
           self.shared_namespace[name] = obj
 
-    if Table == obj_type:
+    if obj_type is Table:
       for col in obj.columns:
         self.add(col)
 
@@ -1128,10 +1149,14 @@ class Schema (OracleObject):
       obj.aka = name
       return obj
 
-    if obj_type is OracleObject:
-      if name in self.shared_namespace:
-        return self.shared_namespace[name]
-    elif obj_type in self.objects and name in self.objects[obj_type]:
+    # When you don't know what type you're looking up, it must be in the shared
+    # namespace to return a real object. Otherwise it wil be deferred.
+    if obj_type is OracleObject and name in self.shared_namespace:
+      return self.shared_namespace[name]
+
+    self._resolve_unknown_type(name, obj_type)
+
+    if obj_type in self.objects and name in self.objects[obj_type]:
       return self.objects[obj_type][name]
 
     if deferred:
@@ -1145,7 +1170,7 @@ class Schema (OracleObject):
   def diff (self, other):
     diffs = []
 
-    types = set(self.objects).union(other.objects) - {Column}
+    types = (set(self.objects) | other.objects) - {Column}
     for t in types:
       diffs.extend(self.diff_subobjects(other,
         lambda o: o.objects[t] if t in o.objects else []))

@@ -1,3 +1,5 @@
+create synonym myfoo for foo;
+
 create index baz_idx on baz ( obj.num );
 
 create index foo_idx on foo ( foo_id );

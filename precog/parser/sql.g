@@ -119,6 +119,7 @@ sql_stmt returns [obj]
   : ( stmt_=create_table { $obj = $stmt_.obj }
     | stmt_=create_index { $obj = $stmt_.obj }
     | stmt_=create_sequence { $obj = $stmt_.obj }
+    | stmt_=create_synonym { $obj = $stmt_.obj }
     | stmt_=insert_statement { $obj = $stmt_.obj }
     ) SEMI
   ;
@@ -445,6 +446,13 @@ sequence_prop
     { $create_sequence::props['order_flag'] = 'N' }
   ;
 
+create_synonym returns [obj]
+  : CREATE (OR kREPLACE)? SYNONYM syn=identifier FOR target=identifier
+    {
+      $obj = Synonym($syn.ident, $g::database.find($target.ident, OracleObject),
+        database=$g::database)
+    }
+  ;
 insert_statement returns [obj]
 scope { expressions; }
 scope aliases, tab_col_ref;
