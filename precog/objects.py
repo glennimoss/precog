@@ -1,7 +1,7 @@
 import logging, re, collections
 
 from precog import db
-from precog.diff import Commit, Diff, order_diffs, PlsqlDiff
+from precog.diff import Commit, Diff, order_diffs, PlsqlDiff, Reference
 from precog.errors import *
 from precog.identifier import *
 from precog.util import (classproperty, HasLog, InsensitiveDict, ValidatingList,
@@ -14,18 +14,6 @@ def _type_to_class (type):
 def _assert_type (value, type):
   if value is not None and not isinstance(value, type):
     raise TypeError("Expected {}: {!r}".format(type.__name__, value))
-
-class _Reference (object):
-  SOFT = "SOFT"
-  HARD = "HARD"
-  AUTODROP = "AUTODROP"
-
-  def __init__ (self, obj, integrity=HARD):
-    self.obj = obj
-    self.integrity = integrity
-
-  def __str__ (self):
-    return "{} reference to {}".format(self.integrity, self.obj.pretty_name)
 
 class OracleObject (HasLog):
 
@@ -113,15 +101,15 @@ class OracleObject (HasLog):
     return [Diff(self.sql(), produces=self, priority=Diff.CREATE)]
 
   def drop (self):
-    if self._referenced_by:
-      self.log.debug("{} has {}".format(
-        self.pretty_name, ", ".join(str(ref) for ref in self._referenced_by)))
+    self.log.debug("Dropping {}".format(self.pretty_name))
+    for ref in self._referenced_by:
+      self.log.debug(ref)
     drop = self._drop()
     ref_diffs = [diff
                  for ref in self._referenced_by
-                   if ref.integrity is _Reference.HARD
-                 for diff in ref.obj.drop()]
-    drop.dependencies.update(ref_diffs)
+                   if ref.integrity is Reference.HARD
+                 for diff in ref.from_.drop()]
+    drop.add_dependencies(ref_diffs)
     return [drop] + ref_diffs
 
   def _drop (self):
@@ -135,11 +123,11 @@ class OracleObject (HasLog):
     drop, *diffs = other.drop()
     diffs.extend(diff
         for ref in self._referenced_by
-          if ref.integrity in (_Reference.AUTODROP, _Reference.HARD)
-        for diff in ref.obj.create())
+          if ref.integrity in (Reference.AUTODROP, Reference.HARD)
+        for diff in ref.from_.create())
     creates = self.create()
     for diff in creates:
-      diff.dependencies.add(drop)
+      diff.add_dependencies(drop)
     diffs.append(drop)
     diffs.extend(creates)
     return diffs
@@ -252,39 +240,56 @@ class OracleObject (HasLog):
   def drop_subobjects (self, subobjects):
     return [diff for obj in subobjects for diff in obj.drop()]
 
-  def depends_on (self, other, integrity=_Reference.HARD):
-    self.log.debug("{} {} depends on {}".format(self.pretty_name, integrity,
-      other.pretty_name))
-    ref = _Reference(other, integrity)
-    self._dependencies.add(ref)
-    other.referenced_by(self, integrity)
+  def _depends_on (self, other, prop_name, integrity=Reference.HARD):
+    old_dep = None
+    if hasattr(self, prop_name):
+      old_dep = getattr(self, prop_name)
 
-  def _drop_dependencies (self, old_deps):
+    if old_dep != other:
+      if old_dep:
+        self._drop_dependency(old_dep)
+      if other:
+        self._set_dependency(other, integrity)
+
+    setattr(self, prop_name, other)
+
+  def _set_dependency (self, dep, integrity=Reference.HARD):
+    if isinstance(dep, OracleObject):
+      dep = [dep]
+    self.log.debug("{} depends {} on [{}]".format(self.pretty_name, integrity,
+      ", ".join(obj.pretty_name for obj in dep)))
+    for obj in dep:
+      ref = Reference(self, obj, integrity)
+      self._dependencies.add(ref)
+      #obj.referenced_by(self, integrity)
+      obj._referenced_by.add(ref)
+
+  def _drop_dependency (self, old_deps):
+    if isinstance(old_deps, OracleObject):
+      old_deps = [old_deps]
     self.log.debug("{} no longer depends on [{}]".format(self.pretty_name,
       ", ".join(old_dep.pretty_name for old_dep in old_deps)))
     remove_deps = set()
     for dep in self._dependencies:
-      if dep.obj in old_deps:
+      if dep.to in old_deps:
         remove_deps.add(dep)
         remove_refs = set()
-        for ref in dep.obj._referenced_by:
-          if ref.obj == self:
+        for ref in dep.to._referenced_by:
+          if ref.from_ == self:
             remove_refs.add(ref)
-        dep.obj._referenced_by.difference_update(remove_refs)
+        dep.to._referenced_by.difference_update(remove_refs)
     self._dependencies.difference_update(remove_deps)
 
-  def _drop_dependency (self, old_dep):
-    self._drop_dependencies([old_dep])
-
-  def _build_set (self, get_objects):
+  def _build_set (self, get_objects, get_ref, test=lambda x: True):
     all = set()
 
     def recurse (_object):
       for ref in get_objects(_object):
-        obj = ref.obj
-        if obj not in all and obj != self:
-          all.add(obj)
-          recurse(obj)
+        if test(ref):
+          obj = get_ref(ref)
+          if obj not in all and obj != self:
+            all.add(obj)
+            recurse(obj)
 
     recurse(self)
     return all
@@ -296,17 +301,12 @@ class OracleObject (HasLog):
 
   @property
   def dependencies (self):
-    return self._build_set(lambda self: self._dependencies)
+    return self._build_set(lambda self: self._dependencies, lambda ref: ref.to)
 
-  def referenced_by (self, other=None, integrity=_Reference.SOFT):
-    if other is None:
-      return self._referenced_by
-
-    ref = _Reference(other, integrity)
-    self._referenced_by.add(ref)
-
-  def _all_references (self):
-    return self._build_set(lambda self: self._referenced_by)
+  def dependencies_with(self, integrity):
+    ret =  self._build_set(lambda self: self._dependencies, lambda ref: ref.to,
+                           lambda ref: ref.integrity == integrity)
+    return ret
 
   warned = False
   @classmethod
@@ -320,7 +320,7 @@ class OracleObject (HasLog):
 class HasColumns (object):
   """ Mixin for objects that have the columns property """
 
-  def __init__ (self, name, columns=[], column_reference=_Reference.AUTODROP,
+  def __init__ (self, name, columns=[], column_reference=Reference.AUTODROP,
       **props):
     self._column_reference = column_reference
     self._columns = []
@@ -349,14 +349,10 @@ class HasColumns (object):
   @columns.setter
   def columns (self, value):
     _assert_type(value, list)
-    if self._column_reference and self._columns != value:
-      if self._columns:
-        self._drop_dependencies(self._columns)
-
-      for column in value:
-        self.depends_on(column, self._column_reference)
-
-    self._columns = value
+    if self._column_reference:
+      self._depends_on(value, '_columns', self._column_reference)
+    else:
+      self._columns = value
 
   def satisfy (self, other):
     if self.deferred:
@@ -385,19 +381,12 @@ class HasTable (object):
 
   @table.setter
   def table (self, value):
-    if value:
-      _assert_type(value, Table)
-      if self._table != value:
-        if self._table:
-          self._drop_dependency(self._table)
-        self.depends_on(value, _Reference.AUTODROP)
-
-    self._table = value
+    _assert_type(value, Table)
+    self._depends_on(value, '_table', Reference.AUTODROP)
 
   def satisfy (self, other):
     if self.deferred:
       super().satisfy(other)
-      other.table._drop_dependency(other)
       self.table = other.table
 
 class Table (HasColumns, OracleObject):
@@ -524,8 +513,8 @@ class Column (HasTable, OracleObject):
 
   @HasTable.table.setter
   def table (self, value):
+    HasTable.table.__set__(self, value)
     if value:
-      HasTable.table.__set__(self, value)
       self.name = OracleFQN(value.name.schema, value.name.obj, self.name.part)
 
   @property
@@ -534,11 +523,10 @@ class Column (HasTable, OracleObject):
 
   @user_type.setter
   def user_type (self, value):
+    _assert_type(value, Type)
+    self._depends_on(value, '_user_type')
     if value:
-      _assert_type(value, Type)
       self.props['data_type'] = value.name
-      self.depends_on(value)
-    self._user_type = value
 
   def _sql (self, fq=False):
     parts = []
@@ -1004,11 +992,9 @@ class PlsqlBody (PlsqlCode):
 
   @header.setter
   def header (self, value):
-    if value:
-      _assert_type(value, PlsqlHeader)
-      self.depends_on(value, _Reference.AUTODROP)
+    _assert_type(value, PlsqlHeader)
+    self._depends_on(value, '_header', Reference.AUTODROP)
 
-    self._header = value
 
 #######################################
 # PL/SQL Code Objects

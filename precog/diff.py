@@ -5,6 +5,25 @@ from precog import db
 from precog.errors import PlsqlSyntaxError, PrecogError
 from precog.util import HasLog
 
+class Reference (object):
+  SOFT = "SOFT"
+  HARD = "HARD"
+  AUTODROP = "AUTODROP"
+
+  def __init__ (self, from_, to, integrity=HARD):
+    self.from_ = from_
+    self.to = to
+    self.integrity = integrity
+
+  def __repr__ (self):
+    return "<Reference from {} to {}, {}>".format(self.from_.pretty_name,
+                                                  self.to.pretty_name,
+                                                  self.integrity)
+  def __str__ (self):
+    return "{} has {} reference to {}".format(self.from_.pretty_name,
+                                              self.integrity,
+                                              self.to.pretty_name)
+
 class Diff (object):
   COMMIT = 0
   DROP = 1
@@ -28,20 +47,24 @@ class Diff (object):
       del frame
     del stack
 
-    if dependencies is None:
-      dependencies = set()
-    if isinstance(dependencies, list):
-      dependencies = set(dependencies)
-    if not isinstance(dependencies, set):
-      dependencies = {dependencies}
-    self._dependencies = dependencies
-    self.produces = produces
-
     if produces is None and priority is None:
       priority = Diff.DROP
     elif priority is None:
       priority = Diff.ALTER
     self.priority=priority
+
+    self.dropping = None
+    if dependencies is None:
+      dependencies = set()
+    if isinstance(dependencies, list):
+      dependencies = set(dependencies)
+    if not isinstance(dependencies, set):
+      if priority == Diff.DROP:
+        self.dropping = dependencies
+      dependencies = {dependencies}
+    self._dependencies = dependencies
+    self.produces = produces
+
 
     self.terminator = terminator
     self.binds = binds
@@ -62,8 +85,19 @@ class Diff (object):
 
   @property
   def dependencies (self):
-    return self._dependencies | (self.produces.dependencies
-                                 if self.produces else set())
+    other_deps = set()
+    if self.produces:
+      other_deps = self.produces.dependencies
+    elif self.dropping:
+      other_deps = self.dropping.dependencies
+
+    return self._dependencies | other_deps
+
+  def add_dependencies (self, others):
+    try:
+      self._dependencies.update(others)
+    except TypeError:
+      self._dependencies.add(others)
 
   @property
   def pretty_name (self):
@@ -92,7 +126,7 @@ class Commit (Diff):
     super().__init__('COMMIT', dependencies, priority=Diff.COMMIT)
 
 def _edge_list (edges):
-  return pprint.pformat({k.pretty_name: set(dep.pretty_name for dep in v)
+  return pprint.pformat({k.pretty_name: {dep.pretty_name for dep in v}
         for k,v in edges.items()})
 
 class DiffCycleError (PrecogError):
@@ -112,11 +146,23 @@ def order_diffs (diffs):
   log.debug("All diffs:\n{}".format(pprint.pformat(
     {diff.pretty_name: {'sql': diff.sql,
                         'dependencies':
-                          set(dep.pretty_name for dep in diff._dependencies),
+                          {dep.pretty_name for dep in diff._dependencies},
                         'produces': diff.produces and diff.produces.pretty_name,
+                        'dropping': diff.dropping.pretty_name,
+                        'autodrop chain': diff.dropping and
+                          {dep.pretty_name
+                              for dep in diff.dropping
+                                .dependencies_with(Reference.AUTODROP)},
                         'created': diff.created
                        }
     for diff in diffs})))
+
+  # filter diffs to remove object drops that are autodropped by other diffs
+  dropping = {diff.dropping for diff in diffs if diff.dropping}
+  diffs = [diff for diff in diffs
+           if not diff.dropping or
+             (not diff.dropping.dependencies_with(Reference.AUTODROP) &
+              dropping)]
 
   # list of obj: [dependencies, ...]
   edges = {}
