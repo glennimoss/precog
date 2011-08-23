@@ -1009,6 +1009,17 @@ class PlsqlBody (PlsqlCode):
     _assert_type(value, PlsqlHeader)
     self._depends_on(value, '_header', Reference.AUTODROP)
 
+  def satisfy (self, other):
+    super().satisfy(other)
+    self.header = other.header
+
+  @classmethod
+  def from_db (class_, name, into_database):
+    body = super().from_db(name, into_database)
+    header_class = _type_to_class(class_.type.split()[0])
+    body.header = into_database.find(body.name, header_class)
+
+    return body
 
 #######################################
 # PL/SQL Code Objects
