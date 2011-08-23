@@ -442,7 +442,10 @@ class Table (HasColumns, OracleObject):
 
   def create (self):
     diffs = super().create()
-    diffs.extend(diff for datum in self.data for diff in datum.create())
+    inserts = [diff for datum in self.data for diff in datum.create()]
+    if inserts:
+      diffs.extend(inserts)
+      diffs.append(Commit(inserts))
     return diffs
 
   def diff (self, other):
