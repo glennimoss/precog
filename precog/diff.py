@@ -2,7 +2,7 @@ import logging, pprint, inspect
 
 from antlr3.ext import NamedConstant
 from precog import db
-from precog.errors import PlsqlSyntaxError, PrecogError
+from precog.errors import PrecogError
 from precog.util import HasLog
 
 class Reference (object):
@@ -148,7 +148,7 @@ def order_diffs (diffs):
                         'dependencies':
                           {dep.pretty_name for dep in diff._dependencies},
                         'produces': diff.produces and diff.produces.pretty_name,
-                        'dropping': diff.dropping.pretty_name,
+                        'dropping': diff.dropping and diff.dropping.pretty_name,
                         'autodrop chain': diff.dropping and
                           {dep.pretty_name
                               for dep in diff.dropping

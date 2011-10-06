@@ -37,15 +37,20 @@ class OracleError (PrecogError):
 class UnappliedDependencyError (PrecogError):
   pass
 
-class PlsqlSyntaxError (SyntaxError, OracleError):
+class PlsqlSyntaxError (OracleError):
 
-  def __init__ (self, plsql_obj, error_props):
-    self.error = error_props
-    line = error_props['line']
-    super().__init__(
-        "PL/SQL compile {}:".format(error_props['attribute'].lower()),
-        plsql_obj.pretty_name, line, error_props['position'] - 1,
-        plsql_obj.sql().split('\n')[line-1], error_props['text'])
+  def __init__ (self, plsql_obj, errors):
+    self.plsql_obj = plsql_obj
+    self.errors = errors
+    parts = ["{} has {} {}s".format(plsql_obj.pretty_name, len(errors),
+                                    errors[0]['attribute'].lower())]
+    for error_props in errors:
+      line = error_props['line']
+      parts.append(str(SyntaxError(
+          "PL/SQL compile {}:".format(error_props['attribute'].lower()),
+          plsql_obj.pretty_name, line, error_props['position'] - 1,
+          plsql_obj.sql().split('\n')[line-1], error_props['text'])))
+    super().__init__("\n".join(parts))
 
 class ObjectError (PrecogError):
 

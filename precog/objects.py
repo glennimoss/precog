@@ -951,31 +951,14 @@ class PlsqlCode (OracleObject):
                         AND type = :t
                       ORDER BY sequence
                   """, o=self.name.schema, n=self.name.obj, t=self.type)
-    errors = [PlsqlSyntaxError(self, row) for row in rs]
-    err_num = sum(1 for e in errors if e.error['attribute'] == 'ERROR')
-    warn_num = len(errors) - err_num
+    warnings = [row for row in rs if row['attribute'] == 'WARNING']
+    errors = [row for row in rs if row['attribute'] == 'ERROR']
 
-    log = False
-    if err_num:
-      log = self.log.error
-    elif warn_num:
-      log = self.log.warn
+    if warnings:
+      self.log.warn(PlsqlSyntaxError(warnings))
 
-    if log:
-      log("{} has {} errors and {} warnings".format(
-        self.pretty_name, err_num, warn_num))
-
-      for err in errors:
-        if err.error['attribute'] == 'ERROR':
-          err_log = self.log.error
-        elif err.error['attribute'] == 'WARNING':
-          err_log = self.log.warn
-        else:
-          self.log.debug(
-              "Unknown all_errors.attribute: {}".format(row['attribute']))
-        err_log(err)
-
-    return errors
+    if errors:
+      raise PlsqlSyntaxError(self, errors)
 
   @classmethod
   def from_db (class_, name, into_database):
@@ -1173,7 +1156,7 @@ class Schema (OracleObject):
   def diff (self, other):
     diffs = []
 
-    types = (set(self.objects) | other.objects) - {Column}
+    types = (set(self.objects) | set(other.objects)) - {Column}
     for t in types:
       diffs.extend(self.diff_subobjects(other,
         lambda o: o.objects[t] if t in o.objects else []))

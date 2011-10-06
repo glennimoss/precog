@@ -42,11 +42,11 @@ scope tab_col_ref { table; columns }
 }
 @lexer::members {
   # needed for things like BETWEEN 1..2 where 1. would be treated as a literal
-  def numberDotValid ():
+  def numberDotValid (self):
       i = 1
-      while self.input.LA(i) >= '0' and self.input.LA(i) <= '9':
+      while self.input.LT(i) >= '0' and self.input.LT(i) <= '9':
           i += 1
-      return self.input.LA(i) == '.' and self.input.LA(i+1) != '.'
+      return self.input.LT(i) == '.' and self.input.LT(i+1) != '.'
 }
 @parser::members {
   def aloneOnLine (self):
