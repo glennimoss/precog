@@ -700,12 +700,75 @@ class Data (HasColumns, OracleObject):
       for row in rs:
         table.add_data(columns, [Data.escape(col) for col in row.values()])
 
-class Constraint (HasTable, OracleObject):
+class Constraint (HasColumns, OracleObject):
 
-  # Can't drop constraints like this
+  def __init__ (self, name, **props):
+    super().__init__(name, **props)
+
   def _drop (self):
-    return None
+    return Diff(
+        "ALTER TABLE {} DROP ( {} )".format(self.table.name, self.name.object),
+        self, priority=Diff.DROP)
 
+  @classmethod
+  def from_db (class_, name, into_database):
+    rs = db.query("""SELECT constraint_type
+                          , table_name
+                          , search_condition
+                          , r_owner
+                          , r_constraint_name
+                          , delete_rule
+                          , status
+                          , generated
+                          , index_owner
+                          , index_name
+                          , CURSOR(
+                              SELECT table_name
+                                   , column_name
+                              FROM all_cons_columns acc
+                              WHERE acc.owner = ac.owner
+                                AND acc.constraint_name = ac.constraint_name
+                              ORDER BY acc.column_position
+                            ) AS columns
+                     FROM all_constraints ac
+                     WHERE owner = :o
+                       AND constraint_name = :n
+                  """, o=name.schema, n=name.object,
+                  oracle_names=['table_name', 'r_owner', 'r_constraint_name',
+                                'index_owner', 'index_name'])
+
+    if not rs:
+      return None
+    rs = rs[0]
+    table = into_database.find(OracleFQN(name.schema, rs['table_name']), Table)
+    type = rs['constraint_type']
+    constraint_type = class_
+    condition = null
+    index = null
+    foreignConstraint
+    if type == 'C':
+      condition = rs['search_condition']
+      constraint_type = CheckConstraint
+    if type in ('P', 'U'):
+      index = into_database.find(OracleFQN(rs['index_owner'], rs['index_name']),
+                                 Index)
+      constraint_type = UniqueConstraint
+    if type == 'R':
+      reference = into_database.find(OracleFQN(rs['r_owner'],
+                                               rs['r_constraint_name']),
+                                     Constraint)
+      constraint_type = ReferenceConstraint
+
+    return constraint_type(name, database=into_database)
+
+class CheckConstraint (Constraint):
+  pass
+
+class UniqueConstraint (Constraint):
+  pass
+
+class ReferenceConstraint (Constraint):
+  pass
 
 class Index (HasColumns, OracleObject):
 
