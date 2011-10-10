@@ -308,14 +308,10 @@ class OracleObject (HasLog):
                            lambda ref: ref.integrity == integrity)
     return ret
 
-  warned = False
   @classmethod
   def from_db (class_, name, into_database):
-    if not class_.warned:
-      HasLog.log_for(class_).warn(
-          "Unimplemented from_db for {}".format(class_.__name__))
-      class_.warned = True
-    return class_(name, deferred=True, database=into_database)
+    raise UnimplementedFeatureError(
+      "Unimplemented from_db for {}".format(class_.__name__))
 
 class HasColumns (object):
   """ Mixin for objects that have the columns property """
@@ -822,7 +818,8 @@ class Index (HasColumns, OracleObject):
 
   @classmethod
   def from_db (class_, name, into_database):
-    rs = db.query(""" SELECT uniqueness
+    rs = db.query(""" SELECT index_type
+                           , uniqueness
                            , tablespace_name
                            , CURSOR(SELECT table_owner
                                          , table_name
@@ -840,7 +837,11 @@ class Index (HasColumns, OracleObject):
                     'column_name'])
     if not rs:
       return None
-    *props, (devnull, columns) = rs[0].items()
+    rs = rs[0]
+    if rs['index_type'] != 'NORMAL':
+      raise UnimplementedFeatureError(
+        "Index {} is of unsupported type {}".format(name, rs['index_type']))
+    *props, (devnull, columns) = rs.items()
     columns = [into_database.find(OracleFQN(col['table_owner'],
       col['table_name'], col['column_name']), Column)
       for col in columns]

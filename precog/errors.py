@@ -3,6 +3,9 @@ class PrecogError (Exception):
   def __str__ (self):
     return "{}: {}".format(type(self).__name__, super().__str__())
 
+class UnimplementedFeatureError (PrecogError):
+  pass
+
 class ParseError (PrecogError):
 
   def __init__ (self, num_errors):
