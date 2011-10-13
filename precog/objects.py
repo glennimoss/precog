@@ -435,10 +435,13 @@ class Table (HasColumns, OracleObject):
     name = self.name.obj
     if fq:
       name = self.name
-    return "CREATE TABLE {} ( {} ){}".format(name,
-        ', '.join(c.sql() for c in self.columns),
-        " TABLESPACE {}".format(self.props['tablespace_name'])
-          if self.props['tablespace_name'] else '')
+    parts = ["CREATE TABLE {}{}".format(name, self._sub_sql())]
+    if self.props['tablespace_name']:
+      parts.append("TABLESPACE {}".format(self.props['tablespace_name']))
+    return " ".join(parts)
+
+  def _sub_sql (self):
+    return "\n  ( {}\n  )".format("\n  , ".join(c.sql() for c in self.columns))
 
   def create (self):
     diffs = super().create()
@@ -479,17 +482,31 @@ class Table (HasColumns, OracleObject):
 
   @classmethod
   def from_db (class_, name, into_database):
-    rs = db.query(""" SELECT tablespace_name
-                      FROM all_tables
+    rs = db.query(""" SELECT table_type_owner
+                           , table_type
+                           , tablespace_name
+                      FROM all_all_tables
                       WHERE owner = :o
                         AND table_name = :t
                   """, o=name.schema, t=name.obj,
                   oracle_names=['tablespace_name'])
     if not rs:
       return None
-    return class_(name, database=into_database,
-        columns=Column.from_db(name, into_database), **rs[0])
+    rs = rs[0]
+    return (ObjectTable if rs['table_type']
+            else class_)(name, database=into_database,
+                         columns=Column.from_db(name, into_database), **rs)
 
+class ObjectTable (Table):
+  namespace = Table
+
+  def __init__ (self, name, table_type_owner=None, table_type=None, **props):
+    super().__init__(name, **props)
+
+    self.props['object_type'] = OracleFQN(table_type_owner, table_type)
+
+  def _sub_sql (self):
+    return " OF {}".format(self.props['object_type'])
 
 class Column (HasTable, OracleObject):
 
@@ -1142,13 +1159,15 @@ class Schema (OracleObject):
       return
 
     obj_type = type(obj)
+    if hasattr(obj_type, 'namespace'):
+      obj_type = obj_type.namespace
     name = OracleFQN(self.name.schema, obj.name.obj, obj.name.part)
     if obj.deferred:
       self.log.debug(
           "Adding {}{} as {}".format('deferred ' if obj.deferred else '',
             obj.pretty_name, name))
 
-    if not obj_type in self.objects:
+    if obj_type not in self.objects:
       self.objects[obj_type] = {}
     namespace = self.objects[obj_type]
 
