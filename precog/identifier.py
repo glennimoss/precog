@@ -100,9 +100,9 @@ class OracleFQN (OracleIdentifier):
     text = '.'.join(x for x in (schema, obj, part) if x)
     self = super().__new__(class_, text, True)
 
-    self._schema = make_name(schema) if schema else None
-    self._obj = make_name(obj) if obj else None
-    self._part = make_name(part) if part else None
+    self._schema = schema
+    self._obj = obj
+    self._part = part
 
     return self
 
@@ -134,9 +134,7 @@ def name_from_oracle (name):
     return OracleIdentifier(names, True)
 
   try:
-    return OracleIdentifier(name)
+    return OracleIdentifier('"{}"'.format(name))
   except ReservedNameError:
     # built-in types
     return OracleIdentifier(name, True)
-  except OracleNameError:
-    return OracleIdentifier('"{}"'.format(name))

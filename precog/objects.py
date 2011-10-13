@@ -86,7 +86,11 @@ class OracleObject (HasLog):
 
   @property
   def pretty_name (self):
-    return " ".join((self.pretty_type, self.name, str(id(self))))
+    return " ".join((self.pretty_type, self.name) +
+                    (
+                      (str(id(self)),) if self.log.isEnabledFor(logging.DEBUG)
+                      else ()
+                    ))
 
   def sql (self, fq=None):
     if not self.deferred:
@@ -500,16 +504,6 @@ class Column (HasTable, OracleObject):
 
     self.leftovers = leftovers
 
-    if (self.props['data_type'] and
-        not isinstance(self.props['data_type'], OracleIdentifier)):
-      try:
-        self.props['data_type'] = OracleIdentifier(self.props['data_type'])
-      except ReservedNameError:
-        self.props['data_type'] = self.props['data_type'].upper()
-      except OracleNameError:
-        # We'll keep it as-is. Maybe it will work, maybe it will blow up later
-        pass
-
     if self.props['data_default']:
       self.props['data_default'] = self.props['data_default'].strip()
 
@@ -618,7 +612,7 @@ class Column (HasTable, OracleObject):
                         AND table_name = :t
                         AND (:c IS NULL OR column_name = :c)
                   """, o=name.schema, t=name.obj, c=name.part,
-                  oracle_names=['column_name', 'data_type_owner'])
+                  oracle_names=['column_name', 'data_type_owner', 'data_type'])
 
     for row in rs:
       if row['data_type_owner']:
@@ -1101,7 +1095,6 @@ class Type (PlsqlHeader):
   def rebuild(self):
     return super().rebuild(extra_parameters='SPECIFICATION')
 
-
 class TypeBody (PlsqlBody):
 
   def rebuild(self):
@@ -1245,6 +1238,17 @@ class Schema (OracleObject):
                       FROM all_objects
                       WHERE owner = :o
                         AND subobject_name IS NULL
+                        AND object_type IN ( 'FUNCTION'
+                                           , 'INDEX'
+                                           , 'PACKAGE'
+                                           , 'PACKAGE BODY'
+                                           , 'PROCEDURE'
+                                           , 'SEQUENCE'
+                                           , 'SYNONYM'
+                                           , 'TABLE'
+                                           , 'TYPE'
+                                        -- , 'VIEW'
+                                           )
                   """, o=owner)
 
     for obj in rs:
@@ -1252,9 +1256,9 @@ class Schema (OracleObject):
         schema.log.debug("Ignoring system object {}".format(obj['object_name']))
         continue
 
-      #schema.log.debug(
-          #"Fetching {} {}".format(obj['object_type'], obj['object_name']))
       object_name = make_name(obj['object_name'])
+      schema.log.debug(
+          "Fetching {} {}".format(obj['object_type'], object_name))
 
       try:
         class_ = _type_to_class(obj['object_type'])
@@ -1265,22 +1269,6 @@ class Schema (OracleObject):
         schema.log.warn("{} [{}]: unexpected type".format(
           obj['object_type'], obj['object_name']))
         #raise
-
-    # Constraints handled differently
-    # in fact, probably not like this
-    #rs = db.query(""" SELECT constraint_name, table_name
-                      #FROM all_constraints
-                      #WHERE owner = :o
-                  #""", o=owner)
-
-    #for con in rs:
-      #con_name = make_name(con['constraint_name'])
-      #table_name = make_name(con['table_name'])
-
-      #table = schema.find(table_name, Table)
-
-      #constraint = Constraint(con_name, table)
-      #schema.add(constraint)
 
     schema.log.info("Fetching schema {} complete".format(owner))
     return schema
