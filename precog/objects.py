@@ -7,9 +7,15 @@ from precog.identifier import *
 from precog.util import (classproperty, HasLog, InsensitiveDict, ValidatingList,
     ValidationError)
 
+class _UnexpectedTypeError (KeyError):
+  pass
+
 def _type_to_class (type):
   class_name = ''.join(word.capitalize() for word in type.split())
-  return globals()[class_name]
+  try:
+    return globals()[class_name]
+  except KeyError:
+    raise _UnexpectedTypeError()
 
 def _assert_type (value, type):
   if value is not None and not isinstance(value, type):
@@ -23,7 +29,7 @@ class OracleObject (HasLog):
 
   @classproperty
   def pretty_type (class_):
-    return " ".join(re.sub('([A-Z])', r' \1', class_.__name__).split())
+    return re.sub('([A-Z])', r' \1', class_.__name__).strip()
 
   def __init__ (self, name, deferred=False, database=None, aka=None,
                 reinit=False, **props):
@@ -1082,15 +1088,13 @@ class PlsqlCode (OracleObject):
     # Create object of subclass, based on the Oracle type passed in
     try:
       class_ = _type_to_class(type)
+      if not issubclass(class_, PlsqlCode):
+        raise _UnexpectedTypeError()
       return class_(name, source=source, **props)
-    except KeyError as e:
-      self.log.warn("{} [{}]: unexpected type".format(
+    except _UnexpectedTypeError:
+      self.log.warn("{} [{}]: unexpected PL/SQL type".format(
         class_name, obj['object_name']))
       raise
-
-  def __init__ (self, name, source=None, **props):
-    props['source'] = source
-    super().__init__(name, **props)
 
   def _sql (self, fq=True):
     return "CREATE OR REPLACE {}".format(self.props['source'])
@@ -1387,10 +1391,9 @@ class Schema (OracleObject):
         db_obj = class_.from_db(object_name, schema.database)
         db_obj.props['status'] = obj['status']
         schema.add(db_obj)
-      except KeyError as e:
+      except _UnexpectedTypeError:
         schema.log.warn("{} [{}]: unexpected type".format(
           obj['object_type'], obj['object_name']))
-        #raise
 
     schema.log.info("Fetching schema {} complete".format(owner))
     return schema
