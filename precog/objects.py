@@ -395,7 +395,34 @@ class HasTable (object):
       super().satisfy(other)
       self.table = other.table
 
+class HasUserType (object):
+
+  def __init__ (self, name, user_type=None, **props):
+    super().__init__(name, **props)
+
+    self._user_type = None
+    self.user_type = user_type
+
+  @property
+  def user_type (self):
+    return self._user_type
+
+  @user_type.setter
+  def user_type (self, value):
+    _assert_type(value, Type)
+    self._depends_on(value, '_user_type')
+
+  def satisfy (self, other):
+    if self.deferred:
+      super().satisfy(other)
+      self.user_type = other.user_type
+
 class Table (HasColumns, OracleObject):
+
+  def __new__ (class_, *args, **props):
+    if class_ != ObjectTable and 'table_type' in props and props['table_type']:
+      class_ = ObjectTable
+    return super().__new__(class_, *args, **props)
 
   def __init__ (self, name, indexes=None, **props):
     super().__init__(name, column_reference=None, **props)
@@ -477,8 +504,11 @@ class Table (HasColumns, OracleObject):
 
   @classmethod
   def from_db (class_, name, into_database):
-    rs = db.query(""" SELECT table_type_owner
-                           , table_type
+    rs = db.query(""" SELECT table_type
+                           , CASE WHEN table_type_owner = 'PUBLIC'
+                                    OR table_type_owner LIKE '%SYS' THEN NULL
+                                  ELSE table_type_owner
+                             END AS table_type_owner
                            , tablespace_name
                       FROM all_all_tables
                       WHERE owner = :o
@@ -487,23 +517,33 @@ class Table (HasColumns, OracleObject):
                   oracle_names=['tablespace_name'])
     if not rs:
       return None
-    rs = rs[0]
-    return (ObjectTable if rs['table_type']
-            else class_)(name, database=into_database,
-                         columns=Column.from_db(name, into_database), **rs)
+    props = rs[0]
+    if props['table_type_owner']:
+      props['user_type'] = into_database.find(
+        OracleFQN(props['table_type_owner'], props['table_type']), Type)
+      del props['table_type_owner']
+    elif not props['table_type']:
+      props['columns'] = Column.from_db(name, into_database)
 
-class ObjectTable (Table):
+    return class_(name, database=into_database, **props)
+
+class ObjectTable (HasUserType, Table):
   namespace = Table
 
-  def __init__ (self, name, table_type_owner=None, table_type=None, **props):
-    super().__init__(name, **props)
+  @classproperty
+  def type (class_):
+    return Table.type
 
-    self.props['object_type'] = OracleFQN(table_type_owner, table_type)
+  @HasUserType.user_type.setter
+  def user_type (self, value):
+    HasUserType.user_type.__set__(self, value)
+    if value:
+      self.props['table_type'] = value.name
 
   def _sub_sql (self):
-    return " OF {}".format(self.props['object_type'])
+    return " OF {}".format(self.props['table_type'])
 
-class Column (HasTable, OracleObject):
+class Column (HasTable, HasUserType, OracleObject):
 
   def __new__ (class_, *args, **props):
     if (class_ != VirtualColumn and 'virtual_column' in props and
@@ -511,14 +551,10 @@ class Column (HasTable, OracleObject):
       class_ = VirtualColumn
     return super().__new__(class_, *args, **props)
 
-  def __init__ (self, name, user_type=None, leftovers=None, **props):
+  def __init__ (self, name, leftovers=None, **props):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(part=name)
     super().__init__(name, **props)
-
-    self.user_type = user_type
-    if self.user_type:
-      self.props['data_type'] = self.user_type.name
 
     self.leftovers = leftovers
 
@@ -534,14 +570,9 @@ class Column (HasTable, OracleObject):
     if value:
       self.name = OracleFQN(value.name.schema, value.name.obj, self.name.part)
 
-  @property
-  def user_type (self):
-    return self._user_type
-
-  @user_type.setter
+  @HasUserType.user_type.setter
   def user_type (self, value):
-    _assert_type(value, Type)
-    self._depends_on(value, '_user_type')
+    HasUserType.user_type.__set__(self, value)
     if value:
       self.props['data_type'] = value.name
 
@@ -592,7 +623,6 @@ class Column (HasTable, OracleObject):
   def satisfy (self, other):
     if self.deferred:
       super().satisfy(other)
-      self.user_type = other.user_type
       self.leftovers = other.leftovers
 
   def diff (self, other):
