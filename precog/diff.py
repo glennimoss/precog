@@ -80,6 +80,12 @@ class Diff (object):
                                        for col,val in self.binds.items()))
     return binds + self.sql + self.terminator
 
+  def __eq__ (self, other):
+    return self.sql == other.sql
+
+  def __hash__ (self):
+    return hash(self.sql)
+
   def apply (self):
     return db.execute(self.sql, **self.binds)
 
@@ -161,8 +167,8 @@ def order_diffs (diffs):
   dropping = {diff.dropping for diff in diffs if diff.dropping}
   diffs = [diff for diff in diffs
            if not diff.dropping or
-             (not diff.dropping.dependencies_with(Reference.AUTODROP) &
-              dropping)]
+              not (diff.dropping.dependencies_with(Reference.AUTODROP) &
+                   dropping)]
 
   # list of obj: [dependencies, ...]
   edges = {}
