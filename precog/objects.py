@@ -92,10 +92,10 @@ class OracleObject (HasLog):
                       else ()
                     ))
 
-  def sql (self, fq=None):
+  def sql (self, **args):
     if not self.deferred:
-      return self._sql(**{'fq': val for val in (fq,) if val is not None})
-    return OracleObject._sql(self, fq)
+      return self._sql(**args)
+    return OracleObject._sql(self, **{'fq': args[k] for k in args if k == 'fq'})
 
   def _sql (self, fq=True):
     return "-- Placeholder for {}{}".format(
@@ -405,17 +405,6 @@ class Table (HasColumns, OracleObject):
       column.table = self
 
   @property
-  def indexes (self):
-    return self._indexes
-
-  @indexes.setter
-  def indexes (self, value):
-    for index in value:
-      index.table = self
-
-    self._indexes = value
-
-  @property
   def name (self):
     return self._name
 
@@ -510,6 +499,12 @@ class ObjectTable (Table):
 
 class Column (HasTable, OracleObject):
 
+  def __new__ (class_, *args, **props):
+    if (class_ != VirtualColumn and 'virtual_column' in props and
+        'YES' == props['virtual_column']):
+      class_ = VirtualColumn
+    return super().__new__(class_, *args, **props)
+
   def __init__ (self, name, user_type=None, leftovers=None, **props):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(part=name)
@@ -544,33 +539,33 @@ class Column (HasTable, OracleObject):
     if value:
       self.props['data_type'] = value.name
 
-  def _sql (self, fq=False):
+  def _sql (self, fq=False, full_def=True):
     parts = []
-    name = self.name if fq else self.name.part
-    parts.append(str(name))
+    name = self.aka if fq else self.aka.part
+    parts.append(name)
 
-    data_type = self.props['data_type']
-    if data_type in ('NUMBER', 'FLOAT'):
-      if self.props['data_precision'] or self.props['data_scale']:
-        precision = (self.props['data_precision']
-            if self.props['data_precision'] else '*')
-        scale = (",{}".format(self.props["data_scale"])
-            if self.props['data_scale'] else '')
-        data_type += "({}{})".format(precision, scale)
-    else:
-      length = self.props['char_length'] or self.props['data_length']
-      if length:
-        data_type += "({}{})".format(length,
-                                     (" CHAR" if self.props['char_used'] == 'C'
-                                              else " BYTE")
-                                     if self.props['char_used'] else '')
-    parts.append(data_type)
+    if full_def:
+      data_type = self.props['data_type']
+      if data_type in ('NUMBER', 'FLOAT'):
+        if self.props['data_precision'] or self.props['data_scale']:
+          precision = (self.props['data_precision']
+              if self.props['data_precision'] else '*')
+          scale = (",{}".format(self.props["data_scale"])
+              if self.props['data_scale'] else '')
+          data_type += "({}{})".format(precision, scale)
+      else:
+        length = self.props['char_length'] or self.props['data_length']
+        if length:
+          data_type += "({}{})".format(length,
+            (" CHAR" if self.props['char_used'] == 'C' else " BYTE")
+            if self.props['char_used'] else '')
+      parts.append(data_type)
 
-    if self.props['data_default']:
-      parts.append("DEFAULT {}".format(self.props['data_default']))
+      if self.props['data_default']:
+        parts.append("DEFAULT {}".format(self.props['data_default']))
 
-    if self.leftovers:
-      parts.append(self.leftovers)
+      if self.leftovers:
+        parts.append(self.leftovers)
 
     return " ".join(parts)
 
@@ -624,21 +619,84 @@ class Column (HasTable, OracleObject):
                            , data_default
                            , char_length
                            , char_used
-                      FROM all_tab_columns
+                           , virtual_column
+                           , hidden_column
+                      FROM all_tab_cols
                       WHERE owner = :o
                         AND table_name = :t
                         AND (:c IS NULL OR column_name = :c)
+                        AND hidden_column = 'NO'
+                      ORDER BY column_id
                   """, o=name.schema, t=name.obj, c=name.part,
                   oracle_names=['column_name', 'data_type_owner', 'data_type'])
 
-    for row in rs:
-      if row['data_type_owner']:
-        row['user_type'] = into_database.find(
-            OracleFQN(row['data_type_owner'], row['data_type']), Type)
-        del row['data_type_owner']
+    def construct (name, props):
+      props = dict(props)
+      if props['data_type_owner']:
+        props['user_type'] = into_database.find(
+          OracleFQN(props['data_type_owner'], props['data_type']), Type)
+        del props['data_type_owner']
 
-    return [class_(name, database=into_database, **dict(props))
-      for (devnull, name), *props in (row.items() for row in rs)]
+      return class_(name, database=into_database, **props)
+
+    return [construct(name, props)
+            for (_, name), *props in (row.items() for row in rs)]
+
+class VirtualColumn (Column):
+  namespace = Column
+
+  def __init__ (self, name, expression=None, **props):
+    super().__init__(name, **props)
+
+    self.expression = expression or props['data_default']
+    self.props['virtual_column'] = 'YES'
+
+  @property
+  def expression (self):
+    return self.props['data_default']
+
+  @expression.setter
+  def expression (self, value):
+    self.props['data_default'] = value
+    deps = self._parse_expression()
+    self._depends_on(deps, '_expression_identifiers')
+
+  def _parse_expression (self):
+    ids = re.findall('".+?"(?:\.".+?")*', self.expression)
+    deps = set()
+    for id in ids:
+      parts = re.split('(?<=")\.(?=")', id)
+      if len(parts) == 1:
+        dep = self.database.find(OracleFQN(self.name.schema, self.name.obj,
+                                           parts[0]), Column)
+      else:
+        # TODO: we want to be able to reference items inside a package... for
+        # now, we'll limit to just the package.
+        # also, We're not sure if it's a global func/procedure or a package so
+        # do anonymous lookup
+        dep = self.database.find(OracleFQN(*parts[:2]), OracleObject)
+
+      deps.add(dep)
+    return deps
+
+  def _sql (self, fq=False, full_def=True):
+    parts = []
+    hidden = 'YES' == self.props['hidden_column']
+
+    if not hidden:
+      name = self.aka if fq else self.aka.part
+      parts.append(name)
+
+      if full_def:
+        parts.append('AS (')
+
+    if full_def or hidden:
+      parts.append(self.expression)
+
+    if not hidden and full_def:
+      parts.append(')')
+
+    return " ".join(parts)
 
 class Data (HasColumns, OracleObject):
 
@@ -777,7 +835,16 @@ class UniqueConstraint (Constraint):
 class ReferenceConstraint (Constraint):
   pass
 
-class Index (HasColumns, OracleObject):
+class Index (HasColumns, HasTable, OracleObject):
+
+  @HasTable.table.setter
+  def table (self, value):
+    if self.table:
+      self.table.indexes.discard(self)
+
+    HasTable.table.__set__(self, value)
+    if value:
+      self.table.indexes.add(self)
 
   @HasColumns.columns.setter
   def columns (self, value):
@@ -794,23 +861,28 @@ class Index (HasColumns, OracleObject):
 
       HasColumns.columns.__set__(self, value)
 
-      self._tablename = tablename
-      self.database.find(tablename, Table).indexes.add(self)
-
-
   def _sql (self, fq=True):
     name = self.name.obj
     if fq:
       name = self.name
-    return "CREATE {}INDEX {} ON {} ( {} ){}".format(
-        'UNIQUE ' if self.props['uniqueness'] == 'UNIQUE' else '',
-        name,
-        self._tablename,
-        # TODO: what to do with column objects
-        #', '.join(c.name.part for c in self.columns),
-        ', '.join(c.aka.part for c in self.columns),
-        " TABLESPACE {}".format(self.props['tablespace_name'])
-          if self.props['tablespace_name'] else '')
+    parts = ['CREATE']
+    if self.props['uniqueness'] == 'UNIQUE':
+      parts.append('UNIQUE')
+    parts.append('INDEX')
+    parts.append(name)
+    parts.append('ON')
+    parts.append(self.table.name)
+    parts.append('(')
+    # TODO: what to do with object columns
+    parts.append(', '.join(c.sql(full_def=False) for c in self.columns))
+    parts.append(')')
+    if self.props['index_type'].endswith('/REV'):
+      parts.append('REVERSE')
+    if self.props['tablespace_name']:
+      parts.append('TABLESPACE')
+      parts.append(self.props['tablespace_name'])
+
+    return " ".join(parts)
 
   def rebuild (self):
     return [Diff("ALTER INDEX {} REBUILD".format(self.name), produces=self)]
@@ -832,14 +904,8 @@ class Index (HasColumns, OracleObject):
     rs = db.query(""" SELECT index_type
                            , uniqueness
                            , tablespace_name
-                           , CURSOR(SELECT table_owner
-                                         , table_name
-                                         , column_name
-                                    FROM all_ind_columns aic
-                                    WHERE aic.index_owner = ai.owner
-                                      AND aic.index_name = ai.index_name
-                                    ORDER BY aic.column_position
-                             ) AS columns
+                           , table_owner
+                           , table_name
                       FROM all_indexes ai
                       WHERE owner = :o
                         AND index_name = :n
@@ -849,14 +915,51 @@ class Index (HasColumns, OracleObject):
     if not rs:
       return None
     rs = rs[0]
-    if rs['index_type'] != 'NORMAL':
-      raise UnimplementedFeatureError(
+    if rs['index_type'].find('NORMAL') == -1:
+      into_database.log.warn(
         "Index {} is of unsupported type {}".format(name, rs['index_type']))
-    *props, (devnull, columns) = rs.items()
-    columns = [into_database.find(OracleFQN(col['table_owner'],
-      col['table_name'], col['column_name']), Column)
-      for col in columns]
-    return class_(name, database=into_database, columns=columns, **dict(props))
+      rs['index_type'] = 'NORMAL'
+      #raise UnimplementedFeatureError(
+      #  "Index {} is of unsupported type {}".format(name, rs['index_type']))
+    *props, (_, table_owner), (_, table_name) = rs.items()
+    table = into_database.find(OracleFQN(table_owner, table_name), Table)
+
+    # *Sigh*, we can't query the all_ind_expressions table in a CURSOR()
+    # supquery because of the LONG datatype. We have to query all the column
+    # data separately.
+    rs = db.query(""" SELECT aic.table_owner
+                           , aic.table_name
+                           , aic.column_name
+                           , atc.virtual_column
+                           , atc.hidden_column
+                           , aie.column_expression
+                      FROM all_ind_columns aic
+                         , all_tab_cols atc
+                         , all_ind_expressions aie
+                      WHERE aic.index_owner = :o
+                        AND aic.index_name = :n
+                        AND aic.table_owner = atc.owner
+                        AND aic.table_name = atc.table_name
+                        AND aic.column_name = atc.column_name
+                        AND aic.index_owner = aie.index_owner(+)
+                        AND aic.index_name = aie.index_name(+)
+                        AND aic.column_position = aie.column_position(+)
+                      ORDER BY aic.column_position
+                  """, o=name.schema, n=name.obj,
+                  oracle_names=['table_owner', 'table_name', 'column_name'])
+    columns = [(OracleFQN(row['table_owner'], row['table_name'],
+                         row['column_name']),
+                row)
+               for row in rs]
+    columns = [into_database.find(column_name, Column)
+               if 'NO' == col['hidden_column']
+               else VirtualColumn(column_name,
+                                  expression=col['column_expression'],
+                                  hidden_column='YES', table=table,
+                                  database=into_database)
+               for column_name, col in columns]
+    return class_(name, database=into_database, table=table, columns=columns,
+                  **dict(props))
 
 class Sequence (OracleObject):
 
@@ -1413,6 +1516,6 @@ class Database (HasLog):
         for obj_name in sorted([obj_name for obj_name in
             schema.objects[obj_type]], key=lambda n: str(n)):
           database.log.debug(
-              "    {}".format(schema.objects[obj_type][obj_name].sql(True)))
+              "    {}".format(schema.objects[obj_type][obj_name].sql(fq=True)))
 
     return database
