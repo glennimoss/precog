@@ -1394,6 +1394,7 @@ class Schema (OracleObject):
                       FROM all_objects
                       WHERE owner = :o
                         AND subobject_name IS NULL
+                        AND generated = 'N'
                         AND object_type IN ( 'FUNCTION'
                                            , 'INDEX'
                                            , 'PACKAGE'
@@ -1408,10 +1409,6 @@ class Schema (OracleObject):
                   """, o=owner)
 
     for obj in rs:
-      if obj['object_name'].startswith('SYS_'):
-        schema.log.debug("Ignoring system object {}".format(obj['object_name']))
-        continue
-
       object_name = make_name(obj['object_name'])
       schema.log.debug(
           "Fetching {} {}".format(obj['object_type'], object_name))
