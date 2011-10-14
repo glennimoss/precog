@@ -388,7 +388,8 @@ scope aliases, tab_col_ref;
   props = InsensitiveDict()
 }
 @after {
-  $obj = Index($index_name.ident, columns=$tab_col_ref::columns,
+  table = $g::database.find($tab_col_ref::table, Table)
+  $obj = Index($index_name.ident, table=table, columns=$tab_col_ref::columns,
     database=$g::database, **props)
 }
   : CREATE ( UNIQUE { props['uniqueness'] = 'UNIQUE' }
@@ -397,7 +398,7 @@ scope aliases, tab_col_ref;
            )
     INDEX index_name=identifier
     ON table_name=aliasing_identifier
-      { $tab_col_ref::table = $table_name.ident}
+      { $tab_col_ref::table = $table_name.ident }
     LPAREN
       column_ref (COMMA column_ref)*
     RPAREN
