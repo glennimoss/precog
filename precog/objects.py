@@ -424,11 +424,14 @@ class Table (HasColumns, OracleObject):
       class_ = ObjectTable
     return super().__new__(class_, *args, **props)
 
-  def __init__ (self, name, indexes=None, **props):
+  def __init__ (self, name, indexes=None, constraints=None, **props):
     super().__init__(name, column_reference=None, **props)
     if not indexes:
       indexes = set()
     self.indexes = indexes
+    if not constraints:
+      constraints = set()
+    self.constraints = constraints
     self.data = []
 
   @HasColumns.columns.setter
@@ -803,73 +806,153 @@ class Data (HasColumns, OracleObject):
 
 class Constraint (HasColumns, OracleObject):
 
-  def __init__ (self, name, **props):
+  def __init__ (self, name, table=None, is_enabled=True, **props):
     super().__init__(name, **props)
+    self.table = table
+    self.is_enabled = is_enabled
+
+  def _sql (self, fq=False):
+    parts = ['CONSTRAINT']
+    name = self.name if fq else self.name.obj
+    parts.append(name)
+
+    parts.extend(self._sub_sql())
+
+    parts.append('ENABLE' if self.is_enabled else 'DISABLE')
+
+    return " ".join(parts)
+
+  def _sub_sql (self):
+    return ['']
+
+  def _column_list (self):
+    return "( {} )".format(", ".join(col.name.part for col in self.columns))
+
+  def create (self):
+    return [Diff("ALTER TABLE {} ADD {}".format(
+      self.table.name, self.sql()), produces=self, priority=Diff.CREATE)]
 
   def _drop (self):
-    return Diff(
-        "ALTER TABLE {} DROP ( {} )".format(self.table.name, self.name.object),
-        self, priority=Diff.DROP)
+    return Diff( "ALTER TABLE {} DROP CONSTRAINT {}".format(self.table.name,
+                                                              self.name.obj),
+                self, priority=Diff.DROP)
 
   @classmethod
-  def from_db (class_, name, into_database):
-    rs = db.query("""SELECT constraint_type
-                          , table_name
-                          , search_condition
-                          , r_owner
-                          , r_constraint_name
-                          , delete_rule
-                          , status
-                          , generated
-                          , index_owner
-                          , index_name
-                          , CURSOR(
-                              SELECT table_name
-                                   , column_name
-                              FROM all_cons_columns acc
-                              WHERE acc.owner = ac.owner
-                                AND acc.constraint_name = ac.constraint_name
-                              ORDER BY acc.column_position
-                            ) AS columns
-                     FROM all_constraints ac
-                     WHERE owner = :o
-                       AND constraint_name = :n
-                  """, o=name.schema, n=name.object,
-                  oracle_names=['table_name', 'r_owner', 'r_constraint_name',
-                                'index_owner', 'index_name'])
+  def from_db (class_, table):
+    rs = db.query(""" SELECT constraint_name
+                           , constraint_type
+                           , status
+                        -- , generated
+                           , CURSOR(
+                               SELECT table_name
+                                    , column_name
+                               FROM all_cons_columns acc
+                               WHERE acc.owner = ac.owner
+                                 AND acc.constraint_name = ac.constraint_name
+                               ORDER BY acc.column_position
+                             ) AS columns
+
+                           -- For check constraints
+                           , search_condition
+
+                           -- For foreign key constraints
+                           , r_owner
+                           , r_constraint_name
+                           , delete_rule
+
+                           -- For PK/unique constraints
+                           , index_owner
+                           , index_name
+                      FROM all_constraints ac
+                      WHERE owner = :o
+                        AND table_name = :n
+                  """, o=table.name.schema, n=table.name.obj,
+                  oracle_names=['constraint_name', 'r_owner',
+                                'r_constraint_name', 'index_owner',
+                                'index_name'])
 
     if not rs:
       return None
-    rs = rs[0]
-    table = into_database.find(OracleFQN(name.schema, rs['table_name']), Table)
-    type = rs['constraint_type']
-    constraint_type = class_
-    condition = null
-    index = null
-    foreignConstraint
-    if type == 'C':
-      condition = rs['search_condition']
-      constraint_type = CheckConstraint
-    if type in ('P', 'U'):
-      index = into_database.find(OracleFQN(rs['index_owner'], rs['index_name']),
-                                 Index)
-      constraint_type = UniqueConstraint
-    if type == 'R':
-      reference = into_database.find(OracleFQN(rs['r_owner'],
-                                               rs['r_constraint_name']),
-                                     Constraint)
-      constraint_type = ReferenceConstraint
+    constraints = set()
+    for row in rs:
+      name = OracleFQN(table.name.schema, row['constraint_name'])
+      type = row['constraint_type']
+      constraint_class = None
+      args = [name]
+      columns = [table.database.find(OracleFQN(table.name.schema,
+                                               col['table_name'],
+                                               col['column_name']),
+                                     Column)
+                 for col in row['columns']]
+      if type == 'C':
+        args.append(row['search_condition'])
+        constraint_class = CheckConstraint
 
-    return constraint_type(name, database=into_database)
+      elif type in ('P', 'U'):
+        args.append(type)
+        args.append(table.database.find(OracleFQN(row['index_owner'],
+                                                  row['index_name']), Index))
+        constraint_class = UniqueConstraint
+
+      elif type == 'R':
+        args.append(table.database.find(OracleFQN(row['r_owner'],
+                                                  row['r_constraint_name']),
+                                        Constraint))
+        args.append(row['delete_rule'])
+        constraint_class = ForeignKeyConstraint
+      else:
+        raise UnimplementedFeatureError(
+          "Constraint {} has unsupported type {}".format(name, type))
+
+      constraints.add(constraint_class(*args, table=table,
+                                       is_enabled=(row['status'] == 'ENABLED'),
+                                       database=table.database,
+                                       columns=columns))
+
+    return constraints
 
 class CheckConstraint (Constraint):
-  pass
+  namespace = Constraint
+
+  def __init__ (self, name, condition, **props):
+    super().__init__(name, **props)
+    self.condition = condition
+
+  def _sub_sql (self):
+    return ['CHECK (', self.condition, ')']
 
 class UniqueConstraint (Constraint):
-  pass
+  namespace = Constraint
 
-class ReferenceConstraint (Constraint):
-  pass
+  def __init__ (self, name, type, index, **props):
+    super().__init__(name, **props)
+    self.is_pk = type == 'P'
+    self.index = index
+
+  def _sub_sql (self):
+    parts = ['PRIMARY KEY' if self.is_pk else 'UNIQUE', self._column_list()]
+    if self.index:
+      parts.append('USING INDEX')
+      parts.append(self.index.name)
+
+    return parts
+
+class ForeignKeyConstraint (Constraint):
+  namespace = Constraint
+
+  def __init__ (self, name, fk_constraint, delete_rule, **props):
+    super().__init__(name, **props)
+    self.fk_constraint = fk_constraint
+    self.delete_rule = delete_rule
+
+  def _sub_sql (self):
+    parts = ['FOREIGN KEY', self._column_list(), 'REFERENCES',
+             self.fk_constraint.table.name, self.fk_constraint._column_list]
+    if self.delete_rule != 'NO ACTION':
+      parts.append('ON DELETE')
+      parts.append(self.delete_rule)
+
+    return parts
 
 class Index (HasColumns, HasTable, OracleObject):
 
@@ -1332,6 +1415,9 @@ class Schema (OracleObject):
     if obj_type is Table:
       for col in obj.columns:
         self.add(col)
+
+      for cons in obj.constraints:
+        self.add(cons)
 
   def find (self, name, obj_type, deferred=True):
     #self.log.debug("Finding {} {}".format(obj_type.__name__, name))
