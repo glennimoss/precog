@@ -19,12 +19,14 @@ class OracleIdentifier (str):
     if isinstance(identifier, OracleIdentifier):
       return identifier
 
+    quoted = False
     parts = None
     if isinstance(identifier, list):
       if len(identifier) > 1:
         parts = identifier
         identifier = ".".join(OracleIdentifier(id).force_quoted()
             for id in identifier)
+        quoted = True
         trust_me = True
       else:
         identifier = identifier[0]
@@ -70,9 +72,15 @@ class OracleIdentifier (str):
           .format(repr(identifier)))
 
     self = super().__new__(class_, identifier)
+    self.quoted = quoted
     self.parts = parts
 
     return self
+
+  def lower (self):
+    if self.quoted:
+      return self
+    return super().lower()
 
   def force_quoted (self):
     return OracleIdentifier('"{}"'.format(self.strip('"')), True)
@@ -95,9 +103,9 @@ class OracleFQN (OracleIdentifier):
     part = make_name(part) if part else None
 
     if not (schema or obj or part):
-      raise OracleNameError('have to have a name')
+      raise OracleNameError('FQN must have at least one identifier')
 
-    text = '.'.join(x for x in (schema, obj, part) if x)
+    text = ".".join(x for x in (schema, obj, part) if x)
     self = super().__new__(class_, text, True)
 
     self._schema = schema
@@ -117,6 +125,9 @@ class OracleFQN (OracleIdentifier):
   @property
   def part (self):
     return self._part
+
+  def lower (self):
+    return ".".join(x.lower() for x in (self.schema, self.obj, self.part) if x)
 
   def __repr__ (self):
     return "OracleFQN({})".format(', '.join(

@@ -1,4 +1,4 @@
-import logging, re, collections
+import logging, re, collections, pprint
 
 from precog import db
 from precog.diff import Commit, Diff, order_diffs, PlsqlDiff, Reference
@@ -18,8 +18,22 @@ def _type_to_class (type):
     raise _UnexpectedTypeError()
 
 def _assert_type (value, type):
-  if value is not None and not isinstance(value, type):
-    raise TypeError("Expected {}: {!r}".format(type.__name__, value))
+  if value is not None:
+    if not isinstance(value, type):
+      raise TypeError("Expected {}: {!r}".format(type.__name__, value))
+
+def _assert_contains_type (value, contains_type):
+    if value is not None:
+      bad = []
+      for item in value:
+        try:
+          _assert_type(item, contains_type)
+        except TypeError as e:
+          bad.append(e)
+
+      if bad:
+        raise TypeError("In container {}: {}".format(pprint.pformat(value),
+                                                     ", ".join(bad)))
 
 class OracleObject (HasLog):
 
@@ -123,7 +137,7 @@ class OracleObject (HasLog):
     return [drop] + ref_diffs
 
   def _drop (self):
-    return Diff("DROP {} {}".format(self.type, self.name), self,
+    return Diff("DROP {} {}".format(self.type, self.name.lower()), self,
                 priority=Diff.DROP)
 
   def recreate (self, other):
@@ -151,8 +165,9 @@ class OracleObject (HasLog):
     return self.recreate(self)
 
   def rename (self, other):
-    return Diff("ALTER {} {} RENAME TO {}"
-        .format(self.type, other.name, self.name.obj), produces=self)
+    return Diff("ALTER {} {} RENAME TO {}".format(self.type, other.name.lower(),
+                                                  self.name.obj.lower()),
+                produces=self)
 
   def satisfy (self, other):
     if self.deferred:
@@ -354,7 +369,7 @@ class HasColumns (object):
 
   @columns.setter
   def columns (self, value):
-    _assert_type(value, list)
+    _assert_contains_type(value, Column)
     if self._column_reference:
       self._depends_on(value, '_columns', self._column_reference)
     else:
@@ -369,9 +384,9 @@ class HasTable (object):
   """ Mixin for objects that have the table property """
 
   def __init__ (self, name, table=None, **props):
+    self._table = None
     super().__init__(name, **props)
 
-    self._table = None
     self.table = table
 
   __hash__ = OracleObject.__hash__
@@ -379,7 +394,9 @@ class HasTable (object):
   def __eq__ (self, other):
     if not super().__eq__(other):
       return False
-    return self.table.name == other.table.name
+    return ((not self.table and not other.table) or
+            (self.table and other.table and
+             self.table.name == other.table.name))
 
   @property
   def table (self):
@@ -398,9 +415,9 @@ class HasTable (object):
 class HasUserType (object):
 
   def __init__ (self, name, user_type=None, **props):
+    self._user_type = None
     super().__init__(name, **props)
 
-    self._user_type = None
     self.user_type = user_type
 
   @property
@@ -417,28 +434,66 @@ class HasUserType (object):
       super().satisfy(other)
       self.user_type = other.user_type
 
-class Table (HasColumns, OracleObject):
+class HasConstraints (object):
+
+  def __init__ (self, name, constraints=None, **props):
+    self._constraints = None
+    super().__init__(name, **props)
+
+    if not constraints:
+      constraints = set()
+    self.constraints = constraints
+
+  __hash__ = OracleObject.__hash__
+
+  def __eq__ (self, other):
+    if not super().__eq__(other):
+      return False
+
+    return self.constraints == other.constraints
+
+  @property
+  def constraints (self):
+    return self._constraints
+
+  @constraints.setter
+  def constraints (self, value):
+    _assert_type(value, set)
+    _assert_contains_type(value, Constraint)
+    self._constraints = value
+
+  def satisfy (self, other):
+    if self.deferred:
+      super().satisfy(other)
+      self.constraints = other.constraints
+
+class Table (HasConstraints, HasColumns, OracleObject):
 
   def __new__ (class_, *args, **props):
-    if class_ != ObjectTable and 'table_type' in props and props['table_type']:
+    if 'table_type' in props and props['table_type']:
       class_ = ObjectTable
     return super().__new__(class_, *args, **props)
 
-  def __init__ (self, name, indexes=None, constraints=None, **props):
+  def __init__ (self, name, indexes=None, **props):
     super().__init__(name, column_reference=None, **props)
     if not indexes:
       indexes = set()
     self.indexes = indexes
-    if not constraints:
-      constraints = set()
-    self.constraints = constraints
     self.data = []
 
   @HasColumns.columns.setter
   def columns (self, value):
     HasColumns.columns.__set__(self, value)
-    for column in value:
-      column.table = self
+    if value:
+      for column in value:
+        column.table = self
+
+  @HasConstraints.constraints.setter
+  def constraints (self, value):
+    HasConstraints.constraints.__set__(self, value)
+    if value:
+      for cons in self.constraints:
+        cons.table = self
 
   @property
   def name (self):
@@ -460,13 +515,16 @@ class Table (HasColumns, OracleObject):
     name = self.name.obj
     if fq:
       name = self.name
-    parts = ["CREATE TABLE {}{}".format(name, self._sub_sql())]
+    parts = ["CREATE TABLE {}{}".format(name.lower(), self._sub_sql())]
     if self.props['tablespace_name']:
-      parts.append("TABLESPACE {}".format(self.props['tablespace_name']))
+      parts.append("TABLESPACE {}"
+                   .format(self.props['tablespace_name'].lower()))
     return " ".join(parts)
 
   def _sub_sql (self):
-    return "\n  ( {}\n  )".format("\n  , ".join(c.sql() for c in self.columns))
+    parts = [col.sql() for col in self.columns]
+    parts.extend(cons.sql() for cons in self.constraints)
+    return "\n  ( {}\n  )".format("\n  , ".join(parts))
 
   def create (self):
     diffs = super().create()
@@ -482,12 +540,16 @@ class Table (HasColumns, OracleObject):
     if (self.props['tablespace_name'] and
         self.props['tablespace_name'] != other.props['tablespace_name']):
       diffs.append(Diff("ALTER TABLE {} MOVE TABLESPACE {}"
-          .format(other.name, self.props['tablespace_name']), produces=self))
+                        .format(other.name.lower(),
+                                self.props['tablespace_name'].lower()),
+                        produces=self))
 
       for i in other.indexes:
-        diffs.append(Diff("ALTER INDEX {} REBUILD".format(i.name), produces=i))
+        diffs.append(Diff("ALTER INDEX {} REBUILD".format(i.name.lower()),
+                          produces=i))
 
     diffs.extend(self.diff_subobjects(other, lambda o: o.columns))
+    diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
 
     if self.data:
       Data.from_db(other)
@@ -528,6 +590,8 @@ class Table (HasColumns, OracleObject):
     elif not props['table_type']:
       props['columns'] = Column.from_db(name, into_database)
 
+    props['constraints'] = Constraint.from_db(name, into_database)
+
     return class_(name, database=into_database, **props)
 
 class ObjectTable (HasUserType, Table):
@@ -541,48 +605,51 @@ class ObjectTable (HasUserType, Table):
   def user_type (self, value):
     HasUserType.user_type.__set__(self, value)
     if value:
-      self.props['table_type'] = value.name
+      self.props['table_type'] = value.name.lower()
 
   def _sub_sql (self):
     return " OF {}".format(self.props['table_type'])
 
-class Column (HasTable, HasUserType, OracleObject):
+class Column (HasConstraints, HasTable, HasUserType, OracleObject):
 
   def __new__ (class_, *args, **props):
-    if (class_ != VirtualColumn and 'virtual_column' in props and
-        'YES' == props['virtual_column']):
+    if 'virtual_column' in props and 'YES' == props['virtual_column']:
       class_ = VirtualColumn
     return super().__new__(class_, *args, **props)
 
-  def __init__ (self, name, leftovers=None, **props):
+  def __init__ (self, name, **props):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(part=name)
     super().__init__(name, **props)
 
-    self.leftovers = leftovers
-
     if self.props['data_default']:
       self.props['data_default'] = self.props['data_default'].strip()
-
-  def __repr__ (self):
-    return super().__repr__(leftovers=self.leftovers)
 
   @HasTable.table.setter
   def table (self, value):
     HasTable.table.__set__(self, value)
     if value:
       self.name = OracleFQN(value.name.schema, value.name.obj, self.name.part)
+    # Reset the table on constraints
+    self.constraints = self._constraints
 
   @HasUserType.user_type.setter
   def user_type (self, value):
     HasUserType.user_type.__set__(self, value)
     if value:
-      self.props['data_type'] = value.name
+      self.props['data_type'] = value.name.lower()
+
+  @HasConstraints.constraints.setter
+  def constraints (self, value):
+    HasConstraints.constraints.__set__(self, value)
+    if value:
+      for cons in self.constraints:
+        cons.columns = {self}
 
   def _sql (self, fq=False, full_def=True):
     parts = []
     name = self.aka if fq else self.aka.part
-    parts.append(name)
+    parts.append(name.lower())
 
     if full_def:
       data_type = self.props['data_type']
@@ -604,45 +671,56 @@ class Column (HasTable, HasUserType, OracleObject):
       if self.props['data_default']:
         parts.append("DEFAULT {}".format(self.props['data_default']))
 
-      if self.leftovers:
-        parts.append(self.leftovers)
+      if self.props['nullable'] == 'N':
+        parts.append('NOT')
+      parts.append('NULL')
+
+      for cons in self.constraints:
+        parts.append(cons.sql(inline=True))
 
     return " ".join(parts)
 
   def create (self):
-    return [Diff("ALTER TABLE {} ADD ( {} )".format(
-      self.table.name, self.sql()), produces=self, priority=Diff.CREATE)]
+    return [Diff("ALTER TABLE {} ADD ( {} )".format(self.table.name.lower(),
+                                                    self.sql()),
+                 produces=self, priority=Diff.CREATE)]
 
   def _drop (self):
-    return Diff(
-        "ALTER TABLE {} DROP ( {} )".format(self.table.name, self.name.part),
-        self, priority=Diff.DROP)
+    return Diff("ALTER TABLE {} DROP ( {} )".format(self.table.name.lower(),
+                                                    self.name.part.lower()),
+                self, priority=Diff.DROP)
 
   def rename (self, other):
     return Diff("ALTER TABLE {} RENAME COLUMN {} TO {}"
-          .format(other.table.name, other.name.part, self.name.part),
-          produces=self)
-
-  def satisfy (self, other):
-    if self.deferred:
-      super().satisfy(other)
-      self.leftovers = other.leftovers
+                .format(other.table.name.lower(), other.name.part.lower(),
+                        self.name.part.lower()),
+                produces=self)
 
   def diff (self, other):
     diffs = super().diff(other, False)
 
     prop_diff = self._diff_props(other)
     if prop_diff:
-      diffs.append(Diff("ALTER TABLE {} MODIFY ( {} )".format(
-        other.table.name, self.sql()), produces=self))
+      diffs.append(Diff("ALTER TABLE {} MODIFY ( {} )"
+                        .format(other.table.name.lower(), self.sql()),
+                        produces=self))
 
     if (other.props['data_default'] and
         other.props['data_default'] != 'NULL' and
         not self.props['data_default']):
-      diffs.append(Diff("ALTER TABLE {} MODIFY ( {} DEFAULT NULL)".format(
-        other.table.name, other.name.part), produces=self))
+      diffs.append(Diff("ALTER TABLE {} MODIFY ( {} DEFAULT NULL)"
+                        .format(other.table.name.lower(),
+                                other.name.part.lower()),
+                        produces=self))
+
+    diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
 
     return diffs
+
+  def add_subobjects (self, subobjects):
+    return [Diff("ALTER TABLE {} MODIFY ({} {})"
+                 .format(self.table.name.lower(), self.name.lower(),
+                         " ".join(obj.sql(inline=True) for obj in subobjects)))]
 
   @classmethod
   def from_db (class_, name, into_database):
@@ -658,6 +736,7 @@ class Column (HasTable, HasUserType, OracleObject):
                            , data_default
                            , char_length
                            , char_used
+                           , nullable
                            , virtual_column
                            , hidden_column
                       FROM all_tab_cols
@@ -665,7 +744,7 @@ class Column (HasTable, HasUserType, OracleObject):
                         AND table_name = :t
                         AND (:c IS NULL OR column_name = :c)
                         AND hidden_column = 'NO'
-                      ORDER BY column_id
+                      ORDER BY internal_column_id
                   """, o=name.schema, t=name.obj, c=name.part,
                   oracle_names=['column_name', 'data_type_owner', 'data_type'])
 
@@ -676,10 +755,13 @@ class Column (HasTable, HasUserType, OracleObject):
           OracleFQN(props['data_type_owner'], props['data_type']), Type)
         del props['data_type_owner']
 
-      return class_(name, database=into_database, **props)
+      constraints = Constraint.from_db(name, into_database)
 
-    return [construct(name, props)
-            for (_, name), *props in (row.items() for row in rs)]
+      return class_(name, constraints=constraints, database=into_database,
+                    **props)
+
+    return [construct(OracleFQN(name.schema, name.obj, col_name), props)
+            for (_, col_name), *props in (row.items() for row in rs)]
 
 class VirtualColumn (Column):
   namespace = Column
@@ -724,7 +806,7 @@ class VirtualColumn (Column):
 
     if not hidden:
       name = self.aka if fq else self.aka.part
-      parts.append(name)
+      parts.append(name.lower())
 
       if full_def:
         parts.append('AS (')
@@ -761,7 +843,8 @@ class Data (HasColumns, OracleObject):
                         if val is not None))
 
   def values (self):
-    return collections.OrderedDict(zip((col.name.part for col in self.columns),
+    return collections.OrderedDict(zip((col.name.part.lower()
+                                        for col in self.columns),
                                        self.expressions))
 
   def _sql (self, fq=True):
@@ -769,14 +852,14 @@ class Data (HasColumns, OracleObject):
     if not fq:
       table_name = table_name.obj
     values = self.values()
-    return "INSERT INTO {} ({}) VALUES ({})".format(self.table.name,
+    return "INSERT INTO {} ({}) VALUES ({})".format(self.table.name.lower(),
       ", ".join(values.keys()), ", ".join(values.values()))
 
   def _drop (self):
     return Diff("DELETE FROM {} WHERE {}".format(
-      self.table.name, " AND ".join(" = ".join((col, val)) if val is not None
-                                    else "{} IS NULL".format(col)
-                                    for col, val in self.values().items())))
+      self.table.name.lower(), " AND ".join(
+        " = ".join((col, val)) if val is not None else "{} IS NULL".format(col)
+        for col, val in self.values().items())))
 
   def diff (self, other):
     return []
@@ -792,53 +875,63 @@ class Data (HasColumns, OracleObject):
 
   @classmethod
   def from_db (class_, table):
-    rs = db.query(""" SELECT *
-                      FROM {}
-                  """.format(table.name))
+    if not table.data:
+      rs = db.query(""" SELECT *
+                        FROM {}
+                    """.format(table.name))
 
-    if rs:
-      columns = [table.database.find(
-        OracleFQN(table.name.schema, table.name.obj, column_name), Column)
-        for column_name in rs[0]]
+      if rs:
+        columns = [table.database.find(
+          OracleFQN(table.name.schema, table.name.obj, column_name), Column)
+          for column_name in rs[0]]
 
-      for row in rs:
-        table.add_data(columns, [Data.escape(col) for col in row.values()])
+        for row in rs:
+          table.add_data(columns, [Data.escape(col) for col in row.values()])
 
-class Constraint (HasColumns, OracleObject):
+class Constraint (HasColumns, HasTable, OracleObject):
 
-  def __init__ (self, name, table=None, is_enabled=True, **props):
+  def __init__ (self, name, is_enabled=True, **props):
     super().__init__(name, **props)
-    self.table = table
     self.is_enabled = is_enabled
 
-  def _sql (self, fq=False):
+  @HasColumns.columns.setter
+  def columns (self, value):
+    HasColumns.columns.__set__(self, value)
+    if value:
+      self.table = next(iter(self.columns)).table
+    else:
+      self.table = None
+
+  def _sql (self, fq=False, inline=False):
     parts = ['CONSTRAINT']
     name = self.name if fq else self.name.obj
-    parts.append(name)
+    parts.append(name.lower())
 
-    parts.extend(self._sub_sql())
+    parts.extend(self._sub_sql(inline))
 
     parts.append('ENABLE' if self.is_enabled else 'DISABLE')
 
     return " ".join(parts)
 
-  def _sub_sql (self):
+  def _sub_sql (self, inline):
     return ['']
 
   def _column_list (self):
-    return "( {} )".format(", ".join(col.name.part for col in self.columns))
+    return "( {} )".format(", ".join(col.sql(full_def=False)
+                                     for col in self.columns))
 
   def create (self):
-    return [Diff("ALTER TABLE {} ADD {}".format(
-      self.table.name, self.sql()), produces=self, priority=Diff.CREATE)]
+    return [Diff("ALTER TABLE {} ADD {}"
+                 .format(self.table.name.lower(), self.sql()),
+                 produces=self, priority=Diff.CREATE)]
 
   def _drop (self):
-    return Diff( "ALTER TABLE {} DROP CONSTRAINT {}".format(self.table.name,
-                                                              self.name.obj),
+    return Diff( "ALTER TABLE {} DROP CONSTRAINT {}"
+                .format(self.table.name.lower(), self.name.obj.lower()),
                 self, priority=Diff.DROP)
 
   @classmethod
-  def from_db (class_, table):
+  def from_db (class_, name, into_database):
     rs = db.query(""" SELECT constraint_name
                            , constraint_type
                            , status
@@ -849,7 +942,7 @@ class Constraint (HasColumns, OracleObject):
                                FROM all_cons_columns acc
                                WHERE acc.owner = ac.owner
                                  AND acc.constraint_name = ac.constraint_name
-                               ORDER BY acc.column_position
+                               ORDER BY acc.position
                              ) AS columns
 
                            -- For check constraints
@@ -866,7 +959,7 @@ class Constraint (HasColumns, OracleObject):
                       FROM all_constraints ac
                       WHERE owner = :o
                         AND table_name = :n
-                  """, o=table.name.schema, n=table.name.obj,
+                  """, o=name.schema, n=name.obj,
                   oracle_names=['constraint_name', 'r_owner',
                                 'r_constraint_name', 'index_owner',
                                 'index_name'])
@@ -875,38 +968,50 @@ class Constraint (HasColumns, OracleObject):
       return None
     constraints = set()
     for row in rs:
-      name = OracleFQN(table.name.schema, row['constraint_name'])
+      if name.part:
+        # We're looking only for inlineable constraints on a specific column
+        if (len(row['columns']) > 1 or
+            row['columns'][0]['column_name'] != name.part):
+          continue
+      elif len(row['columns']) == 1:
+        # Only Constraints with multiple columns are at the Table level
+        continue
+
+      name = OracleFQN(name.schema, row['constraint_name'])
       type = row['constraint_type']
       constraint_class = None
       args = [name]
-      columns = [table.database.find(OracleFQN(table.name.schema,
-                                               col['table_name'],
-                                               col['column_name']),
-                                     Column)
-                 for col in row['columns']]
+      columns = None
+      if len(row['columns']) > 1:
+        # If there's only one column, we'll leave it up to the caller to set it
+        columns = {into_database.find(OracleFQN(name.schema,
+                                                col['table_name'],
+                                                col['column_name']),
+                                      Column)
+                   for col in row['columns']}
       if type == 'C':
         args.append(row['search_condition'])
         constraint_class = CheckConstraint
 
       elif type in ('P', 'U'):
         args.append(type)
-        args.append(table.database.find(OracleFQN(row['index_owner'],
-                                                  row['index_name']), Index))
+        args.append(into_database.find(OracleFQN(row['index_owner'],
+                                                 row['index_name']), Index))
         constraint_class = UniqueConstraint
 
       elif type == 'R':
-        args.append(table.database.find(OracleFQN(row['r_owner'],
-                                                  row['r_constraint_name']),
-                                        Constraint))
+        args.append(into_database.find(OracleFQN(row['r_owner'],
+                                                 row['r_constraint_name']),
+                                       Constraint))
         args.append(row['delete_rule'])
         constraint_class = ForeignKeyConstraint
       else:
         raise UnimplementedFeatureError(
           "Constraint {} has unsupported type {}".format(name, type))
 
-      constraints.add(constraint_class(*args, table=table,
+      constraints.add(constraint_class(*args,
                                        is_enabled=(row['status'] == 'ENABLED'),
-                                       database=table.database,
+                                       database=into_database,
                                        columns=columns))
 
     return constraints
@@ -918,7 +1023,7 @@ class CheckConstraint (Constraint):
     super().__init__(name, **props)
     self.condition = condition
 
-  def _sub_sql (self):
+  def _sub_sql (self, inline):
     return ['CHECK (', self.condition, ')']
 
 class UniqueConstraint (Constraint):
@@ -929,11 +1034,13 @@ class UniqueConstraint (Constraint):
     self.is_pk = type == 'P'
     self.index = index
 
-  def _sub_sql (self):
-    parts = ['PRIMARY KEY' if self.is_pk else 'UNIQUE', self._column_list()]
+  def _sub_sql (self, inline):
+    parts = ['PRIMARY KEY' if self.is_pk else 'UNIQUE']
+    if not inline:
+      parts.append(self._column_list())
     if self.index:
       parts.append('USING INDEX')
-      parts.append(self.index.name)
+      parts.append(self.index.name.lower())
 
     return parts
 
@@ -945,9 +1052,14 @@ class ForeignKeyConstraint (Constraint):
     self.fk_constraint = fk_constraint
     self.delete_rule = delete_rule
 
-  def _sub_sql (self):
-    parts = ['FOREIGN KEY', self._column_list(), 'REFERENCES',
-             self.fk_constraint.table.name, self.fk_constraint._column_list]
+  def _sub_sql (self, inline):
+    parts = []
+    if not inline:
+      parts.append('FOREIGN KEY')
+      parts.append(self._column_list())
+
+    parts.extend(['REFERENCES', self.fk_constraint.table.name,
+                  self.fk_constraint._column_list])
     if self.delete_rule != 'NO ACTION':
       parts.append('ON DELETE')
       parts.append(self.delete_rule)
@@ -988,9 +1100,9 @@ class Index (HasColumns, HasTable, OracleObject):
     if self.props['uniqueness'] == 'UNIQUE':
       parts.append('UNIQUE')
     parts.append('INDEX')
-    parts.append(name)
+    parts.append(name.lower())
     parts.append('ON')
-    parts.append(self.table.name)
+    parts.append(self.table.name.lower())
     parts.append('(')
     # TODO: what to do with object columns
     parts.append(', '.join(c.sql(full_def=False) for c in self.columns))
@@ -999,12 +1111,13 @@ class Index (HasColumns, HasTable, OracleObject):
       parts.append('REVERSE')
     if self.props['tablespace_name']:
       parts.append('TABLESPACE')
-      parts.append(self.props['tablespace_name'])
+      parts.append(self.props['tablespace_name'].lower())
 
     return " ".join(parts)
 
   def rebuild (self):
-    return [Diff("ALTER INDEX {} REBUILD".format(self.name), produces=self)]
+    return [Diff("ALTER INDEX {} REBUILD".format(self.name.lower()),
+                 produces=self)]
 
   def diff (self, other):
     diffs = super().diff(other, False)
@@ -1012,7 +1125,9 @@ class Index (HasColumns, HasTable, OracleObject):
     prop_diffs = self._diff_props(other)
     if len(prop_diffs) == 1 and 'tablespace_name' in self.props:
       diffs.append(Diff("ALTER INDEX {} REBUILD TABLESPACE {}"
-          .format(other.name, self.props['tablespace_name']), produces=self))
+                        .format(other.name.lower(),
+                                self.props['tablespace_name'].lower()),
+                        produces=self))
     elif len(prop_diffs):
       diffs.extend(self.recreate(other))
 
@@ -1094,7 +1209,7 @@ class Sequence (OracleObject):
     if not props:
       props = self.props
 
-    parts = ["{} SEQUENCE {}".format(operation, name)]
+    parts = ["{} SEQUENCE {}".format(operation, name.lower())]
     if self.props['increment_by']:
       parts.append("INCREMENT BY {}".format(self.props['increment_by']))
     if self.props['maxvalue']:
@@ -1163,8 +1278,8 @@ class Synonym (OracleObject):
     if fq:
       name = self.name
 
-    return "CREATE OR REPLACE SYNONYM {} FOR {}".format(name,
-                                                        self.for_object.name)
+    return "CREATE OR REPLACE SYNONYM {} FOR {}".format(name.lower(),
+        self.for_object.name.lower())
 
   @classmethod
   def from_db (class_, name, into_database):
