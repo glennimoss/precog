@@ -35,6 +35,19 @@ def _assert_contains_type (value, contains_type):
         raise TypeError("In container {}: {}".format(pprint.pformat(value),
                                                      ", ".join(bad)))
 
+def _in_props (key):
+  def getter (self):
+    return self.props[key]
+
+  def setter (self, value):
+    self.props[key] = value
+
+  def deller (self):
+    del self.props[key]
+
+  return property(getter, setter, deller,
+                  "Property {} backed by OracleObject.props".format(key))
+
 class OracleObject (HasLog):
 
   @classproperty
@@ -415,57 +428,33 @@ class HasTable (object):
 class HasUserType (object):
 
   def __init__ (self, name, user_type=None, **props):
-    self._user_type = None
     super().__init__(name, **props)
 
     self.user_type = user_type
 
-  @property
-  def user_type (self):
-    return self._user_type
+  _user_type = _in_props('user_type')
 
-  @user_type.setter
+  @_user_type.setter
   def user_type (self, value):
     _assert_type(value, Type)
     self._depends_on(value, '_user_type')
 
-  def satisfy (self, other):
-    if self.deferred:
-      super().satisfy(other)
-      self.user_type = other.user_type
-
 class HasConstraints (object):
 
   def __init__ (self, name, constraints=None, **props):
-    self._constraints = None
     super().__init__(name, **props)
 
     if not constraints:
       constraints = set()
     self.constraints = constraints
 
-  __hash__ = OracleObject.__hash__
+  _constraints = _in_props('constraints')
 
-  def __eq__ (self, other):
-    if not super().__eq__(other):
-      return False
-
-    return self.constraints == other.constraints
-
-  @property
-  def constraints (self):
-    return self._constraints
-
-  @constraints.setter
+  @_constraints.setter
   def constraints (self, value):
     _assert_type(value, set)
     _assert_contains_type(value, Constraint)
     self._constraints = value
-
-  def satisfy (self, other):
-    if self.deferred:
-      super().satisfy(other)
-      self.constraints = other.constraints
 
 class Table (HasConstraints, HasColumns, OracleObject):
 
@@ -564,8 +553,11 @@ class Table (HasConstraints, HasColumns, OracleObject):
   @property
   def dependencies (self):
     deps = OracleObject.dependencies.__get__(self)
-    return deps | {dep for col in self.columns
-                       for dep in col.dependencies if dep != self}
+    return (deps |
+            {dep for col in self.columns
+             for dep in col.dependencies if dep != self} |
+            {dep for cons in self.constraints
+             for dep in cons.dependencies if dep != self})
 
   @classmethod
   def from_db (class_, name, into_database):
@@ -641,10 +633,21 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
 
   @HasConstraints.constraints.setter
   def constraints (self, value):
-    HasConstraints.constraints.__set__(self, value)
     if value:
-      for cons in self.constraints:
-        cons.columns = {self}
+      not_null = set()
+      for cons in value:
+        if (isinstance(cons, CheckConstraint) and
+            cons.generated_name and
+            self.props['nullable'] == 'N' and
+            cons.condition == "{} IS NOT NULL"
+              .format(self.name.part.force_quoted())):
+          # Get rid of the system generated constraint for NOT NULL
+          not_null.add(cons)
+        else:
+          cons.columns = {self}
+      value.difference_update(not_null)
+
+    HasConstraints.constraints.__set__(self, value)
 
   def _sql (self, fq=False, full_def=True):
     parts = []
@@ -772,13 +775,11 @@ class VirtualColumn (Column):
     self.expression = expression or props['data_default']
     self.props['virtual_column'] = 'YES'
 
-  @property
-  def expression (self):
-    return self.props['data_default']
+  _expression = _in_props('data_default')
 
-  @expression.setter
+  @_expression.setter
   def expression (self, value):
-    self.props['data_default'] = value
+    self._expression = value
     deps = self._parse_expression()
     self._depends_on(deps, '_expression_identifiers')
 
@@ -894,6 +895,8 @@ class Constraint (HasColumns, HasTable, OracleObject):
     super().__init__(name, **props)
     self.is_enabled = is_enabled
 
+  generated_name = _in_props('generated_name')
+
   @HasColumns.columns.setter
   def columns (self, value):
     HasColumns.columns.__set__(self, value)
@@ -935,7 +938,7 @@ class Constraint (HasColumns, HasTable, OracleObject):
     rs = db.query(""" SELECT constraint_name
                            , constraint_type
                            , status
-                        -- , generated
+                           , generated
                            , CURSOR(
                                SELECT table_name
                                     , column_name
@@ -977,10 +980,10 @@ class Constraint (HasColumns, HasTable, OracleObject):
         # Only Constraints with multiple columns are at the Table level
         continue
 
-      name = OracleFQN(name.schema, row['constraint_name'])
+      constraint_name = OracleFQN(name.schema, row['constraint_name'])
       type = row['constraint_type']
       constraint_class = None
-      args = [name]
+      args = [constraint_name]
       columns = None
       if len(row['columns']) > 1:
         # If there's only one column, we'll leave it up to the caller to set it
@@ -1007,11 +1010,13 @@ class Constraint (HasColumns, HasTable, OracleObject):
         constraint_class = ForeignKeyConstraint
       else:
         raise UnimplementedFeatureError(
-          "Constraint {} has unsupported type {}".format(name, type))
+          "Constraint {} has unsupported type {}".format(constraint_name, type))
 
       constraints.add(constraint_class(*args,
                                        is_enabled=(row['status'] == 'ENABLED'),
                                        database=into_database,
+                                       generated_name=(row['generated'] ==
+                                                       'GENERATED NAME'),
                                        columns=columns))
 
     return constraints
@@ -1023,6 +1028,8 @@ class CheckConstraint (Constraint):
     super().__init__(name, **props)
     self.condition = condition
 
+  condition = _in_props('condition')
+
   def _sub_sql (self, inline):
     return ['CHECK (', self.condition, ')']
 
@@ -1033,6 +1040,15 @@ class UniqueConstraint (Constraint):
     super().__init__(name, **props)
     self.is_pk = type == 'P'
     self.index = index
+
+  is_pk = _in_props('is_pk')
+
+  _index = _in_props('index')
+
+  @_index.setter
+  def index (self, value):
+    _assert_type(value, Index)
+    self._depends_on(value, '_index', Reference.AUTODROP)
 
   def _sub_sql (self, inline):
     parts = ['PRIMARY KEY' if self.is_pk else 'UNIQUE']
@@ -1051,6 +1067,15 @@ class ForeignKeyConstraint (Constraint):
     super().__init__(name, **props)
     self.fk_constraint = fk_constraint
     self.delete_rule = delete_rule
+
+  _fk_constraint = _in_props('fk_constraint')
+
+  @_fk_constraint.setter
+  def fk_constraint (self, value):
+    _assert_type(value, UniqueConstraint)
+    self._depends_on(value, '_fk_constraint')
+
+  delete_rule = _in_props('delete_rule')
 
   def _sub_sql (self, inline):
     parts = []
@@ -1393,18 +1418,12 @@ class PlsqlBody (PlsqlCode):
     super().__init__(name, **props)
     self.header = header
 
-  @property
-  def header (self):
-    return self._header
+  _header = _in_props('header')
 
-  @header.setter
+  @_header.setter
   def header (self, value):
     _assert_type(value, PlsqlHeader)
     self._depends_on(value, '_header', Reference.AUTODROP)
-
-  def satisfy (self, other):
-    super().satisfy(other)
-    self.header = other.header
 
   @classmethod
   def from_db (class_, name, into_database):

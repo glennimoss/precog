@@ -228,19 +228,13 @@ col_spec
 scope { props }
 @init { $col_spec::props = InsensitiveDict() }
 @after {
-  if $col_spec::props['leftovers']:
-    $col_spec::props['leftovers'] = ' '.join($col_spec::props['leftovers'])
-  else:
-    del $col_spec::props['leftovers']
   $create_table::columns.append(Column($i.id, **$col_spec::props))
 }
   : i=tID column_data_type
     ( DEFAULT e=expression { $col_spec::props['data_default'] = $e.text } )?
-    { $col_spec::props['leftovers'] = [] }
     ( ic=inline_constraint
       {
         #$col_spec::props.update($ic.props)
-        $col_spec::props['leftovers'].append($ic.text)
       } )*
   ;
 
