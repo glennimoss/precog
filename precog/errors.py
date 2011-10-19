@@ -71,7 +71,7 @@ class SchemaConflict (ObjectError):
 
   def __str__ (self):
     return "{} is present in schema as {}".format(
-        super().__str__(), self.other.sql(True))
+        super().__str__(), self.other.sql(fq=True))
 
 class TypeConflict (ObjectError):
 

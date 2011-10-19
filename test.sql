@@ -5,10 +5,12 @@ create index baz_idx on baz ( obj.num );
 create index foo_idx on foo ( foo_id );
 
 create table foo
-  ( foo_id number
+  ( foo_id number CONSTRAINT foo_pk PRIMARY KEY
   , text vArChaR2(156)
-  , bar_id varchar2(256)
+  , bar_id varchar2(256) UNIQUE
   , moredata CLOB
+  , id_len AS (length(to_char(foo_id)))
+  , CONSTRAINT foo_sum CHECK (foo_id + id_len > to_number(bar_id))
 );
 
 @ test2.sql

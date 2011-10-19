@@ -173,6 +173,10 @@ class OracleObject (HasLog):
 
       self.deferred = False
 
+  @property
+  def subobjects (self):
+    return set()
+
   def diff (self, other, create=True):
     """
     Calculate differences between self, which is the desired definition, and
@@ -439,7 +443,20 @@ class HasConstraints (object):
   def constraints (self, value):
     _assert_type(value, set)
     _assert_contains_type(value, Constraint)
-    self._constraints = value
+    if value:
+      self._constraints = {cons for cons in value
+                           if not isinstance(cons, UniqueConstraint)}
+      self._unique_constraints = {cons for cons in value
+                                  if isinstance(cons, UniqueConstraint)}
+    else:
+      self._constraints = set()
+      self._unique_constraints = set()
+
+  _unique_constraints = _in_props('unique_constraints')
+
+  @property
+  def unique_constraints (self):
+    return self._unique_constraints
 
 class Table (HasConstraints, HasColumns, OracleObject):
 
@@ -466,7 +483,7 @@ class Table (HasConstraints, HasColumns, OracleObject):
   def constraints (self, value):
     HasConstraints.constraints.__set__(self, value)
     if value:
-      for cons in self.constraints:
+      for cons in value:
         cons.table = self
 
   @property
@@ -481,6 +498,10 @@ class Table (HasConstraints, HasColumns, OracleObject):
 
   def __repr__ (self):
     return super().__repr__(indexes=self.indexes, data=self.data)
+
+  @property
+  def subobjects (self):
+    return (self.constraints | self.unique_constraints).union(self.columns)
 
   def add_data (self, columns, values):
     self.data.append(Data(self, columns, values))
@@ -503,6 +524,14 @@ class Table (HasConstraints, HasColumns, OracleObject):
 
   def create (self):
     diffs = super().create()
+    diffs.extend(diff for cons in self.unique_constraints
+                 for diff in cons.create())
+    diffs.extend(diff for column in self.columns
+                 for cons in column.unique_constraints
+                 for diff in cons.create())
+    print(self.name)
+    for diff in diffs:
+      pprint.pprint(diff)
     inserts = [diff for datum in self.data for diff in datum.create()]
     if inserts:
       diffs.extend(inserts)
@@ -524,7 +553,8 @@ class Table (HasConstraints, HasColumns, OracleObject):
                           produces=i))
 
     diffs.extend(self.diff_subobjects(other, lambda o: o.columns))
-    diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
+    diffs.extend(self.diff_subobjects(other,
+                              lambda o: o.constraints | o.unique_constraints))
 
     if self.data:
       Data.from_db(other)
@@ -675,9 +705,12 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
     return " ".join(parts)
 
   def create (self):
-    return [Diff("ALTER TABLE {} ADD ( {} )".format(self.table.name.lower(),
-                                                    self.sql()),
-                 produces=self, priority=Diff.CREATE)]
+    diffs = [Diff("ALTER TABLE {} ADD ( {} )".format(self.table.name.lower(),
+                                                     self.sql()),
+                  produces=self, priority=Diff.CREATE)]
+    diffs.extend(diff for cons in self.unique_constraints
+                 for diff in cons.create())
+    return diffs
 
   def _drop (self):
     return Diff("ALTER TABLE {} DROP ( {} )".format(self.table.name.lower(),
@@ -707,7 +740,8 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
                                 other.name.part.lower()),
                         produces=self))
 
-    diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
+    diffs.extend(self.diff_subobjects(other,
+                                lambda o: o.constraints | o.unique_constraints))
 
     return diffs
 
@@ -1051,6 +1085,11 @@ class UniqueConstraint (Constraint):
       parts.append(self.index.name.lower())
 
     return parts
+
+  def _drop (self):
+    diff = super()._drop()
+    diff.sql += ' KEEP INDEX'
+    return diff
 
 class ForeignKeyConstraint (Constraint):
   namespace = Constraint
@@ -1528,12 +1567,8 @@ class Schema (OracleObject):
         if obj_type in self.share_namespace:
           self.shared_namespace[name] = obj
 
-    if obj_type is Table:
-      for col in obj.columns:
-        self.add(col)
-
-      for cons in obj.constraints:
-        self.add(cons)
+    for subobj in obj.subobjects:
+      self.add(subobj)
 
   def find (self, name, obj_type, deferred=True):
     #self.log.debug("Finding {} {}".format(obj_type.__name__, name))
@@ -1564,7 +1599,7 @@ class Schema (OracleObject):
   def diff (self, other):
     diffs = []
 
-    types = (set(self.objects) | set(other.objects)) - {Column}
+    types = (set(self.objects) | set(other.objects)) - {Column, Constraint}
     for t in types:
       diffs.extend(self.diff_subobjects(other,
         lambda o: o.objects[t] if t in o.objects else []))
