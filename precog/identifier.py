@@ -23,9 +23,8 @@ class OracleIdentifier (str):
     parts = None
     if isinstance(identifier, list):
       if len(identifier) > 1:
-        parts = identifier
-        identifier = ".".join(OracleIdentifier(id).force_quoted()
-            for id in identifier)
+        parts = [OracleIdentifier(id, trust_me) for id in identifier]
+        identifier = ".".join(part.force_quoted() for part in parts)
         quoted = True
         trust_me = True
       else:
@@ -78,6 +77,8 @@ class OracleIdentifier (str):
     return self
 
   def lower (self):
+    if self.parts:
+      return ".".join(part.lower() for part in self.parts)
     if self.quoted:
       return self
     return super().lower()

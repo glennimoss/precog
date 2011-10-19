@@ -5,7 +5,7 @@ from precog.diff import Commit, Diff, order_diffs, PlsqlDiff, Reference
 from precog.errors import *
 from precog.identifier import *
 from precog.util import (classproperty, HasLog, InsensitiveDict, ValidatingList,
-    ValidationError)
+                         ValidationError)
 
 class _UnexpectedTypeError (KeyError):
   pass
@@ -23,13 +23,13 @@ def _assert_type (value, type):
       raise TypeError("Expected {}: {!r}".format(type.__name__, value))
 
 def _assert_contains_type (value, contains_type):
-    if value is not None:
-      bad = []
-      for item in value:
-        try:
-          _assert_type(item, contains_type)
-        except TypeError as e:
-          bad.append(e)
+  if value is not None:
+    bad = []
+    for item in value:
+      try:
+        _assert_type(item, contains_type)
+      except TypeError as e:
+        bad.append(e)
 
       if bad:
         raise TypeError("In container {}: {}".format(pprint.pformat(value),
@@ -58,8 +58,8 @@ class OracleObject (HasLog):
   def pretty_type (class_):
     return re.sub('([A-Z])', r' \1', class_.__name__).strip()
 
-  def __init__ (self, name, deferred=False, database=None, aka=None,
-                reinit=False, **props):
+  def __init__ (self, name, deferred=False, database=None, reinit=False,
+                **props):
     if not reinit:
       super().__init__()
       self.deferred = deferred
@@ -67,7 +67,6 @@ class OracleObject (HasLog):
       self.props = InsensitiveDict(props)
       self._referenced_by = set()
       self._dependencies = set()
-      self.aka = aka
 
     if not isinstance(name, OracleFQN):
       name = OracleFQN(obj=name)
@@ -76,9 +75,6 @@ class OracleObject (HasLog):
   def __repr__ (self, **other_props):
     if self.deferred:
       other_props['deferred'] = True
-
-    if self._aka:
-      other_props['aka'] = self.aka
 
     other_props.update(self.props)
     return "{}({!r}, {})".format(type(self).__name__,
@@ -105,17 +101,6 @@ class OracleObject (HasLog):
 
   def __hash__ (self):
     return hash((type(self), self.name))
-
-  @property
-  def aka (self):
-    if self._aka:
-      return self._aka
-    else:
-      return self.name
-
-  @aka.setter
-  def aka (self, value):
-    self._aka = value
 
   @property
   def pretty_name (self):
@@ -511,7 +496,8 @@ class Table (HasConstraints, HasColumns, OracleObject):
     return " ".join(parts)
 
   def _sub_sql (self):
-    parts = [col.sql() for col in self.columns]
+    parts = [col.sql() for col in self.columns
+             if col.props['hidden_column'] == 'NO']
     parts.extend(cons.sql() for cons in self.constraints)
     return "\n  ( {}\n  )".format("\n  , ".join(parts))
 
@@ -651,7 +637,11 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
 
   def _sql (self, fq=False, full_def=True):
     parts = []
-    name = self.aka if fq else self.aka.part
+    name = self.name
+    if self.props['qualified_col_name']:
+      name = OracleFQN(name.schema, name.obj, self.props['qualified_col_name'])
+    if not fq:
+      name = name.part
     parts.append(name.lower())
 
     if full_def:
@@ -663,7 +653,7 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
           scale = (",{}".format(self.props["data_scale"])
               if self.props['data_scale'] else '')
           data_type += "({}{})".format(precision, scale)
-      else:
+      elif not self.user_type and data_type.find('CHAR') != -1:
         length = self.props['char_length'] or self.props['data_length']
         if length:
           data_type += "({}{})".format(length,
@@ -674,9 +664,10 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
       if self.props['data_default']:
         parts.append("DEFAULT {}".format(self.props['data_default']))
 
-      if self.props['nullable'] == 'N':
-        parts.append('NOT')
-      parts.append('NULL')
+      if self.props['nullable']:
+        if 'N' == self.props['nullable']:
+          parts.append('NOT')
+        parts.append('NULL')
 
       for cons in self.constraints:
         parts.append(cons.sql(inline=True))
@@ -728,6 +719,7 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
   @classmethod
   def from_db (class_, name, into_database):
     rs = db.query(""" SELECT column_name
+                           , qualified_col_name
                            , data_type
                            , CASE WHEN data_type_owner = 'PUBLIC'
                                     OR data_type_owner LIKE '%SYS' THEN NULL
@@ -746,10 +738,10 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
                       WHERE owner = :o
                         AND table_name = :t
                         AND (:c IS NULL OR column_name = :c)
-                        AND hidden_column = 'NO'
                       ORDER BY internal_column_id
                   """, o=name.schema, t=name.obj, c=name.part,
-                  oracle_names=['column_name', 'data_type_owner', 'data_type'])
+                  oracle_names=['column_name', 'qualified_col_name',
+                                'data_type_owner', 'data_type'])
 
     def construct (name, props):
       props = dict(props)
@@ -806,7 +798,7 @@ class VirtualColumn (Column):
     hidden = 'YES' == self.props['hidden_column']
 
     if not hidden:
-      name = self.aka if fq else self.aka.part
+      name = self.name if fq else self.name.part
       parts.append(name.lower())
 
       if full_def:
@@ -1129,7 +1121,6 @@ class Index (HasColumns, HasTable, OracleObject):
     parts.append('ON')
     parts.append(self.table.name.lower())
     parts.append('(')
-    # TODO: what to do with object columns
     parts.append(', '.join(c.sql(full_def=False) for c in self.columns))
     parts.append(')')
     if self.props['index_type'].endswith('/REV'):
@@ -1188,10 +1179,7 @@ class Index (HasColumns, HasTable, OracleObject):
     # data separately.
     rs = db.query(""" SELECT aic.table_owner
                            , aic.table_name
-                           , aic.column_name
-                           , atc.virtual_column
-                           , atc.hidden_column
-                           , aie.column_expression
+                           , atc.column_name
                       FROM all_ind_columns aic
                          , all_tab_cols atc
                          , all_ind_expressions aie
@@ -1199,24 +1187,18 @@ class Index (HasColumns, HasTable, OracleObject):
                         AND aic.index_name = :n
                         AND aic.table_owner = atc.owner
                         AND aic.table_name = atc.table_name
-                        AND aic.column_name = atc.column_name
+                        AND (aic.column_name = atc.column_name
+                          OR aic.column_name = atc.qualified_col_name)
                         AND aic.index_owner = aie.index_owner(+)
                         AND aic.index_name = aie.index_name(+)
                         AND aic.column_position = aie.column_position(+)
                       ORDER BY aic.column_position
                   """, o=name.schema, n=name.obj,
                   oracle_names=['table_owner', 'table_name', 'column_name'])
-    columns = [(OracleFQN(row['table_owner'], row['table_name'],
-                         row['column_name']),
-                row)
+    columns = [into_database.find(OracleFQN(row['table_owner'],
+                                            row['table_name'],
+                                            row['column_name']), Column)
                for row in rs]
-    columns = [into_database.find(column_name, Column)
-               if 'NO' == col['hidden_column']
-               else VirtualColumn(column_name,
-                                  expression=col['column_expression'],
-                                  hidden_column='YES', table=table,
-                                  database=into_database)
-               for column_name, col in columns]
     return class_(name, database=into_database, table=table, columns=columns,
                   **dict(props))
 
@@ -1560,13 +1542,6 @@ class Schema (OracleObject):
 
     if not name.schema:
       name = OracleFQN(self.name.schema, name.obj, name.part)
-
-    if name.part and name.part.parts:
-      # TODO: how to look up multiple parts...
-      lookup_by = OracleFQN(name.schema, name.obj, name.part.parts[0])
-      obj = self.find(lookup_by, obj_type, deferred)
-      obj.aka = name
-      return obj
 
     # When you don't know what type you're looking up, it must be in the shared
     # namespace to return a real object. Otherwise it wil be deferred.
