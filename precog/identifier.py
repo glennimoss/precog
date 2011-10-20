@@ -94,7 +94,8 @@ class OracleFQN (OracleIdentifier):
   Create a fully-qualified Oracle identifier. If from_oracle is True, it will
   try to guess if the name should be quoted.
   """
-  def __new__ (class_, schema=None, obj=None, part=None, from_oracle=False):
+  def __new__ (class_, schema=None, obj=None, part=None, from_oracle=False,
+               generated=False):
     make_name = OracleIdentifier
     if from_oracle:
       make_name = name_from_oracle
@@ -112,6 +113,7 @@ class OracleFQN (OracleIdentifier):
     self._schema = schema
     self._obj = obj
     self._part = part
+    self._generated = generated
 
     return self
 
@@ -126,6 +128,10 @@ class OracleFQN (OracleIdentifier):
   @property
   def part (self):
     return self._part
+
+  @property
+  def generated (self):
+    return self._generated
 
   def lower (self):
     return ".".join(x.lower() for x in (self.schema, self.obj, self.part) if x)

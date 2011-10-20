@@ -652,7 +652,7 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
       not_null = set()
       for cons in value:
         if (isinstance(cons, CheckConstraint) and
-            cons.generated_name and
+            cons.name.generated and
             self.props['nullable'] == 'N' and
             cons.condition == "{} IS NOT NULL"
               .format(self.name.part.force_quoted())):
@@ -923,8 +923,6 @@ class Constraint (HasColumns, HasTable, OracleObject):
     super().__init__(name, **props)
     self.is_enabled = is_enabled
 
-  generated_name = _in_props('generated_name')
-
   @HasColumns.columns.setter
   def columns (self, value):
     HasColumns.columns.__set__(self, value)
@@ -1008,7 +1006,9 @@ class Constraint (HasColumns, HasTable, OracleObject):
         # Only Constraints with multiple columns are at the Table level
         continue
 
-      constraint_name = OracleFQN(name.schema, row['constraint_name'])
+      constraint_name = OracleFQN(name.schema, row['constraint_name'],
+                                  generated=(row['generated'] ==
+                                             'GENERATED NAME'))
       type = row['constraint_type']
       constraint_class = None
       args = [constraint_name]
@@ -1043,8 +1043,6 @@ class Constraint (HasColumns, HasTable, OracleObject):
       constraints.add(constraint_class(*args,
                                        is_enabled=(row['status'] == 'ENABLED'),
                                        database=into_database,
-                                       generated_name=(row['generated'] ==
-                                                       'GENERATED NAME'),
                                        columns=columns))
 
     return constraints
@@ -1620,10 +1618,10 @@ class Schema (OracleObject):
     rs = db.query(""" SELECT object_name
                            , object_type
                            , status
+                           , generated
                       FROM all_objects
                       WHERE owner = :o
                         AND subobject_name IS NULL
-                        AND generated = 'N'
                         AND object_type IN ( 'FUNCTION'
                                            , 'INDEX'
                                            , 'PACKAGE'
@@ -1638,7 +1636,8 @@ class Schema (OracleObject):
                   """, o=owner, oracle_names=['object_name'])
 
     for obj in rs:
-      object_name = OracleFQN(owner, obj['object_name'])
+      object_name = OracleFQN(owner, obj['object_name'],
+                              generated=(obj['generated'] == 'Y'))
       schema.log.debug(
           "Fetching {} {}".format(obj['object_type'], object_name))
 
