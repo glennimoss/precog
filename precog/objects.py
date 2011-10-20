@@ -525,9 +525,6 @@ class Table (HasConstraints, HasColumns, OracleObject):
     diffs.extend(diff for column in self.columns
                  for cons in column.unique_constraints
                  for diff in cons.create())
-    print(self.name)
-    for diff in diffs:
-      pprint.pprint(diff)
     inserts = [diff for datum in self.data for diff in datum.create()]
     if inserts:
       diffs.extend(inserts)
@@ -644,6 +641,7 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
 
   @HasConstraints.constraints.setter
   def constraints (self, value):
+    HasConstraints.constraints.__set__(self, value)
     if value:
       not_null = set()
       for cons in value:
@@ -657,8 +655,6 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
         else:
           cons.columns = [self]
       value.difference_update(not_null)
-
-    HasConstraints.constraints.__set__(self, value)
 
   @property
   def subobjects (self):
@@ -776,7 +772,7 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
                                 'data_type_owner', 'data_type'])
 
     def construct (name, props):
-      props = dict(props)
+      props = InsensitiveDict(props)
       if props['data_type_owner']:
         props['user_type'] = into_database.find(
           OracleFQN(props['data_type_owner'], props['data_type']), Type)
@@ -989,7 +985,7 @@ class Constraint (HasColumns, HasTable, OracleObject):
                   """, o=name.schema, n=name.obj,
                   oracle_names=['constraint_name', 'r_owner',
                                 'r_constraint_name', 'index_owner',
-                                'index_name'])
+                                'index_name', 'table_name', 'column_name'])
 
     if not rs:
       return None
@@ -1613,9 +1609,6 @@ class Schema (OracleObject):
 
     schema.log.info("Fetching schema {}...".format(owner))
 
-    def make_name (name):
-      return OracleFQN(owner, name, from_oracle=True)
-
     rs = db.query(""" SELECT object_name
                            , object_type
                            , status
@@ -1634,10 +1627,10 @@ class Schema (OracleObject):
                                            , 'TYPE'
                                         -- , 'VIEW'
                                            )
-                  """, o=owner)
+                  """, o=owner, oracle_names=['object_name'])
 
     for obj in rs:
-      object_name = make_name(obj['object_name'])
+      object_name = OracleFQN(owner, obj['object_name'])
       schema.log.debug(
           "Fetching {} {}".format(obj['object_type'], object_name))
 
