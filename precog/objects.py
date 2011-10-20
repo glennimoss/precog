@@ -445,14 +445,21 @@ class HasConstraints (object):
     _assert_type(value, set)
     _assert_contains_type(value, Constraint)
     self._constraints = value
-    if value:
-      self.other_constraints = {cons for cons in value
-                           if not isinstance(cons, UniqueConstraint)}
-      self.unique_constraints = {cons for cons in value
-                                  if isinstance(cons, UniqueConstraint)}
-    else:
-      self.other_constraints = set()
-      self.unique_constraints = set()
+
+  @property
+  def other_constraints (self):
+    if not self.constraints:
+      return set()
+    return {cons for cons in self.constraints
+            if not isinstance(cons, UniqueConstraint)}
+
+  @property
+  def unique_constraints (self):
+    if not self.constraints:
+      return set()
+    return {cons for cons in self.constraints
+            if isinstance(cons, UniqueConstraint)}
+
 
 class Table (HasConstraints, HasColumns, OracleObject):
 
