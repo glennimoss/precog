@@ -8,9 +8,12 @@ create table foo
   ( foo_id number CONSTRAINT foo_pk PRIMARY KEY
   , text vArChaR2(156)
   , bar_id varchar2(256) UNIQUE
+  , bar_whee date
   , moredata CLOB
   , id_len AS (length(to_char(foo_id)))
   , CONSTRAINT foo_sum CHECK (foo_id + id_len > to_number(bar_id))
+  , CONSTRAINT foo_fk_bar FOREIGN KEY (bar_id, bar_whee)
+    references bar (id, whee)
 );
 
 @ test2.sql

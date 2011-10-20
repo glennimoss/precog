@@ -1076,6 +1076,15 @@ class UniqueConstraint (Constraint):
     _assert_type(value, Index)
     self._depends_on(value, '_index', Reference.AUTODROP)
 
+  @Constraint.columns.setter
+  def columns (self, value):
+    Constraint.columns.__set__(self, value)
+    if value and not self.index.columns:
+      # If our index has no columns it was likely created as part of an inline
+      # constraint, so once the constraint is told its columns, it should pass
+      # them on to the index if it needs them.
+      self.index.columns = value
+
   def _sub_sql (self, inline):
     parts = ['PRIMARY KEY' if self.is_pk else 'UNIQUE']
     if not inline:
@@ -1121,6 +1130,33 @@ class ForeignKeyConstraint (Constraint):
       parts.append(self.delete_rule)
 
     return parts
+
+  @staticmethod
+  def find_reference (database, columns):
+    schema = colums[0].name.schema
+    constraints = [cons for cons in database.schemas[schema].objects[Constraint]
+                   if isinstance(cons, UniqueConstraint)]
+
+    columns = [col.name for col in columns]
+    second_best = None
+    for cons in constraints:
+      cons_columns = [col.name for col in cons.columns]
+      if columns == cons.columns:
+        # Exact match!
+        return cons
+
+      if not second_best:
+        column_set = set(columns)
+        cons_set = set(cons_columns)
+        if column_set == cons_set:
+          second_best = cons
+          # we won't return here because we may have an exact match with a
+          # different constraint. Or maybe not... TODO: test if multiple
+          # constraints can have the same column set in different orders.
+
+    return second_best
+
+
 
 class Index (HasColumns, HasTable, OracleObject):
 

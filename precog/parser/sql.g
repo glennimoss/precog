@@ -226,16 +226,23 @@ scope { columns; }
 
 col_spec
 scope { props }
-@init { $col_spec::props = InsensitiveDict() }
+@init {
+  $col_spec::props = InsensitiveDict()
+  $col_spec::props['constraints'] = set()
+}
 @after {
   $create_table::columns.append(Column($i.id, **$col_spec::props))
 }
-  : i=tID column_data_type
-    ( DEFAULT e=expression { $col_spec::props['data_default'] = $e.text } )?
+  : i=tID
+    ( ( column_data_type
+      ( DEFAULT e=expression { $col_spec::props['data_default'] = $e.text } )?)
+    | ( AS LPAREN virt=expression RPAREN {
+        $col_spec::props['virtual_column'] = 'YES'
+        $col_spec::props['data_default'] = $virt.text
+      })
+    )
     ( ic=inline_constraint
-      {
-        #$col_spec::props.update($ic.props)
-      } )*
+      { $col_spec::props['constraints'].add($ic.cons) } )*
   ;
 
 column_data_type
@@ -352,16 +359,58 @@ user_data_type
     }
   ;
 
-inline_constraint returns [props]
-@init { $props = InsensitiveDict() }
-  : ( kCONSTRAINT constraint_name=tID )?
-    ( NOT? NULL { $props['nullable'] = 'N' if $NOT else 'Y' }
-    | UNIQUE
-    | kPRIMARY kKEY
-    | CHECK LPAREN expression RPAREN
-    | kREFERENCES ref=identifier (LPAREN col=tID RPAREN)?
-      (ON DELETE (kCASCADE | SET NULL))?
-    )
+inline_constraint returns [cons]
+scope tab_col_ref;
+@init {
+  $tab_col_ref::columns = []
+  args = []
+  cons_class = Constraint
+  props = InsensitiveDict()
+  index = None
+}
+@after {
+  $cons = cons_class(*args, database=$g::database, **props)
+}
+  : ( kCONSTRAINT constraint_name=tID { args.append($constraint_name.id) } )
+        //? I'd like it to be manditory
+    ( NOT? NULL { $col_spec::props['nullable'] = 'N' if $NOT else 'Y' }
+    | ( UNIQUE { args.append('U') }
+      | kPRIMARY kKEY { args.append('P') }
+      ) { index_props = InsensitiveDict() }
+      ( kUSING INDEX
+        ( index_name=identifier {
+            index = $g::database.find($index_name.ident, Index)
+          }
+        | LPAREN new_index=create_index RPAREN {
+            index = $new_index.obj
+          }
+        | ts=tablespace_clause { index_props.update($ts.props) }
+        )
+      )?
+      {
+        if not index:
+          index = Index($constraint_name.id, database=$g::database,
+                        **index_props)
+        args.append(index)
+        cons_class = UniqueConstraint
+      }
+    | CHECK LPAREN check_exp=expression RPAREN {
+        args.append($check_exp.text)
+        cons_class = CheckConstraint
+      }
+    | kREFERENCES ref=identifier { $tab_col_ref::table = $ref.ident }
+      (LPAREN column_ref (COMMA column_ref)* RPAREN)?
+      { delete_action = 'NO ACTION' }
+      (ON DELETE ( kCASCADE { delete_action = 'CASCADE' }
+                 | SET NULL { delete_action = 'SET NULL' } )
+      )? {
+        args.append(ForeignKeyConstraint.find_reference($g::database,
+                                                        $tab_col_ref::columns))
+        args.append(delete_action)
+        cons_class = ForeignKeyConstraint
+      }
+    ) ( kENABLE { props['is_enabled'] = True }
+      | kDISABLE { props['is_enabled'] = False } )?
   ;
 
 column_ref
@@ -1033,6 +1082,8 @@ kCONSTRAINT : {self.input.LT(1).text.lower() == 'constraint'}? ID;
 kCYCLE : {self.input.LT(1).text.lower() == 'cycle'}? ID;
 kDAY : {self.input.LT(1).text.lower() == 'day'}? ID;
 kDELETING : {self.input.LT(1).text.lower() == 'deleting'}? ID;
+kDISABLE : {self.input.LT(1).text.lower() == 'disable'}? ID;
+kENABLE : {self.input.LT(1).text.lower() == 'enable'}? ID;
 kFALSE : {self.input.LT(1).text.lower() == 'false'}? ID;
 kFUNCTION : {self.input.LT(1).text.lower() == 'function'}? ID;
 kINSERTING : {self.input.LT(1).text.lower() == 'inserting'}? ID;
@@ -1067,6 +1118,7 @@ kTYPE : {self.input.LT(1).text.lower() == 'type'}? ID;
 kUPDATING : {self.input.LT(1).text.lower() == 'updating'}? ID;
 kURITYPE : {self.input.LT(1).text.lower() == 'uritype'}? ID;
 kUROWID : {self.input.LT(1).text.lower() == 'urowid'}? ID;
+kUSING : {self.input.LT(1).text.lower() == 'using'}? ID;
 kXMLTYPE : {self.input.LT(1).text.lower() == 'xmltype'}? ID;
 kYEAR : {self.input.LT(1).text.lower() == 'year'}? ID;
 kZONE : {self.input.LT(1).text.lower() == 'zone'}? ID;
