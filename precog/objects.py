@@ -582,7 +582,7 @@ class Table (HasConstraints, HasColumns, OracleObject):
                                   ELSE table_type_owner
                              END AS table_type_owner
                            , tablespace_name
-                      FROM all_all_tables
+                      FROM dba_all_tables
                       WHERE owner = :o
                         AND table_name = :t
                   """, o=name.schema, t=name.obj,
@@ -770,7 +770,7 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
                            , nullable
                            , virtual_column
                            , hidden_column
-                      FROM all_tab_cols
+                      FROM dba_tab_cols
                       WHERE owner = :o
                         AND table_name = :t
                         AND (:c IS NULL OR column_name = :c)
@@ -968,7 +968,7 @@ class Constraint (HasColumns, HasTable, OracleObject):
                            , CURSOR(
                                SELECT table_name
                                     , column_name
-                               FROM all_cons_columns acc
+                               FROM dba_cons_columns acc
                                WHERE acc.owner = ac.owner
                                  AND acc.constraint_name = ac.constraint_name
                                ORDER BY acc.position
@@ -985,7 +985,7 @@ class Constraint (HasColumns, HasTable, OracleObject):
                            -- For PK/unique constraints
                            , index_owner
                            , index_name
-                      FROM all_constraints ac
+                      FROM dba_constraints ac
                       WHERE owner = :o
                         AND table_name = :n
                   """, o=name.schema, n=name.obj,
@@ -1195,7 +1195,7 @@ class Index (HasColumns, HasTable, OracleObject):
                            , tablespace_name
                            , table_owner
                            , table_name
-                      FROM all_indexes ai
+                      FROM dba_indexes ai
                       WHERE owner = :o
                         AND index_name = :n
                   """, o=name.schema, n=name.obj,
@@ -1213,15 +1213,15 @@ class Index (HasColumns, HasTable, OracleObject):
     *props, (_, table_owner), (_, table_name) = rs.items()
     table = into_database.find(OracleFQN(table_owner, table_name), Table)
 
-    # *Sigh*, we can't query the all_ind_expressions table in a CURSOR()
+    # *Sigh*, we can't query the dba_ind_expressions table in a CURSOR()
     # supquery because of the LONG datatype. We have to query all the column
     # data separately.
     rs = db.query(""" SELECT aic.table_owner
                            , aic.table_name
                            , atc.column_name
-                      FROM all_ind_columns aic
-                         , all_tab_cols atc
-                         , all_ind_expressions aie
+                      FROM dba_ind_columns aic
+                         , dba_tab_cols atc
+                         , dba_ind_expressions aie
                       WHERE aic.index_owner = :o
                         AND aic.index_name = :n
                         AND aic.table_owner = atc.owner
@@ -1295,7 +1295,7 @@ class Sequence (OracleObject):
                            , cycle_flag
                            , order_flag
                            , cache_size
-                      FROM all_sequences
+                      FROM dba_sequences
                       WHERE sequence_owner = :o
                         AND sequence_name = :n
                   """, o=name.schema, n=name.obj)
@@ -1331,7 +1331,7 @@ class Synonym (OracleObject):
   def from_db (class_, name, into_database):
     rs = db.query(""" SELECT table_owner
                            , table_name
-                      FROM all_synonyms
+                      FROM dba_synonyms
                       WHERE owner = :o
                         AND synonym_name = :n
                   """, o=name.schema, n=name.obj)
@@ -1401,7 +1401,7 @@ class PlsqlCode (OracleObject):
                            , position
                            , text
                            , attribute
-                      FROM all_errors
+                      FROM dba_errors
                       WHERE owner = :o
                         AND name = :n
                         AND type = :t
@@ -1419,7 +1419,7 @@ class PlsqlCode (OracleObject):
   @classmethod
   def from_db (class_, name, into_database):
     rs = db.query(""" SELECT text
-                      FROM all_source
+                      FROM dba_source
                       WHERE owner = :o
                         AND name = :n
                         AND type = :t
@@ -1619,7 +1619,7 @@ class Schema (OracleObject):
                            , object_type
                            , status
                            , generated
-                      FROM all_objects
+                      FROM dba_objects
                       WHERE owner = :o
                         AND subobject_name IS NULL
                         AND object_type IN ( 'FUNCTION'
