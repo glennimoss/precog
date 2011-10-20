@@ -641,7 +641,6 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
 
   @HasConstraints.constraints.setter
   def constraints (self, value):
-    HasConstraints.constraints.__set__(self, value)
     if value:
       not_null = set()
       for cons in value:
@@ -655,6 +654,8 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
         else:
           cons.columns = [self]
       value.difference_update(not_null)
+
+    HasConstraints.constraints.__set__(self, value)
 
   @property
   def subobjects (self):
