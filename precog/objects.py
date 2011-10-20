@@ -371,6 +371,7 @@ class HasColumns (object):
 
   @columns.setter
   def columns (self, value):
+    _assert_type(value, list)
     _assert_contains_type(value, Column)
     if self._column_reference:
       self._depends_on(value, '_columns', self._column_reference)
@@ -443,20 +444,15 @@ class HasConstraints (object):
   def constraints (self, value):
     _assert_type(value, set)
     _assert_contains_type(value, Constraint)
+    self._constraints = value
     if value:
-      self._constraints = {cons for cons in value
+      self.other_constraints = {cons for cons in value
                            if not isinstance(cons, UniqueConstraint)}
-      self._unique_constraints = {cons for cons in value
+      self.unique_constraints = {cons for cons in value
                                   if isinstance(cons, UniqueConstraint)}
     else:
-      self._constraints = set()
-      self._unique_constraints = set()
-
-  _unique_constraints = _in_props('unique_constraints')
-
-  @property
-  def unique_constraints (self):
-    return self._unique_constraints
+      self.other_constraints = set()
+      self.unique_constraints = set()
 
 class Table (HasConstraints, HasColumns, OracleObject):
 
@@ -501,7 +497,7 @@ class Table (HasConstraints, HasColumns, OracleObject):
 
   @property
   def subobjects (self):
-    return (self.constraints | self.unique_constraints).union(self.columns)
+    return self.constraints.union(self.columns)
 
   def add_data (self, columns, values):
     self.data.append(Data(self, columns, values))
@@ -519,7 +515,7 @@ class Table (HasConstraints, HasColumns, OracleObject):
   def _sub_sql (self):
     parts = [col.sql() for col in self.columns
              if col.props['hidden_column'] == 'NO']
-    parts.extend(cons.sql() for cons in self.constraints)
+    parts.extend(cons.sql() for cons in self.other_constraints)
     return "\n  ( {}\n  )".format("\n  , ".join(parts))
 
   def create (self):
@@ -553,8 +549,7 @@ class Table (HasConstraints, HasColumns, OracleObject):
                           produces=i))
 
     diffs.extend(self.diff_subobjects(other, lambda o: o.columns))
-    diffs.extend(self.diff_subobjects(other,
-                              lambda o: o.constraints | o.unique_constraints))
+    diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
 
     if self.data:
       Data.from_db(other)
@@ -572,7 +567,7 @@ class Table (HasConstraints, HasColumns, OracleObject):
     return (deps |
             {dep for col in self.columns
              for dep in col.dependencies if dep != self} |
-            {dep for cons in self.constraints
+            {dep for cons in self.other_constraints
              for dep in cons.dependencies if dep != self})
 
   @classmethod
@@ -660,10 +655,14 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
           # Get rid of the system generated constraint for NOT NULL
           not_null.add(cons)
         else:
-          cons.columns = {self}
+          cons.columns = [self]
       value.difference_update(not_null)
 
     HasConstraints.constraints.__set__(self, value)
+
+  @property
+  def subobjects (self):
+    return self.constraints
 
   def _sql (self, fq=False, full_def=True):
     parts = []
@@ -699,7 +698,7 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
           parts.append('NOT')
         parts.append('NULL')
 
-      for cons in self.constraints:
+      for cons in self.other_constraints:
         parts.append(cons.sql(inline=True))
 
     return " ".join(parts)
@@ -740,8 +739,7 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
                                 other.name.part.lower()),
                         produces=self))
 
-    diffs.extend(self.diff_subobjects(other,
-                                lambda o: o.constraints | o.unique_constraints))
+    diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
 
     return diffs
 
@@ -927,7 +925,7 @@ class Constraint (HasColumns, HasTable, OracleObject):
   def columns (self, value):
     HasColumns.columns.__set__(self, value)
     if value:
-      self.table = next(iter(self.columns)).table
+      self.table = value[0].table
     else:
       self.table = None
 
@@ -1013,11 +1011,11 @@ class Constraint (HasColumns, HasTable, OracleObject):
       columns = None
       if len(row['columns']) > 1:
         # If there's only one column, we'll leave it up to the caller to set it
-        columns = {into_database.find(OracleFQN(name.schema,
+        columns = [into_database.find(OracleFQN(name.schema,
                                                 col['table_name'],
                                                 col['column_name']),
                                       Column)
-                   for col in row['columns']}
+                   for col in row['columns']]
       if type == 'C':
         args.append(row['search_condition'])
         constraint_class = CheckConstraint
