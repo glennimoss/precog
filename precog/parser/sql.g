@@ -13,9 +13,7 @@ options {
 
 scope g { database }
 
-scope aliases { map }
-
-scope tab_col_ref { table; columns }
+scope tab_col_ref { alias_map; table; columns }
 
 @lexer::header {
   from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
@@ -175,10 +173,10 @@ aliasing_identifier returns [ident]
   : i=identifier alias=tID? {
       $ident = $i.ident
       if $alias.id:
-        if not $aliases::map:
-          $aliases::map = {}
+        if not $tab_col_ref::alias_map:
+          $tab_col_ref::alias_map = {}
 
-        $aliases::map[$alias.id] = $ident
+        $tab_col_ref::alias_map[$alias.id] = $ident
     }
   ;
 
@@ -188,8 +186,8 @@ scope { parts; }
   : first=tID (DOT part_identifier)*
     {
       resolved = None
-      if $aliases::map and $first.id in $aliases::map:
-        resolved = $aliases::map[$first.id]
+      if $tab_col_ref::alias_map and $first.id in $tab_col_ref::alias_map:
+        resolved = $tab_col_ref::alias_map[$first.id]
       else:
         $aliased_identifier::parts.insert(0, $first.id)
 
@@ -208,30 +206,35 @@ part_identifier
   ;
 
 create_table returns [obj]
-scope { columns; }
+scope { props; }
 @init {
-  $create_table::columns = []
-  props = InsensitiveDict()
+  $create_table::props = InsensitiveDict({'columns': [], 'constraints': set()})
 }
 @after {
-  $obj = Table($ident.ident, columns=$create_table::columns,
-    database=$g::database, **props)
+  $obj = Table($ident.ident, database=$g::database, **$create_table::props)
 }
   : CREATE TABLE ident=identifier
     LPAREN
-      col_spec (COMMA col_spec)*
+      table_item (COMMA table_item)*
     RPAREN
     (tablespace_clause { props.update($tablespace_clause.props) })?
   ;
 
-col_spec
+table_item
+  : col=col_spec { $create_table::props['columns'].append($col.column) }
+  | cons=out_of_line_constraint {
+      $create_table::props['constraints'].add($cons.constraint)
+    }
+  ;
+
+col_spec returns [column]
 scope { props }
 @init {
   $col_spec::props = InsensitiveDict()
   $col_spec::props['constraints'] = set()
 }
 @after {
-  $create_table::columns.append(Column($i.id, **$col_spec::props))
+  $column = Column($i.id, **$col_spec::props)
 }
   : i=tID
     ( ( column_data_type
@@ -242,7 +245,10 @@ scope { props }
       })
     )
     ( ic=inline_constraint
-      { $col_spec::props['constraints'].add($ic.cons) } )*
+      {
+        if $ic.cons:
+          $col_spec::props['constraints'].add($ic.cons)
+      } )*
   ;
 
 column_data_type
@@ -360,57 +366,105 @@ user_data_type
   ;
 
 inline_constraint returns [cons]
-scope tab_col_ref;
 @init {
-  $tab_col_ref::columns = []
   args = []
-  cons_class = Constraint
+  cons_class = None
   props = InsensitiveDict()
   index = None
 }
 @after {
-  $cons = cons_class(*args, database=$g::database, **props)
+  if cons_class:
+    $cons = cons_class($constraint_name.id, database=$g::database, **props)
+  else:
+    $cons = None
 }
-  : ( kCONSTRAINT constraint_name=tID { args.append($constraint_name.id) } )
-        //? I'd like it to be manditory
-    ( NOT? NULL { $col_spec::props['nullable'] = 'N' if $NOT else 'Y' }
-    | ( UNIQUE { args.append('U') }
-      | kPRIMARY kKEY { args.append('P') }
-      ) { index_props = InsensitiveDict() }
-      ( kUSING INDEX
-        ( index_name=identifier {
-            index = $g::database.find($index_name.ident, Index)
-          }
-        | LPAREN new_index=create_index RPAREN {
-            index = $new_index.obj
-          }
-        | ts=tablespace_clause { index_props.update($ts.props) }
-        )
-      )?
-      {
-        if not index:
-          index = Index($constraint_name.id, database=$g::database,
-                        **index_props)
-        args.append(index)
-        cons_class = UniqueConstraint
-      }
+  : ( NOT? NULL { $col_spec::props['nullable'] = 'N' if $NOT else 'Y' }
+    | kCONSTRAINT constraint_name=tID // Non-spec: making required
+      ( ( UNIQUE { props['is_pk'] = False }
+        | kPRIMARY kKEY { props['is_pk'] = True }
+        ) { index_props = InsensitiveDict() }
+        ( kUSING INDEX
+          ( index_name=identifier {
+              index = $g::database.find($index_name.ident, Index)
+            }
+          | LPAREN new_index=create_index RPAREN {
+              index = $new_index.obj
+            }
+          | ts=tablespace_clause { index_props.update($ts.props) }
+          )
+        )?
+        {
+          if not index:
+            index = Index($constraint_name.id, database=$g::database,
+                          **index_props)
+          props['index'] = index
+          cons_class = UniqueConstraint
+        }
+      | ref=references_clause {
+          props.update($ref.props)
+          cons_class = ForeignKeyConstraint
+        }
+      | CHECK LPAREN check_exp=expression RPAREN {
+          props['condition'] = $check_exp.text
+          cons_class = CheckConstraint
+        }
+      )
+      ( kENABLE { props['is_enabled'] = True }
+      | kDISABLE { props['is_enabled'] = False } )?
+    )
+  ;
+
+references_clause returns [props]
+scope tab_col_ref;
+@init {
+  $tab_col_ref::columns = []
+  props = {'delete_action': 'NO ACTION'}
+}
+@after {
+  $props['fk_constraint'] = $g::database.find_unique_constraint(
+    $tab_col_ref::columns)
+}
+  : kREFERENCES ref=identifier { $tab_col_ref::table = $ref.ident }
+    LPAREN column_ref (COMMA column_ref)* RPAREN // Non-spec: making required
+    (ON DELETE ( kCASCADE { $props['delete_action'] = 'CASCADE' }
+               | SET NULL { $props['delete_action'] = 'SET NULL' } ) )?
+  ;
+
+out_of_line_constraint returns [constraint]
+scope tab_col_ref;
+@init {
+  $tab_col_ref::columns = []
+  $tab_col_ref::table = $create_table::ident.ident
+  props = {}
+  cons_class = Constraint
+}
+@after {
+  $constraint = cons_class($constraint_name.id, database=$g::database, **props)
+}
+  : kCONSTRAINT constraint_name=tID // Non-spec: making required
+    ( ( ( UNIQUE { props['is_pk'] = False
+        | kPRIMARY kKEY { props['is_pk'] = True } )
+        { cons_class = UniqueConstraint }
+      | kFOREIGN kKEY
+        { cons_class = ForeignKeyConstraint }
+      )
+      LPAREN
+        column_ref (COMMA column_ref)*
+      RPAREN
+      { props['columns'] = $tab_col_ref::columns }
+      ( { cons_class == ForeignKeyConstraint }? ref=references_clause {
+          props.update($ref.props)
+          cons_class = ForeignKeyConstraint
+        }
+      | // { cons_class != ForeignKeyConstraint }? // Nothing
+      )
     | CHECK LPAREN check_exp=expression RPAREN {
-        args.append($check_exp.text)
+        props['condition'] = $check_exp.text
         cons_class = CheckConstraint
       }
-    | kREFERENCES ref=identifier { $tab_col_ref::table = $ref.ident }
-      (LPAREN column_ref (COMMA column_ref)* RPAREN)?
-      { delete_action = 'NO ACTION' }
-      (ON DELETE ( kCASCADE { delete_action = 'CASCADE' }
-                 | SET NULL { delete_action = 'SET NULL' } )
-      )? {
-        args.append(ForeignKeyConstraint.find_reference($g::database,
-                                                        $tab_col_ref::columns))
-        args.append(delete_action)
-        cons_class = ForeignKeyConstraint
-      }
-    ) ( kENABLE { props['is_enabled'] = True }
-      | kDISABLE { props['is_enabled'] = False } )?
+    )
+    ( kENABLE { props['is_enabled'] = True }
+    | kDISABLE { props['is_enabled'] = False } )?
   ;
 
 column_ref
@@ -425,7 +479,7 @@ column_ref
   ;
 
 create_index returns [obj]
-scope aliases, tab_col_ref;
+scope tab_col_ref;
 @init {
   $tab_col_ref::columns = []
   props = InsensitiveDict()
@@ -499,7 +553,7 @@ create_synonym returns [obj]
   ;
 insert_statement returns [obj]
 scope { expressions; }
-scope aliases, tab_col_ref;
+scope tab_col_ref;
 @init {
   $insert_statement::expressions = []
   $tab_col_ref::columns = []
@@ -908,9 +962,11 @@ in_expr
     : add_expr ( NOT? IN LPAREN add_expr ( COMMA add_expr )* RPAREN )?
     ;
 
+/*
 numeric_expression
     : add_expr
     ;
+*/
 
 add_expr
     : mul_expr ( ( HYPHEN | PLUS | DOUBLEVERTBAR ) mul_expr )*
@@ -948,7 +1004,8 @@ variable_or_function_call
     ;
 
 call
-    : COLON? ID ( LPAREN ( parameter ( COMMA parameter )* )? RPAREN )?
+    : /* COLON? sqlplus vars */
+      ID ( LPAREN ( parameter ( COMMA parameter )* )? RPAREN )?
     ;
 
 attribute
@@ -1085,6 +1142,7 @@ kDELETING : {self.input.LT(1).text.lower() == 'deleting'}? ID;
 kDISABLE : {self.input.LT(1).text.lower() == 'disable'}? ID;
 kENABLE : {self.input.LT(1).text.lower() == 'enable'}? ID;
 kFALSE : {self.input.LT(1).text.lower() == 'false'}? ID;
+kFOREIGN : {self.input.LT(1).text.lower() == 'foreign'}? ID;
 kFUNCTION : {self.input.LT(1).text.lower() == 'function'}? ID;
 kINSERTING : {self.input.LT(1).text.lower() == 'inserting'}? ID;
 kINTERVAL : {self.input.LT(1).text.lower() == 'interval'}? ID;
