@@ -9,13 +9,16 @@ grammar sql;
 options {
   language=Python;
   superClass=LoggingParser;
+  output=AST;
+}
+
+tokens {
+  CALL;
 }
 
 scope g { database }
 
 scope tab_col_ref { alias_map; table; columns }
-
-scope expression_ctx { ctx_name }
 
 @lexer::header {
   from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
@@ -28,7 +31,8 @@ scope expression_ctx { ctx_name }
   import os
 
   from antlr3.exceptions import RecognitionException
-  from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
+  from antlr3.ext import (NamedConstant, FileStream, NL_CHANNEL, ValueNode,
+                          CommonTreeAdaptor)
   from precog.parser.util import *
   from precog.identifier import OracleFQN, OracleIdentifier, GeneratedId
   from precog.objects import *
@@ -59,7 +63,6 @@ scope expression_ctx { ctx_name }
   NamedConstant.name(locals())
 
   def main(argv):
-    from precog import reserved
     from antlr3.ext import IterableTokenStream
 
     #from antlr3.ext import MultiChannelTokenStream
@@ -87,7 +90,7 @@ scope { type; name; props }
 @init { $plsql_stmt::props = InsensitiveDict() }
 @after {
   $obj = PlsqlCode.new($plsql_stmt::type, $plsql_stmt::name, $source.text,
-    **$plsql_stmt::props)
+                       database=$g::database, **$plsql_stmt::props)
 }
   : CREATE (OR kREPLACE)? source=plsql_object_def
     TERMINATOR
@@ -213,7 +216,6 @@ part_identifier_part
 
 create_table returns [obj]
 scope { props; table_name }
-scope expression_ctx;
 @init {
   $create_table::props = InsensitiveDict({'columns': [], 'constraints': set()})
 }
@@ -222,7 +224,6 @@ scope expression_ctx;
 }
   : CREATE TABLE ident=identifier {
       $create_table::table_name = $ident.ident
-      $expression_ctx::ctx_name = $ident.ident
     }
     LPAREN
       table_item (COMMA table_item)*
@@ -239,12 +240,15 @@ table_item
 
 col_spec returns [column]
 scope { props }
+scope tab_col_ref;
 @init {
+  $tab_col_ref::columns = []
+  $tab_col_ref::table = $create_table::table_name
   $col_spec::props = InsensitiveDict()
   $col_spec::props['constraints'] = set()
 }
 @after {
-  $column = Column($i.id, **$col_spec::props)
+  $column = Column($i.id, database=$g::database, **$col_spec::props)
 }
   : i=tID
     ( column_data_type
@@ -252,7 +256,7 @@ scope { props }
         { $col_spec::props['data_default'] = $e.exp.text } )?
     | ( kGENERATED kALWAYS )? AS LPAREN virt=expression RPAREN kVIRTUAL? {
         $col_spec::props['virtual_column'] = 'YES'
-        $col_spec::props['data_default'] = $virt.exp.text
+        $col_spec::props['expression'] = $virt.exp
       }
     )
     ( ic=inline_constraint {
@@ -381,8 +385,10 @@ user_data_type
   ;
 
 inline_constraint returns [cons]
+scope tab_col_ref;
 @init {
-  args = []
+  $tab_col_ref::columns = []
+  $tab_col_ref::table = $create_table::table_name
   cons_class = None
   props = InsensitiveDict()
   index = None
@@ -419,8 +425,8 @@ inline_constraint returns [cons]
         )?
         {
           if not index:
-            index = Index($constraint_name.id, database=$g::database,
-                          **index_props)
+            index = Index($constraint_name.id, unique=True,
+                          database=$g::database, **index_props)
             $g::database.add(index)
 
           props['index'] = index
@@ -444,7 +450,7 @@ references_clause returns [props]
 scope tab_col_ref;
 @init {
   $tab_col_ref::columns = []
-  props = InsensitiveDict({'delete_action': 'NO ACTION'})
+  $props = InsensitiveDict({'delete_rule': 'NO ACTION'})
 }
 @after {
   $props['fk_constraint'] = $g::database.find_unique_constraint(
@@ -452,8 +458,8 @@ scope tab_col_ref;
 }
   : kREFERENCES ref=identifier { $tab_col_ref::table = $ref.ident }
     LPAREN column_ref (COMMA column_ref)* RPAREN // Non-spec: making required
-    (ON DELETE ( kCASCADE { $props['delete_action'] = 'CASCADE' }
-               | SET NULL { $props['delete_action'] = 'SET NULL' } ) )?
+    (ON DELETE ( kCASCADE { $props['delete_rule'] = 'CASCADE' }
+               | SET NULL { $props['delete_rule'] = 'SET NULL' } ) )?
   ;
 
 out_of_line_constraint returns [constraint]
@@ -463,6 +469,8 @@ scope tab_col_ref;
   $tab_col_ref::table = $create_table::table_name
   props = InsensitiveDict()
   cons_class = Constraint
+  index_props = InsensitiveDict()
+  index = None
 }
 @after {
   $constraint = cons_class($constraint_name.id, database=$g::database, **props)
@@ -478,11 +486,31 @@ scope tab_col_ref;
         column_ref (COMMA column_ref)*
       RPAREN
       { props['columns'] = $tab_col_ref::columns }
-      ( { cons_class == ForeignKeyConstraint }? ref=references_clause {
+      ( { cons_class is ForeignKeyConstraint }? ref=references_clause {
           props.update($ref.props)
           cons_class = ForeignKeyConstraint
         }
-      | // { cons_class != ForeignKeyConstraint }? // Nothing
+      | { cons_class is UniqueConstraint }?
+        ( kUSING INDEX
+          ( index_name=identifier {
+              index = $g::database.find($index_name.ident, Index)
+            }
+          | LPAREN new_index=create_index RPAREN {
+              index = $new_index.obj
+              $g::database.add(index)
+            }
+          | ts=tablespace_clause { index_props.update($ts.props) }
+          )
+        )?
+        {
+          if not index:
+            index = Index($constraint_name.id, unique=True,
+                          database=$g::database, **index_props)
+            $g::database.add(index)
+
+          props['index'] = index
+        }
+      | // Nothing
       )
     | CHECK LPAREN check_exp=expression RPAREN {
         props['condition'] = $check_exp.exp
@@ -580,7 +608,7 @@ create_synonym returns [obj]
   ;
 insert_statement returns [obj]
 scope { expressions; }
-scope tab_col_ref, expression_ctx;
+scope tab_col_ref;
 @init {
   $insert_statement::expressions = []
   $tab_col_ref::columns = []
@@ -591,7 +619,6 @@ scope tab_col_ref, expression_ctx;
   : INSERT INTO table_name=aliasing_identifier
     {
       $tab_col_ref::table = $table_name.ident
-      $expression_ctx::ctx_name = $table_name.ident
       table = $g::database.find($tab_col_ref::table, Table)
     }
     LPAREN
@@ -954,23 +981,37 @@ label_name:	ID;
 
 */
 
-expression returns [exp]
-scope { refs }
+parse_expression[table_name, database] returns [exp]
+scope g, tab_col_ref;
 @init {
-  $expression::refs = set()
+  $g::database = $database
+  $tab_col_ref::table = $table_name
 }
 @after {
-  $exp = Expression($e.text, $expression::refs)
+  $exp = $e.exp
 }
-    : e=or_expr
+    : e=expression
+    ;
+
+expression returns [exp]
+@after {
+  table = $g::database.find($tab_col_ref::table, Table)
+  $exp = Expression($e.text, tree=$e.tree, scope_obj=table,
+                    database=$g::database)
+}
+    : e=expression_
+    ;
+
+expression_
+    : or_expr
     ;
 
 or_expr
-    : and_expr ( OR and_expr )*
+    : and_expr ( OR^ and_expr )*
     ;
 
 and_expr
-    : not_expr ( AND not_expr )*
+    : not_expr ( AND^ not_expr )*
     ;
 
 not_expr
@@ -978,7 +1019,7 @@ not_expr
     ;
 
 compare_expr
-    : is_null_expr ( ( EQ | NOT_EQ | LTH | LEQ | GTH | GEQ ) is_null_expr )?
+    : is_null_expr ( ( EQ | NOT_EQ | LTH | LEQ | GTH | GEQ )^ is_null_expr )?
     ;
 
 is_null_expr
@@ -1004,11 +1045,11 @@ numeric_expression
 */
 
 add_expr
-    : mul_expr ( ( HYPHEN | PLUS | DOUBLEVERTBAR ) mul_expr )*
+    : mul_expr ( ( HYPHEN | PLUS | DOUBLEVERTBAR )^ mul_expr )*
     ;
 
 mul_expr
-    : unary_sign_expr ( ( ASTERISK | SLASH | kMOD ) unary_sign_expr )*
+    : unary_sign_expr ( ( ASTERISK | SLASH )^ unary_sign_expr )*
     ;
 
 unary_sign_expr
@@ -1016,7 +1057,7 @@ unary_sign_expr
     ;
 
 exponent_expr
-    : atom ( EXPONENT atom )?
+    : atom ( EXPONENT^ atom )?
     ;
 
 atom
@@ -1028,7 +1069,7 @@ atom
     | boolean_atom
     | global_name_literal
     | NULL
-    | LPAREN expression RPAREN
+    | LPAREN! expression_ RPAREN!
     ;
 
 global_name_literal
@@ -1046,41 +1087,45 @@ call
   is_call = False
 }
 @after {
-  if not is_call:
-    ref = $i.parts
-    found = None
-    if len(ref) > 1:
-      found = $g::database.find(ref, OracleObject, False)
+  #if not is_call:
+    #ref = $i.parts
+    #found = None
+    #if len(ref) > 1:
+      #found = $g::database.find(ref, OracleObject, False)
 
-    if not found:
-      name = $expression_ctx::ctx_name
-      name_parts = []
-      if name.schema:
-        name_parts.append(name.schema)
-      name_parts.append(name.obj)
-      name_parts.extend(ref)
-      found = $g::database.find(name_parts, OracleObject)
+    #if not found:
+      #name = $ expression_ctx::ctx_name
+      #name_parts = []
+      #if name.schema:
+        #name_parts.append(name.schema)
+      #name_parts.append(name.obj)
+      #name_parts.extend(ref)
+      #found = $g::database.find(name_parts, OracleObject)
 
-    if found:
-      $expression::refs.add(found)
+    #if found:
+      #$ expression::refs.add(found)
 }
     : /* COLON? sqlplus vars */
       i=part_identifier
       ( LPAREN ( parameter ( COMMA parameter )* )? RPAREN { is_call = True }
         ( DOT call )? )?
+      -> { is_call }? ^( CALL {ValueNode($i.parts)} parameter* )
+      -> {ValueNode($i.parts)}
     ;
 
 attribute
-    : kBULK_ROWCOUNT LPAREN expression RPAREN
+    : kBULK_ROWCOUNT LPAREN expression_ RPAREN
     | kFOUND
     | kISOPEN
     | kNOTFOUND
     | kROWCOUNT
     ;
 
+/*
 call_args
     : LPAREN ( parameter ( COMMA parameter )* )? RPAREN
     ;
+    */
 
 boolean_atom
     : boolean_literal
@@ -1108,7 +1153,7 @@ string_literal
 
 /*
 collection_exists
-    : ID DOT EXISTS LPAREN expression RPAREN
+    : ID DOT EXISTS LPAREN expression_ RPAREN
     ;
 
 conditional_predicate
@@ -1119,14 +1164,8 @@ conditional_predicate
     */
 
 parameter
-    : ( ID ARROW )? expression
+    : ( ID ARROW )? expression_
     ;
-
-/*
-index
-    : expression
-    ;
-    */
 
 /*
 create_package :
@@ -1178,7 +1217,7 @@ call_spec
 //kEXCEPTIONS : {self.input.LT(1).text.lower() == "exceptions"}? ID;
 kFOUND : {self.input.LT(1).text.lower() == "found"}? ID;
 //kINDICES : {self.input.LT(1).text.lower() == "indices"}? ID;
-kMOD : {self.input.LT(1).text.lower() == "mod"}? ID;
+//kMOD : {self.input.LT(1).text.lower() == "mod"}? ID;
 //kNAME : {self.input.LT(1).text.lower() == "name"}? ID;
 //kOF : {self.input.LT(1).text.lower() == "of"}? ID;
 kROWCOUNT : {self.input.LT(1).text.lower() == "rowcount"}? ID;

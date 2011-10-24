@@ -1,13 +1,20 @@
+import logging
+from antlr3.ext import (NL_CHANNEL, InputStream, FileStream,
+                        MultiChannelTokenStream, NamedConstant, StringStream,
+                        ValueNode)
 from antlr3 import EOF
 from antlr3.constants import HIDDEN_CHANNEL
-from antlr3.ext import NL_CHANNEL
 from antlr3.recognizers import Lexer, Parser
 from antlr3.streams import TokenStream
+
+
 from precog.errors import SqlSyntaxError
+from precog import reserved
 from precog.util import HasLog
 #import logging
 
-__all__ = ['aloneOnLine', 'LoggingLexer', 'LoggingParser']
+__all__ = ['aloneOnLine', 'LoggingLexer', 'LoggingParser', 'file_parser',
+           'string_parser', 'Expression']
 
 def aloneOnLine (LT):
   #log = logging.getLogger('precog.parser.util.aloneOnLine')
@@ -87,3 +94,114 @@ class LoggingLexer (LoggingRecognizer, Lexer):
 
 class LoggingParser (LoggingRecognizer, Parser):
   pass
+
+def file_parser (filename):
+  stream = FileStream
+  #name = filename
+  if not isinstance(filename, str):
+    stream = InputStream
+    #name = filename.name
+  sql_parser = parser(stream(filename))
+  name = sql_parser.getSourceName()
+  logging.getLogger('precog.parser.file_parser()').info(
+      "Parsing file {}".format(name))
+  return sql_parser
+
+def string_parser (string):
+  return parser(StringStream(string))
+
+def parser (stream):
+  from precog.parser.sqlLexer import sqlLexer
+  from precog.parser.sqlParser import sqlParser
+  lexer = sqlLexer(stream)
+  tokenStream = MultiChannelTokenStream(lexer)
+  parser = sqlParser(tokenStream)
+  return parser
+
+class Expression (object):
+
+  def __init__ (self, text, tree=None, scope_obj=None, database=None):
+    self.text = text.strip()
+    self._tree = tree
+    self.scope_obj = scope_obj
+    self.database = database
+
+  @property
+  def tree (self):
+    print(self._tree, self.text, self.scope_obj, self.database)
+    if not self._tree and self.text and self.scope_obj and self.database:
+      self._tree = string_parser(text).parse_expression(scope_obj.name,
+                                                        database).tree
+    return self._tree
+
+  @property
+  def references (self):
+    from precog.parser.sqlParser import CALL
+    references = set()
+    names = []
+
+    def find (node):
+      if isinstance(node, ValueNode):
+        names.append(node.value)
+        return
+
+      children = node.children
+      # maybe treat calls differently because we know they're some kind of
+      # function?
+      #if node.token.type == CALL:
+        #names.append(node.children[0].value, OracleObject)) #Function))
+        #children = children[1:]
+
+      for child in children:
+        find(child)
+
+    if self.tree:
+      find(self.tree)
+
+    for name in names:
+      parts = name
+      if len(parts) == 1:
+        if parts[0] in reserved.functions:
+          # ignore any built-in functions
+          continue
+        parts = [self.scope_obj.name.schema, self.scope_obj.name.obj]
+        parts.extend(name)
+      references.add(self.database.find(parts))
+
+    return references
+
+  """
+  def _parse_expression (self):
+    ids = re.findall('".+?"(?:\.".+?")*', self.text)
+    references = set()
+    for id in ids:
+      parts = re.split('(?<=")\.(?=")', id)
+      if len(parts) == 1:
+        dep = self.database.find(OracleFQN(self.scope_obj.name.schema,
+                                           self.scope_obj.name.obj, parts[0]),
+                                 Column)
+      else:
+        # TODO: we want to be able to reference items inside a package... for
+        # now, we'll limit to just the package.
+        # also, We're not sure if it's a global func/procedure or a package so
+        # do anonymous lookup
+        dep = self.database.find(OracleFQN(*parts[:2]), OracleObject)
+
+      references.add(dep)
+
+    return references
+  """
+
+  def __eq__ (self, other):
+    self.tree.pretty_print()
+    other.tree.pretty_print()
+    if self.tree and other.tree:
+      return self.tree == other.tree
+    return str(self) == str(other)
+
+  def __str__ (self):
+    return self.text
+
+  def __repr__ (self):
+    return "Expression({!r})".format(self.text)
+

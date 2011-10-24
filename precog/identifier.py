@@ -16,7 +16,7 @@ class OracleIdentifier (str):
     return bool(re.match('^[A-Z_$#][0-9A-Z_$#]*$', name.strip('"')))
 
   def __new__ (class_, identifier, trust_me=False, generated=False):
-    if isinstance(identifier, OracleIdentifier):
+    if isinstance(identifier, OracleIdentifier) and not trust_me:
       return identifier
 
     quoted = False
@@ -101,7 +101,9 @@ class OracleIdentifier (str):
     return OracleIdentifier('"{}"'.format(self.strip('"')), True)
 
   def __repr__ (self):
-    return "OracleIdentifier({})".format(super().__repr__())
+    return "OracleIdentifier({}{})".format(super().__repr__(),
+                                           ', generated=True' if self.generated
+                                           else '')
 
 class OracleFQN (OracleIdentifier):
   """
@@ -154,9 +156,9 @@ class OracleFQN (OracleIdentifier):
 
   @property
   def generated (self):
-    return ((self.schema and self.schema.generated) or
-            (self.obj and self.obj.generated) or
-            (self.part and self.part.generated))
+    return ((self.schema is not None and self.schema.generated) or
+            (self.obj is not None and self.obj.generated) or
+            (self.part is not None and self.part.generated))
 
   def lower (self):
     return ".".join(x.lower() for x in (self.schema, self.obj, self.part) if x)
@@ -164,7 +166,8 @@ class OracleFQN (OracleIdentifier):
   def __repr__ (self):
     return "OracleFQN({})".format(', '.join(
         "{}='{}'".format(arg, val) for arg, val in
-          (('schema', self.schema), ('obj', self.obj), ('part', self.part))
+          (('schema', self.schema), ('obj', self.obj), ('part', self.part),
+           ('generated', self.generated if self.generated else None))
           if val))
 
 _generated_id = 0

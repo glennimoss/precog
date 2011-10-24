@@ -1,9 +1,11 @@
 import logging, re, collections, pprint
 
+from antlr3.ext import ValueNode
 from precog import db
 from precog.diff import Commit, Diff, order_diffs, PlsqlDiff, Reference
 from precog.errors import *
 from precog.identifier import *
+from precog import parser
 from precog.util import (classproperty, HasLog, InsensitiveDict, ValidatingList,
                          ValidationError)
 
@@ -50,41 +52,6 @@ def _in_props (key, default=None):
   return property(getter, setter, deller,
                   "Property {} backed by OracleObject.props".format(key))
 
-class Expression (object):
-
-  def __init__ (self, text, references=None, scope_obj=None, database=None):
-    self.text = text
-    self._references = references
-    self.scope_obj = scope_obj
-    self.database = database
-
-  @property
-  def references (self):
-    if not self._references and self.scope_obj and self.database:
-      self._references = self._parse_expression()
-    return self._references
-
-  def _parse_expression (self):
-    ids = re.findall('".+?"(?:\.".+?")*', self.text)
-    references = set()
-    for id in ids:
-      parts = re.split('(?<=")\.(?=")', id)
-      if len(parts) == 1:
-        dep = self.database.find(OracleFQN(self.scope_obj.name.schema,
-                                           self.scope_obj.name.obj, parts[0]),
-                                 Column)
-      else:
-        # TODO: we want to be able to reference items inside a package... for
-        # now, we'll limit to just the package.
-        # also, We're not sure if it's a global func/procedure or a package so
-        # do anonymous lookup
-        dep = self.database.find(OracleFQN(*parts[:2]), OracleObject)
-
-      references.add(dep)
-
-    return references
-
-
 class OracleObject (HasLog):
 
   @classproperty
@@ -114,10 +81,11 @@ class OracleObject (HasLog):
     if self.deferred:
       other_props['deferred'] = True
 
-    other_props.update(self.props)
+    props = self.props.copy()
+    props.update(other_props)
     return "{}({!r}, {})".format(type(self).__name__,
         self.name,
-        ', '.join("{}={!r}".format(k, v) for k, v in other_props.items()))
+        ', '.join("{}={!r}".format(k, v) for k, v in props.items()))
 
 
   def __str__ (self):
@@ -249,15 +217,21 @@ class OracleObject (HasLog):
     return []
 
   def _diff_props (self, other):
+    def get_prop (obj, prop):
+      if hasattr(obj, prop):
+        return getattr(obj, prop)
+      return obj.props[prop]
+
     prop_diff = InsensitiveDict((prop, expected)
-        for prop, expected in self.props.items()
-        if expected != other.props[prop])
+        for prop, expected in ((prop, get_prop(self, prop))
+                               for prop in self.props.items())
+        if expected != get_prop(other, prop))
 
     if self.log.isEnabledFor(logging.DEBUG):
       for prop in prop_diff:
         self.log.debug("{}['{}']: expected {}, found {}".format(
-          self.pretty_name, prop, repr(self.props[prop]),
-          repr(other.props[prop])))
+          self.pretty_name, prop, repr(get_prop(self, prop)),
+          repr(get_prop(other, prop))))
 
     return prop_diff
 
@@ -351,7 +325,8 @@ class OracleObject (HasLog):
         remove_deps.add(dep)
         remove_refs = set()
         for ref in dep.to._referenced_by:
-          if ref.from_ == self:
+          #TODO:? if ref.from_ == self:
+          if ref.from_ is self:
             remove_refs.add(ref)
         dep.to._referenced_by.difference_update(remove_refs)
     self._dependencies.difference_update(remove_deps)
@@ -475,9 +450,17 @@ class HasUserType (object):
 
 class HasConstraints (object):
 
-  _constraints = _in_props('constraints', set())
+  def __init__ (self, name, constraints=None, **props):
+    self._constraints = set()
+    super().__init__(name, **props)
+    if constraints:
+      self.constraints = constraints
 
-  @_constraints.setter
+  @property
+  def constraints (self):
+    return self._constraints
+
+  @constraints.setter
   def constraints (self, value):
     _assert_type(value, set)
     _assert_contains_type(value, Constraint)
@@ -497,6 +480,26 @@ class HasConstraints (object):
     return {cons for cons in self.constraints
             if isinstance(cons, UniqueConstraint)}
 
+  __hash__ = OracleObject.__hash__
+
+  def __eq__ (self, other):
+    if not super().__eq__(other):
+      return False
+
+    mycons = {c.name for c in self.constraints}
+    othercons = {c.name for c in other.constraints}
+
+    return mycons == othercons
+
+  def __repr__ (self, **other_props):
+    other_props['constraints'] = self.constraints
+    return super().__repr__(**other_props)
+
+  def satisfy (self, other):
+    if self.deferred:
+      super().satisfy(other)
+      self.constraints = other.constraints
+
 
 class Table (HasConstraints, HasColumns, OracleObject):
 
@@ -505,11 +508,8 @@ class Table (HasConstraints, HasColumns, OracleObject):
       class_ = ObjectTable
     return super().__new__(class_, *args, **props)
 
-  def __init__ (self, name, indexes=None, **props):
+  def __init__ (self, name, **props):
     super().__init__(name, column_reference=None, **props)
-    if not indexes:
-      indexes = set()
-    self.indexes = indexes
     self.data = []
 
   @HasColumns.columns.setter
@@ -547,7 +547,7 @@ class Table (HasConstraints, HasColumns, OracleObject):
     self.columns = self._columns
 
   def __repr__ (self):
-    return super().__repr__(indexes=self.indexes, data=self.data)
+    return super().__repr__(data=self.data)
 
   @property
   def subobjects (self):
@@ -555,6 +555,11 @@ class Table (HasConstraints, HasColumns, OracleObject):
 
   def add_data (self, columns, values):
     self.data.append(Data(self, columns, values))
+
+
+  def satisfy (self, other):
+    super().satisfy(other)
+    self.data = other.data
 
   def _sql (self, fq=True):
     name = self.name.obj
@@ -595,9 +600,10 @@ class Table (HasConstraints, HasColumns, OracleObject):
                                 self.props['tablespace_name'].lower()),
                         produces=self))
 
-      for i in other.indexes:
-        diffs.append(Diff("ALTER INDEX {} REBUILD".format(i.name.lower()),
-                          produces=i))
+      diffs.extend(diff for idx in other.database.find(lambda obj:
+                                                         obj.table == other,
+                                                       Index)
+                   for diff in idx.rebuild())
 
     diffs.extend(self.diff_subobjects(other, lambda o: o.columns))
     diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
@@ -676,9 +682,6 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
       name = OracleFQN(part=name)
     super().__init__(name, **props)
 
-    if self.props['data_default']:
-      self.props['data_default'] = self.props['data_default'].strip()
-
   @HasTable.table.setter
   def table (self, value):
     HasTable.table.__set__(self, value)
@@ -701,7 +704,7 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
         if (isinstance(cons, CheckConstraint) and
             cons.name.generated and
             self.props['nullable'] == 'N' and
-            cons.condition == "{} IS NOT NULL"
+            cons.condition.text == "{} IS NOT NULL"
               .format(self.name.part.force_quoted())):
           # Get rid of the system generated constraint for NOT NULL
           not_null.add(cons)
@@ -717,6 +720,22 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
     if 'qualified_col_name' in self.props:
       part = self.props['qualified_col_name']
     return OracleFQN(self.name.schema, self.name.obj, part)
+
+  _data_default = _in_props('data_default')
+
+  @_data_default.setter
+  def data_default (self, value):
+    if value and not isinstance(value, parser.Expression):
+      value = parser.Expression(value, scope_obj=self.table,
+                                database=self.database)
+      self._depends_on(value.references, '_default_exp_ids')
+    self._data_default = value
+
+  @data_default.getter
+  def data_default (self):
+    if self._data_default and self._data_default.scope_obj is None:
+      self.data_default = self._data_default.text
+    return self._data_default
 
   @property
   def subobjects (self):
@@ -746,8 +765,8 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
             if self.props['char_used'] else '')
       parts.append(data_type)
 
-      if self.props['data_default']:
-        parts.append("DEFAULT {}".format(self.props['data_default']))
+      if self.data_default:
+        parts.append("DEFAULT {}".format(self.data_default))
 
       if self.props['nullable']:
         if 'N' == self.props['nullable']:
@@ -787,9 +806,9 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
                         .format(other.table.name.lower(), self.sql()),
                         produces=self))
 
-    if (other.props['data_default'] and
-        other.props['data_default'] != 'NULL' and
-        not self.props['data_default']):
+    if (other.data_default and
+        other.data_default != 'NULL' and
+        not self.data_default):
       diffs.append(Diff("ALTER TABLE {} MODIFY ( {} DEFAULT NULL)"
                         .format(other.table.name.lower(),
                                 other.name.part.lower()),
@@ -851,42 +870,12 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
 class VirtualColumn (Column):
   namespace = Column
 
-  def __init__ (self, name, expression=None, **props):
+  def __init__ (self, name, **props):
     super().__init__(name, **props)
 
-    if expression:
-      self.expression = expression
-    elif 'data_default' in props:
-      self.expression = Expression(props['data_default'], scope_obj=self,
-                                   database=self.database)
     self.props['virtual_column'] = 'YES'
 
-  _expression = _in_props('data_default')
-
-  @_expression.setter
-  def expression (self, value):
-    self._expression = value
-    self._depends_on(value.references, '_expression_identifiers')
-
-  """
-  def _parse_expression (self):
-    ids = re.findall('".+?"(?:\.".+?")*', self.expression)
-    deps = set()
-    for id in ids:
-      parts = re.split('(?<=")\.(?=")', id)
-      if len(parts) == 1:
-        dep = self.database.find(OracleFQN(self.name.schema, self.name.obj,
-                                           parts[0]), Column)
-      else:
-        # TODO: we want to be able to reference items inside a package... for
-        # now, we'll limit to just the package.
-        # also, We're not sure if it's a global func/procedure or a package so
-        # do anonymous lookup
-        dep = self.database.find(OracleFQN(*parts[:2]), OracleObject)
-
-      deps.add(dep)
-    return deps
-  """
+  expression = Column.data_default
 
   def _sql (self, fq=False, full_def=True):
     parts = []
@@ -976,7 +965,6 @@ class Data (HasColumns, OracleObject):
         for row in rs:
           table.add_data(columns, [Data.escape(col) for col in row.values()])
 
-#class Constraint (HasColumns, HasTable, OracleObject):
 class Constraint (HasColumns, OracleObject):
 
   is_enabled = _in_props('is_enabled')
@@ -1020,12 +1008,24 @@ class Constraint (HasColumns, OracleObject):
                 .format(self.table.name.lower(), self.name.obj.lower()),
                 self, priority=Diff.DROP)
 
+  def diff (self, other):
+    diffs = super().diff(other, False)
+
+    prop_diff = self._diff_props(other)
+    if prop_diff:
+      diffs.append(Diff("ALTER TABLE {} MODIFY {}"
+                        .format(other.table.name.lower(), self.sql()),
+                        produces=self))
+
+    return diffs
+
   @classmethod
   def from_db (class_, name, into_database):
     rs = db.query(""" SELECT constraint_name
                            , constraint_type
                            , status
                            , generated
+                           , table_name
                            , CURSOR(
                                SELECT table_name
                                     , column_name
@@ -1068,7 +1068,7 @@ class Constraint (HasColumns, OracleObject):
         continue
 
       constraint_name = OracleFQN(name.schema,
-            OracleIdentifier(row['constraint_name'],
+            OracleIdentifier(row['constraint_name'], trust_me=True,
                              generated=(row['generated'] == 'GENERATED NAME')))
       type = row['constraint_type']
       constraint_class = None
@@ -1082,7 +1082,11 @@ class Constraint (HasColumns, OracleObject):
                                       Column)
                    for col in row['columns']]
       if type == 'C':
-        props['condition'] = row['search_condition']
+        table = into_database.find(OracleFQN(name.schema, row['table_name']),
+                                   Table)
+        props['condition'] = parser.Expression(row['search_condition'],
+                                               scope_obj=table,
+                                               database=into_database)
         constraint_class = CheckConstraint
 
       elif type in ('P', 'U'):
@@ -1093,7 +1097,7 @@ class Constraint (HasColumns, OracleObject):
 
       elif type == 'R':
         props['fk_constraint'] = into_database.find(
-          OracleFQN(row['r_owner'], row['r_constraint_name']), Constraint)
+          OracleFQN(row['r_owner'], row['r_constraint_name']), UniqueConstraint)
         props['delete_rule'] = row['delete_rule']
         constraint_class = ForeignKeyConstraint
       else:
@@ -1114,7 +1118,12 @@ class CheckConstraint (Constraint):
     super().__init__(*args, **props)
     self._condition_refs = None
 
-  condition = _in_props('condition')
+  _condition = _in_props('condition')
+
+  @_condition.setter
+  def condition (self, value):
+    _assert_type(value, parser.Expression)
+    self._condition = value
 
   @HasColumns.columns.getter
   def columns (self):
@@ -1125,6 +1134,9 @@ class CheckConstraint (Constraint):
                          Reference.HARD)
       return list(self.condition.references)
     return columns
+
+  def __repr__ (self):
+    return super().__repr__(condition=self.condition.text)
 
   def _sub_sql (self, inline):
     return ['CHECK (', self.condition.text, ')']
@@ -1200,26 +1212,20 @@ class ForeignKeyConstraint (Constraint):
 
     return parts
 
-#class Index (HasColumns, HasTable, OracleObject):
 class Index (HasColumns, OracleObject):
 
-  #@HasTable.table.setter
-  #def table (self, value):
-    #if self._table:
-      #self.table.indexes.discard(self)
+  def __init__ (self, name, unique=None, **props):
+    super().__init__(name, **props)
+    if unique is not None:
+      self.unique = unique
 
-    #HasTable.table.__set__(self, value)
-    #if value:
-      #self.table.indexes.add(self)
+  @property
+  def unique (self):
+    return self.props['uniqueness'] == 'UNIQUE'
 
-  @HasColumns.columns.setter
-  def columns (self, value):
-    if self.table:
-      self.table.indexes.discard(self)
-
-    HasColumns.columns.__set__(self, value)
-    if self.table:
-      self.table.indexes.add(self)
+  @unique.setter
+  def unique (self, value):
+    self.props['uniqueness'] = 'UNIQUE' if value else 'NONUNIQUE'
 
   @property
   def table (self):
@@ -1232,7 +1238,7 @@ class Index (HasColumns, OracleObject):
     if fq:
       name = self.name
     parts = ['CREATE']
-    if self.props['uniqueness'] == 'UNIQUE':
+    if self.unique:
       parts.append('UNIQUE')
     parts.append('INDEX')
     parts.append(name.lower())
@@ -1392,6 +1398,9 @@ class Synonym (OracleObject):
 
     return "CREATE OR REPLACE SYNONYM {} FOR {}".format(name.lower(),
         self.for_object.name.lower())
+
+  def recreate (self, other):
+    return self.create()
 
   @classmethod
   def from_db (class_, name, into_database):
@@ -1588,6 +1597,8 @@ class Schema (OracleObject):
       del self.objects[OracleObject][name]
       # Pretend it was of obj_type all along
       untyped_obj.become(obj_type)
+      if hasattr(obj_type, 'namespace'):
+        obj_type = obj_type.namespace
       if obj_type not in self.objects:
         self.objects[obj_type] = {}
       self.objects[obj_type][name] = untyped_obj
@@ -1605,16 +1616,19 @@ class Schema (OracleObject):
       name = alternate_name
     name = OracleFQN(self.name.schema, name.obj, name.part)
 
-    if True or obj.deferred:
-      self.log.debug(
-          "Adding {}{} as {}".format('deferred ' if obj.deferred else '',
-            obj.pretty_name, name))
+    print(name.obj)
+    if name.obj is None:
+      import pdb
+      pdb.set_trace()
+    self.log.debug(
+        "Adding {}{} as {}".format('deferred ' if obj.deferred else '',
+          obj.pretty_name, name))
 
     if obj_type not in self.objects:
       self.objects[obj_type] = {}
     namespace = self.objects[obj_type]
 
-    self._resolve_unknown_type(name, obj_type)
+    self._resolve_unknown_type(name, type(obj))
 
     if (name, obj_type) in self.deferred:
       # Not a name conflict
@@ -1653,8 +1667,8 @@ class Schema (OracleObject):
       columns_tup = tuple(col.name for col in obj.columns)
       if columns_tup in self.deferred:
         self.log.debug(
-          "Satisfying deferred Unique Key on {} with {}".format(columns_tup,
-                                                                obj))
+          "Satisfying deferred Unique Key {} on {} with {}".format(
+            self.deferred[columns_tup], columns_tup, obj))
         self.deferred[columns_tup].satisfy(obj)
         del self.deferred[columns_tup]
 
@@ -1668,23 +1682,32 @@ class Schema (OracleObject):
     return name
 
   def find (self, name, obj_type, deferred=True):
+    if callable(name):
+      test = name # For clarity
+      if obj_type in self.objects:
+        return {obj for obj in self.objects[obj_type].values() if test(obj)}
+
+      return set()
+
     #self.log.debug("Finding {} {}".format(obj_type.__name__, name))
     name = self.__make_fqn(name)
 
+    find_type = (obj_type.namespace if hasattr(obj_type, 'namespace')
+                 else obj_type)
     # When you don't know what type you're looking up, it must be in the shared
     # namespace to return a real object. Otherwise it wil be deferred.
-    if obj_type is OracleObject and name in self.shared_namespace:
+    if find_type is OracleObject and name in self.shared_namespace:
       return self.shared_namespace[name]
 
     self._resolve_unknown_type(name, obj_type)
 
-    if obj_type in self.objects and name in self.objects[obj_type]:
-      return self.objects[obj_type][name]
+    if find_type in self.objects and name in self.objects[find_type]:
+      return self.objects[find_type][name]
 
     if deferred:
       obj = obj_type(name, deferred=True)
       self.add(obj)
-      self.deferred[(name, obj_type)] = obj
+      self.deferred[(name, find_type)] = obj
       return obj
 
     return None
@@ -1724,7 +1747,7 @@ class Schema (OracleObject):
 
     if deferred:
       cons = UniqueConstraint(OracleFQN(self.name.schema, GeneratedId()),
-                              columns=columns)
+                              columns=columns, deferred=True)
       self.log.debug("Deferring Unique Key on {} as {}".format(columns_tup,
                                                                cons))
       self.deferred[columns_tup] = cons
@@ -1820,7 +1843,6 @@ class Database (HasLog):
     self.schemas[schema_name].add(obj)
 
   def add_file (self, filename):
-    from precog import parser
     sql_parser = parser.file_parser(filename)
     sql_parser.sqlplus_file(self)
     num_errors = sql_parser.getNumberOfSyntaxErrors()
@@ -1840,7 +1862,7 @@ class Database (HasLog):
 
     return name
 
-  def find (self, name, obj_type, deferred=True):
+  def find (self, name, obj_type=OracleObject, deferred=True):
     if obj_type is OracleObject and isinstance(name, list):
       # Try and resolve a very ambiguous name
       schema = None
@@ -1881,6 +1903,17 @@ class Database (HasLog):
     if unsatisfied:
       raise UnsatisfiedDependencyError(unsatisfied)
 
+    for schema in self.schemas.values():
+      if Index in schema.objects:
+        indexes = {}
+        for idx in schema.objects[Index].values():
+          if idx.table not in indexes:
+            indexes[idx.table] = {}
+          cols = tuple(idx.columns)
+          if cols in indexes[idx.table]:
+            raise DuplicateIndexConflict(idx, indexes[idx.table][cols])
+          indexes[idx.table][cols] = idx
+
   def diff_to_db (self, connection_string):
     self.validate()
 
@@ -1894,9 +1927,10 @@ class Database (HasLog):
     for schema_name in self.schemas:
       db_schema = Schema(schema_name, database=oracle_database)
       oracle_database.add(db_schema)
+      Schema.from_db(db_schema)
 
-    for schema in oracle_database.schemas.values():
-      Schema.from_db(schema)
+    #for schema in oracle_database.schemas.values():
+      #Schema.from_db(schema)
 
     #oracle_database.validate()
 

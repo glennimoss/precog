@@ -104,6 +104,12 @@ class TableConflict (ObjectError):
     return "{} does not belong to expected table [{}]".format(
         super().__str__(), self.tablename)
 
+class DuplicateIndexConflict (SchemaConflict):
+
+  def __str__ (self):
+    return "{} duplicates {}".format(self.obj.pretty_name,
+                                     self.other.pretty_name)
+
 class OracleNameError (PrecogError):
   pass
 

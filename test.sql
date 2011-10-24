@@ -6,9 +6,9 @@ create synonym myfoo for foo;
 create index foo_idx on foo ( foo_id );
 
 create table foo
-  ( foo_id number CONSTRAINT foo_pk PRIMARY KEY
-  , text vArChaR2(156)
-  , bar_id varchar2(256) CONSTRAINT foo_uk_bar_id UNIQUE
+  ( foo_id number
+  , text vArChaR2(156) CONSTRAINT foo_pk PRIMARY KEY
+  , bar_id number CONSTRAINT foo_uk_bar_id UNIQUE
   , bar_whee date
   , moredata CLOB
   , id_len AS (length(to_char(foo_id)))

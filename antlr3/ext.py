@@ -2,6 +2,7 @@ from antlr3.constants import DEFAULT_CHANNEL, EOF
 from antlr3 import exceptions
 from antlr3.streams import (CommonTokenStream, StringStream, FileStream,
   InputStream)
+from antlr3.tree import CommonTree, CommonTreeAdaptor
 
 NL_CHANNEL = DEFAULT_CHANNEL + 1
 
@@ -119,3 +120,60 @@ class NamedConstant (int):
     for name, value in vars.items():
       if isinstance(value, int) and name.isupper():
         vars[name] = NamedConstant(value, name)
+
+class ComparableCommonTree (CommonTree):
+
+  def __eq__ (self, other):
+    return (self.token.type == other.token.type and
+            self.token.text.lower() == other.token.text.lower() and
+            self.children == other.children)
+
+  def pretty_print (self):
+    def print_node (node):
+      if not node.children:
+        return [node.toString()]
+
+      ret = []
+      if not node.isNil():
+          ret.append("({}".format(node.toString()))
+
+      ret.extend('  ' + line for child in node.children
+                 for line in print_node(child))
+
+      if not node.isNil():
+          ret.append(')')
+
+      return ret
+
+    return "\n".join(print_node(self))
+
+class ValueNode (ComparableCommonTree):
+
+  def __init__ (self, value):
+    super().__init__(None)
+    self.value = value
+
+  def __eq__ (self, other):
+    return self.value == other.value
+
+  def isNil (self):
+    return False
+
+  def dupNode(self):
+    return ValueNode(self.value)
+
+  def __str__ (self):
+    return str(self.value)
+
+  def getText(self):
+    return str(self)
+
+  def toString(self):
+    return str(self)
+
+class ComparableCommonTreeAdaptor (CommonTreeAdaptor):
+
+    def createWithPayload(self, payload):
+        return ComparableCommonTree(payload)
+
+CommonTreeAdaptor = ComparableCommonTreeAdaptor
