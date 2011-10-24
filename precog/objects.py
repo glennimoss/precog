@@ -28,15 +28,17 @@ def _assert_contains_type (value, contains_type):
     for item in value:
       try:
         _assert_type(item, contains_type)
-      except TypeError as e:
-        bad.append(e)
+      except TypeError:
+        bad.append(item)
 
       if bad:
         raise TypeError("In container {}: {}".format(pprint.pformat(value),
-                                                     ", ".join(bad)))
+                                                     ", ".join(str(bad))))
 
-def _in_props (key):
+def _in_props (key, default=None):
   def getter (self):
+    if self.props[key] is None and default is not None:
+      self.props[key] = default
     return self.props[key]
 
   def setter (self, value):
@@ -50,25 +52,38 @@ def _in_props (key):
 
 class Expression (object):
 
-  def __init__ (self, expression, scope_object):
-    self.expression = expression
+  def __init__ (self, text, references=None, scope_obj=None, database=None):
+    self.text = text
+    self._references = references
+    self.scope_obj = scope_obj
+    self.database = database
 
-    ids = re.findall('".+?"(?:\.".+?")*', expression)
-    self.references = set()
+  @property
+  def references (self):
+    if not self._references and self.scope_obj and self.database:
+      self._references = self._parse_expression()
+    return self._references
+
+  def _parse_expression (self):
+    ids = re.findall('".+?"(?:\.".+?")*', self.text)
+    references = set()
     for id in ids:
       parts = re.split('(?<=")\.(?=")', id)
       if len(parts) == 1:
-        dep = scope_object.database.find(OracleFQN(scope_object.name.schema,
-                                                   scope_object.name.obj,
-                                                   parts[0]), Column)
+        dep = self.database.find(OracleFQN(self.scope_obj.name.schema,
+                                           self.scope_obj.name.obj, parts[0]),
+                                 Column)
       else:
         # TODO: we want to be able to reference items inside a package... for
         # now, we'll limit to just the package.
         # also, We're not sure if it's a global func/procedure or a package so
         # do anonymous lookup
-        dep = scope_object.database.find(OracleFQN(*parts[:2]), OracleObject)
+        dep = self.database.find(OracleFQN(*parts[:2]), OracleObject)
 
-      self.references.add(dep)
+      references.add(dep)
+
+    return references
+
 
 class OracleObject (HasLog):
 
@@ -82,17 +97,18 @@ class OracleObject (HasLog):
 
   def __init__ (self, name, deferred=False, database=None, reinit=False,
                 **props):
+    if not isinstance(name, OracleFQN):
+      name = OracleFQN(obj=name)
+    self.name = name
+
     if not reinit:
       super().__init__()
       self.deferred = deferred
       self.database = database
-      self.props = InsensitiveDict(props)
+      self.props = InsensitiveDict()
       self._referenced_by = set()
       self._dependencies = set()
-
-    if not isinstance(name, OracleFQN):
-      name = OracleFQN(obj=name)
-    self.name = name
+      self._update_props(props)
 
   def __repr__ (self, **other_props):
     if self.deferred:
@@ -123,6 +139,13 @@ class OracleObject (HasLog):
 
   def __hash__ (self):
     return hash((type(self), self.name))
+
+  def _update_props (self, props):
+    for prop, value in props.items():
+      if hasattr(self, prop):
+        setattr(self, prop, value)
+      else:
+        self.props[prop] = value
 
   @property
   def pretty_name (self):
@@ -191,8 +214,11 @@ class OracleObject (HasLog):
 
   def satisfy (self, other):
     if self.deferred:
-      self.name = other.name
-      self.props = other.props
+      if type(self) is not type(other):
+        self.become(type(other))
+      if self.name.generated:
+        self.name = other.name
+      self._update_props(other.props)
 
       self.deferred = False
 
@@ -440,10 +466,6 @@ class HasTable (object):
 
 class HasUserType (object):
 
-  def __init__ (self, name, user_type=None, **props):
-    super().__init__(name, **props)
-    self.user_type = user_type
-
   _user_type = _in_props('user_type')
 
   @_user_type.setter
@@ -453,14 +475,7 @@ class HasUserType (object):
 
 class HasConstraints (object):
 
-  def __init__ (self, name, constraints=None, **props):
-    super().__init__(name, **props)
-
-    if not constraints:
-      constraints = set()
-    self.constraints = constraints
-
-  _constraints = _in_props('constraints')
+  _constraints = _in_props('constraints', set())
 
   @_constraints.setter
   def constraints (self, value):
@@ -513,11 +528,10 @@ class Table (HasConstraints, HasColumns, OracleObject):
         if len(cons.columns) == 1:
           # add this constraint to the appropriate column
           col = cols[cons.columns[0].name]
+          # We don'tjust do a .add() because we need to trigger the setter
           col.constraints = col.constraints | {cons}
 
           column_constraints.add(cons)
-        else:
-          cons.table = self
       value.difference_update(column_constraints)
 
     HasConstraints.constraints.__set__(self, value)
@@ -554,7 +568,7 @@ class Table (HasConstraints, HasColumns, OracleObject):
 
   def _sub_sql (self):
     parts = [col.sql() for col in self.columns
-             if col.props['hidden_column'] == 'NO']
+             if col.props['hidden_column'] != 'YES']
     parts.extend(cons.sql() for cons in self.other_constraints)
     return "\n  ( {}\n  )".format("\n  , ".join(parts))
 
@@ -785,10 +799,10 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
 
     return diffs
 
-  def add_subobjects (self, subobjects):
-    return [Diff("ALTER TABLE {} MODIFY ({} {})"
-                 .format(self.table.name.lower(), self.name.lower(),
-                         " ".join(obj.sql(inline=True) for obj in subobjects)))]
+  #def add_subobjects (self, subobjects):
+    #return [Diff("ALTER TABLE {} MODIFY ({} {})"
+                 #.format(self.table.name.lower(), self.name.lower(),
+                         #" ".join(obj.sql(inline=True) for obj in subobjects)))]
 
   @classmethod
   def from_db (class_, name, into_database):
@@ -840,7 +854,11 @@ class VirtualColumn (Column):
   def __init__ (self, name, expression=None, **props):
     super().__init__(name, **props)
 
-    self.expression = expression or props['data_default']
+    if expression:
+      self.expression = expression
+    elif 'data_default' in props:
+      self.expression = Expression(props['data_default'], scope_obj=self,
+                                   database=self.database)
     self.props['virtual_column'] = 'YES'
 
   _expression = _in_props('data_default')
@@ -848,9 +866,9 @@ class VirtualColumn (Column):
   @_expression.setter
   def expression (self, value):
     self._expression = value
-    deps = self._parse_expression()
-    self._depends_on(deps, '_expression_identifiers')
+    self._depends_on(value.references, '_expression_identifiers')
 
+  """
   def _parse_expression (self):
     ids = re.findall('".+?"(?:\.".+?")*', self.expression)
     deps = set()
@@ -868,6 +886,7 @@ class VirtualColumn (Column):
 
       deps.add(dep)
     return deps
+  """
 
   def _sql (self, fq=False, full_def=True):
     parts = []
@@ -881,7 +900,7 @@ class VirtualColumn (Column):
         parts.append('AS (')
 
     if full_def or hidden:
-      parts.append(self.expression)
+      parts.append(self.expression.text)
 
     if not hidden and full_def:
       parts.append(')')
@@ -957,17 +976,16 @@ class Data (HasColumns, OracleObject):
         for row in rs:
           table.add_data(columns, [Data.escape(col) for col in row.values()])
 
-class Constraint (HasColumns, HasTable, OracleObject):
+#class Constraint (HasColumns, HasTable, OracleObject):
+class Constraint (HasColumns, OracleObject):
 
   is_enabled = _in_props('is_enabled')
 
-  @HasColumns.columns.setter
-  def columns (self, value):
-    HasColumns.columns.__set__(self, value)
-    if value:
-      self.table = value[0].table
-    else:
-      self.table = None
+  @property
+  def table (self):
+    if self.columns:
+      return self.columns[0].table
+    return None
 
   def _sql (self, fq=False, inline=False):
     parts = ['CONSTRAINT']
@@ -976,7 +994,8 @@ class Constraint (HasColumns, HasTable, OracleObject):
 
     parts.extend(self._sub_sql(inline))
 
-    parts.append('ENABLE' if self.is_enabled else 'DISABLE')
+    if self.is_enabled is not None:
+      parts.append('ENABLE' if self.is_enabled else 'DISABLE')
 
     return " ".join(parts)
 
@@ -988,9 +1007,13 @@ class Constraint (HasColumns, HasTable, OracleObject):
                                      for col in self.columns))
 
   def create (self):
-    return [Diff("ALTER TABLE {} ADD {}"
-                 .format(self.table.name.lower(), self.sql()),
-                 produces=self, priority=Diff.CREATE)]
+    try:
+      return [Diff("ALTER TABLE {} ADD {}"
+                   .format(self.table.name.lower(), self.sql()),
+                   produces=self, priority=Diff.CREATE)]
+    except Exception as e:
+      import pdb
+      pdb.set_trace()
 
   def _drop (self):
     return Diff( "ALTER TABLE {} DROP CONSTRAINT {}"
@@ -1044,9 +1067,9 @@ class Constraint (HasColumns, HasTable, OracleObject):
         # Only Constraints with multiple columns are at the Table level
         continue
 
-      constraint_name = OracleFQN(name.schema, row['constraint_name'],
-                                  generated=(row['generated'] ==
-                                             'GENERATED NAME'))
+      constraint_name = OracleFQN(name.schema,
+            OracleIdentifier(row['constraint_name'],
+                             generated=(row['generated'] == 'GENERATED NAME')))
       type = row['constraint_type']
       constraint_class = None
       props = {}
@@ -1087,12 +1110,24 @@ class Constraint (HasColumns, HasTable, OracleObject):
 class CheckConstraint (Constraint):
   namespace = Constraint
 
-  # TODO: parse the condition
+  def __init__ (self, *args, **props):
+    super().__init__(*args, **props)
+    self._condition_refs = None
 
   condition = _in_props('condition')
 
+  @HasColumns.columns.getter
+  def columns (self):
+    columns = HasColumns.columns.__get__(self)
+    if not columns:
+      if self._condition_refs != self.condition.references:
+        self._depends_on(self.condition.references, '_condition_refs',
+                         Reference.HARD)
+      return list(self.condition.references)
+    return columns
+
   def _sub_sql (self, inline):
-    return ['CHECK (', self.condition, ')']
+    return ['CHECK (', self.condition.text, ')']
 
 class UniqueConstraint (Constraint):
   namespace = Constraint
@@ -1108,7 +1143,7 @@ class UniqueConstraint (Constraint):
   @_index.setter
   def index (self, value):
     _assert_type(value, Index)
-    self._depends_on(value, '_index', Reference.AUTODROP)
+    self._depends_on(value, '_index')
 
     if value and not value.columns:
       # If our index has no columns it was likely created as part of an inline
@@ -1142,10 +1177,6 @@ class UniqueConstraint (Constraint):
 class ForeignKeyConstraint (Constraint):
   namespace = Constraint
 
-  def __init__ (self, name, fk_constraint=None, **props):
-    super().__init__(name, **props)
-    self.fk_constraint = fk_constraint
-
   _fk_constraint = _in_props('fk_constraint')
 
   @_fk_constraint.setter
@@ -1161,64 +1192,40 @@ class ForeignKeyConstraint (Constraint):
       parts.append('FOREIGN KEY')
       parts.append(self._column_list())
 
-    parts.extend(['REFERENCES', self.fk_constraint.table.name,
-                  self.fk_constraint._column_list])
-    if self.delete_rule != 'NO ACTION':
+    parts.extend(['REFERENCES', self.fk_constraint.table.name.lower(),
+                  self.fk_constraint._column_list()])
+    if self.delete_rule and self.delete_rule != 'NO ACTION':
       parts.append('ON DELETE')
       parts.append(self.delete_rule)
 
     return parts
 
-  @staticmethod
-  def find_reference (database, columns):
-    schema = colums[0].name.schema
-    constraints = [cons for cons in database.schemas[schema].objects[Constraint]
-                   if isinstance(cons, UniqueConstraint)]
+#class Index (HasColumns, HasTable, OracleObject):
+class Index (HasColumns, OracleObject):
 
-    columns = [col.name for col in columns]
-    second_best = None
-    for cons in constraints:
-      cons_columns = [col.name for col in cons.columns]
-      if columns == cons.columns:
-        # Exact match!
-        return cons
+  #@HasTable.table.setter
+  #def table (self, value):
+    #if self._table:
+      #self.table.indexes.discard(self)
 
-      if not second_best:
-        column_set = set(columns)
-        cons_set = set(cons_columns)
-        if column_set == cons_set:
-          second_best = cons
-          # we won't return here because we may have an exact match with a
-          # different constraint. Or maybe not... TODO: test if multiple
-          # constraints can have the same column set in different orders.
-
-    return second_best
-
-class Index (HasColumns, HasTable, OracleObject):
-
-  @HasTable.table.setter
-  def table (self, value):
-    if self.table:
-      self.table.indexes.discard(self)
-
-    HasTable.table.__set__(self, value)
-    if value:
-      self.table.indexes.add(self)
+    #HasTable.table.__set__(self, value)
+    #if value:
+      #self.table.indexes.add(self)
 
   @HasColumns.columns.setter
   def columns (self, value):
-    if value:
-      tablename = value[0].name
-      tablename = OracleFQN(tablename.schema, tablename.obj)
+    if self.table:
+      self.table.indexes.discard(self)
 
-      try:
-        value = ValidatingList(
-          lambda i: (i.name.schema == tablename.schema and
-                     i.name.obj == tablename.obj))(value)
-      except ValidationError as e:
-        raise TableConflict(e.invalid, tablename) from e
+    HasColumns.columns.__set__(self, value)
+    if self.table:
+      self.table.indexes.add(self)
 
-      HasColumns.columns.__set__(self, value)
+  @property
+  def table (self):
+    if self.columns:
+      return self.columns[0].table
+    return None
 
   def _sql (self, fq=True):
     name = self.name.obj
@@ -1234,7 +1241,7 @@ class Index (HasColumns, HasTable, OracleObject):
     parts.append('(')
     parts.append(', '.join(c.sql(full_def=False) for c in self.columns))
     parts.append(')')
-    if self.props['index_type'].endswith('/REV'):
+    if 'index_type' in self.props and self.props['index_type'].endswith('/REV'):
       parts.append('REVERSE')
     if self.props['tablespace_name']:
       parts.append('TABLESPACE')
@@ -1265,8 +1272,8 @@ class Index (HasColumns, HasTable, OracleObject):
     rs = db.query(""" SELECT index_type
                            , uniqueness
                            , tablespace_name
-                           , table_owner
-                           , table_name
+                        -- , table_owner
+                        -- , table_name
                            , CURSOR(
                                SELECT table_owner
                                     , table_name
@@ -1291,16 +1298,14 @@ class Index (HasColumns, HasTable, OracleObject):
       rs['index_type'] = 'NORMAL'
       #raise UnimplementedFeatureError(
       #  "Index {} is of unsupported type {}".format(name, rs['index_type']))
-    *props, (_, table_owner), (_, table_name), (_, columns) = rs.items()
-
-    table = into_database.find(OracleFQN(table_owner, table_name), Table)
+    #*props, (_, table_owner), (_, table_name), (_, columns) = rs.items()
+    *props, (_, columns) = rs.items()
 
     columns = [into_database.find(OracleFQN(col['table_owner'],
                                             col['table_name'],
                                             col['column_name']), Column)
                for col in columns]
-    return class_(name, database=into_database, table=table, columns=columns,
-                  **dict(props))
+    return class_(name, database=into_database, columns=columns, **dict(props))
 
 class Sequence (OracleObject):
 
@@ -1583,6 +1588,8 @@ class Schema (OracleObject):
       del self.objects[OracleObject][name]
       # Pretend it was of obj_type all along
       untyped_obj.become(obj_type)
+      if obj_type not in self.objects:
+        self.objects[obj_type] = {}
       self.objects[obj_type][name] = untyped_obj
       self.deferred[(name, obj_type)] = untyped_obj
 
@@ -1645,6 +1652,9 @@ class Schema (OracleObject):
     if isinstance(obj, UniqueConstraint):
       columns_tup = tuple(col.name for col in obj.columns)
       if columns_tup in self.deferred:
+        self.log.debug(
+          "Satisfying deferred Unique Key on {} with {}".format(columns_tup,
+                                                                obj))
         self.deferred[columns_tup].satisfy(obj)
         del self.deferred[columns_tup]
 
@@ -1679,7 +1689,6 @@ class Schema (OracleObject):
 
     return None
 
-  _unique_id = 0
   def find_unique_constraint (self, columns, deferred=True):
     column_names = [col.name for col in columns]
     columns_tup = tuple(column_names)
@@ -1714,8 +1723,10 @@ class Schema (OracleObject):
       return second_best
 
     if deferred:
-      cons = UniqueConstraint('PRECOG_UC_' + Schema._unique_id, columns=columns)
-      Schema._unique_id += 1
+      cons = UniqueConstraint(OracleFQN(self.name.schema, GeneratedId()),
+                              columns=columns)
+      self.log.debug("Deferring Unique Key on {} as {}".format(columns_tup,
+                                                               cons))
       self.deferred[columns_tup] = cons
       return cons
 
@@ -1761,8 +1772,9 @@ class Schema (OracleObject):
                   """, o=owner, oracle_names=['object_name'])
 
     for obj in rs:
-      object_name = OracleFQN(owner, obj['object_name'],
-                              generated=(obj['generated'] == 'Y'))
+      object_name = OracleFQN(owner,
+              OracleIdentifier(obj['object_name'],
+                               generated=(obj['generated'] == 'Y')))
       schema.log.debug(
           "Fetching {} {}".format(obj['object_type'], object_name))
 
@@ -1846,9 +1858,10 @@ class Database (HasLog):
       part = name
       name = OracleFQN(schema, obj, part)
       if found:
-        # TODO: try to find the column...
-        #if part and isinstance(found, Table):
-          #column = self.schemas[schema].find(
+        if part and isinstance(found, Table):
+            column = self.schemas[schema].find(name, Column, deferred)
+            if column:
+              return column
 
         return found
 
@@ -1857,10 +1870,8 @@ class Database (HasLog):
     return self.schemas[name.schema].find(name, obj_type, deferred)
 
   def find_unique_constraint (self, columns, deferred=True):
-    table_name = self.__make_fqn(columns[0].name)
-    return self.schemas[table_name.schema].find_unique_constraint(table_name,
-                                                                  column_names,
-                                                                  deferred)
+    return (self.schemas[self.__make_fqn(columns[0].name).schema]
+            .find_unique_constraint(columns, deferred))
 
   def validate (self):
     self.log.info('Validating referential integrity')

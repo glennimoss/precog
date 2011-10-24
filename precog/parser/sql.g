@@ -15,6 +15,8 @@ scope g { database }
 
 scope tab_col_ref { alias_map; table; columns }
 
+scope expression_ctx { ctx_name }
+
 @lexer::header {
   from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
   from precog.parser.util import *
@@ -28,7 +30,7 @@ scope tab_col_ref { alias_map; table; columns }
   from antlr3.exceptions import RecognitionException
   from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
   from precog.parser.util import *
-  from precog.identifier import OracleFQN, OracleIdentifier
+  from precog.identifier import OracleFQN, OracleIdentifier, GeneratedId
   from precog.objects import *
   from precog.util import InsensitiveDict
 }
@@ -174,24 +176,21 @@ aliasing_identifier returns [ident]
       $ident = $i.ident
       if $alias.id:
         if not $tab_col_ref::alias_map:
-          $tab_col_ref::alias_map = {}
+          $tab_col_ref::alias_map = InsensitiveDict()
 
         $tab_col_ref::alias_map[$alias.id] = $ident
     }
   ;
 
 aliased_identifier returns [ident]
-scope { parts; }
-@init { $aliased_identifier::parts = [] }
-  : first=tID (DOT part_identifier)*
+  : parts=part_identifier
     {
       resolved = None
-      if $tab_col_ref::alias_map and $first.id in $tab_col_ref::alias_map:
-        resolved = $tab_col_ref::alias_map[$first.id]
-      else:
-        $aliased_identifier::parts.insert(0, $first.id)
+      if $tab_col_ref::alias_map and $parts.parts[0] in $tab_col_ref::alias_map:
+        resolved = $tab_col_ref::alias_map[$parts.parts[0]]
+        $parts.parts.pop(0)
 
-      $ident = OracleIdentifier($aliased_identifier::parts)
+      $ident = OracleIdentifier($parts.parts)
       if resolved:
         $ident = OracleFQN(resolved.schema, resolved.obj, $ident)
 
@@ -201,19 +200,30 @@ scope { parts; }
     }
   ;
 
-part_identifier
-  : part=tID { $aliased_identifier::parts.append($part.id) }
+part_identifier returns [parts]
+scope { _parts; }
+@init { $part_identifier::_parts = [] }
+@after { $parts = [$first.id] + $part_identifier::_parts }
+  : first=tID (DOT part_identifier_part)*
+  ;
+
+part_identifier_part
+  : part=tID { $part_identifier::_parts.append($part.id) }
   ;
 
 create_table returns [obj]
-scope { props; }
+scope { props; table_name }
+scope expression_ctx;
 @init {
   $create_table::props = InsensitiveDict({'columns': [], 'constraints': set()})
 }
 @after {
   $obj = Table($ident.ident, database=$g::database, **$create_table::props)
 }
-  : CREATE TABLE ident=identifier
+  : CREATE TABLE ident=identifier {
+      $create_table::table_name = $ident.ident
+      $expression_ctx::ctx_name = $ident.ident
+    }
     LPAREN
       table_item (COMMA table_item)*
     RPAREN
@@ -237,18 +247,19 @@ scope { props }
   $column = Column($i.id, **$col_spec::props)
 }
   : i=tID
-    ( ( column_data_type
-      ( DEFAULT e=expression { $col_spec::props['data_default'] = $e.text } )?)
-    | ( AS LPAREN virt=expression RPAREN {
+    ( column_data_type
+      ( DEFAULT e=expression
+        { $col_spec::props['data_default'] = $e.exp.text } )?
+    | ( kGENERATED kALWAYS )? AS LPAREN virt=expression RPAREN kVIRTUAL? {
         $col_spec::props['virtual_column'] = 'YES'
-        $col_spec::props['data_default'] = $virt.text
-      })
+        $col_spec::props['data_default'] = $virt.exp.text
+      }
     )
-    ( ic=inline_constraint
-      {
+    ( ic=inline_constraint {
         if $ic.cons:
           $col_spec::props['constraints'].add($ic.cons)
-      } )*
+      }
+    )*
   ;
 
 column_data_type
@@ -267,7 +278,7 @@ int_parameter returns [val]
   ;
 
 string_data_type
-  : (t=CHAR | t=VARCHAR2) { $col_spec::props['data_type'] = $t.text }
+  : (t=CHAR | t=VARCHAR2) { $col_spec::props['data_type'] = $t.text.upper() }
     ( LPAREN
       l=tINTEGER { $col_spec::props['char_length'] = $l.val }
       ( kBYTE { $col_spec::props['char_used'] = 'B' }
@@ -275,13 +286,16 @@ string_data_type
       )?
       RPAREN
     )?
-  | (nt=kNCHAR | nt=kNVARCHAR2) { $col_spec::props['data_type'] = $nt.text }
+  | (nt=kNCHAR | nt=kNVARCHAR2) {
+      $col_spec::props['data_type'] = $nt.text.upper()
+    }
     (l=int_parameter { $col_spec::props['char_length'] = $l.val })?
   ;
 
 numeric_data_type
 @after {
-  $col_spec::props['data_type'] = ($t and $t.text) or $k1.text or $k2.text
+  $col_spec::props['data_type'] = (($t and $t.text) or
+                                   $k1.text or $k2.text).upper()
 }
   : t=NUMBER number_precision?
   | t=FLOAT (p=int_parameter { $col_spec::props['data_precision'] = $p.val })?
@@ -338,7 +352,8 @@ datetime_data_type
 
 lob_data_type
 @after {
-  $col_spec::props['data_type'] = $t1.text or $t2.text or $t3.text or $t4.text
+  $col_spec::props['data_type'] = ($t1.text or $t2.text or $t3.text or
+                                   $t4.text).upper()
 }
   : t1=kBLOB
   | t2=kCLOB
@@ -347,13 +362,13 @@ lob_data_type
   ;
 
 rowid_data_type
-@after { $col_spec::props['data_type'] = ($t and $t.text) or $k.text }
+@after { $col_spec::props['data_type'] = (($t and $t.text) or $k.text).upper() }
   : t=ROWID
   | k=kUROWID (i=int_parameter { $col_spec::props['data_length'] = $i.val })?
   ;
 
 oracle_data_type
-@after { $col_spec::props['data_type'] = $t1.text or $t2.text }
+@after { $col_spec::props['data_type'] = ($t1.text or $t2.text).upper() }
   : t1=kXMLTYPE
   | t2=kURITYPE
   ;
@@ -379,7 +394,15 @@ inline_constraint returns [cons]
     $cons = None
 }
   : ( NOT? NULL { $col_spec::props['nullable'] = 'N' if $NOT else 'Y' }
-    | kCONSTRAINT constraint_name=tID // Non-spec: making required
+    | ( kCONSTRAINT constraint_name=tID // Non-spec: making required
+      | {
+          token = self.input.LT(1)
+          self.logSyntaxError('"CONSTRAINT [constraint_name]" is required.',
+                              self.input, token.index, token.line,
+                              token.charPositionInLine)
+          constraint_name = self.tID_return()
+          constraint_name.id = GeneratedId()
+        } )
       ( ( UNIQUE { props['is_pk'] = False }
         | kPRIMARY kKEY { props['is_pk'] = True }
         ) { index_props = InsensitiveDict() }
@@ -389,6 +412,7 @@ inline_constraint returns [cons]
             }
           | LPAREN new_index=create_index RPAREN {
               index = $new_index.obj
+              $g::database.add(index)
             }
           | ts=tablespace_clause { index_props.update($ts.props) }
           )
@@ -397,6 +421,8 @@ inline_constraint returns [cons]
           if not index:
             index = Index($constraint_name.id, database=$g::database,
                           **index_props)
+            $g::database.add(index)
+
           props['index'] = index
           cons_class = UniqueConstraint
         }
@@ -405,7 +431,7 @@ inline_constraint returns [cons]
           cons_class = ForeignKeyConstraint
         }
       | CHECK LPAREN check_exp=expression RPAREN {
-          props['condition'] = $check_exp.text
+          props['condition'] = $check_exp.exp
           cons_class = CheckConstraint
         }
       )
@@ -418,7 +444,7 @@ references_clause returns [props]
 scope tab_col_ref;
 @init {
   $tab_col_ref::columns = []
-  props = {'delete_action': 'NO ACTION'}
+  props = InsensitiveDict({'delete_action': 'NO ACTION'})
 }
 @after {
   $props['fk_constraint'] = $g::database.find_unique_constraint(
@@ -434,15 +460,15 @@ out_of_line_constraint returns [constraint]
 scope tab_col_ref;
 @init {
   $tab_col_ref::columns = []
-  $tab_col_ref::table = $create_table::ident.ident
-  props = {}
+  $tab_col_ref::table = $create_table::table_name
+  props = InsensitiveDict()
   cons_class = Constraint
 }
 @after {
   $constraint = cons_class($constraint_name.id, database=$g::database, **props)
 }
   : kCONSTRAINT constraint_name=tID // Non-spec: making required
-    ( ( ( UNIQUE { props['is_pk'] = False
+    ( ( ( UNIQUE { props['is_pk'] = False }
         | kPRIMARY kKEY { props['is_pk'] = True } )
         { cons_class = UniqueConstraint }
       | kFOREIGN kKEY
@@ -459,7 +485,7 @@ scope tab_col_ref;
       | // { cons_class != ForeignKeyConstraint }? // Nothing
       )
     | CHECK LPAREN check_exp=expression RPAREN {
-        props['condition'] = $check_exp.text
+        props['condition'] = $check_exp.exp
         cons_class = CheckConstraint
       }
     )
@@ -486,7 +512,8 @@ scope tab_col_ref;
 }
 @after {
   table = $g::database.find($tab_col_ref::table, Table)
-  $obj = Index($index_name.ident, table=table, columns=$tab_col_ref::columns,
+  #$obj = Index($index_name.ident, table=table, columns=$tab_col_ref::columns,
+  $obj = Index($index_name.ident, columns=$tab_col_ref::columns,
     database=$g::database, **props)
 }
   : CREATE ( UNIQUE { props['uniqueness'] = 'UNIQUE' }
@@ -553,7 +580,7 @@ create_synonym returns [obj]
   ;
 insert_statement returns [obj]
 scope { expressions; }
-scope tab_col_ref;
+scope tab_col_ref, expression_ctx;
 @init {
   $insert_statement::expressions = []
   $tab_col_ref::columns = []
@@ -564,6 +591,7 @@ scope tab_col_ref;
   : INSERT INTO table_name=aliasing_identifier
     {
       $tab_col_ref::table = $table_name.ident
+      $expression_ctx::ctx_name = $table_name.ident
       table = $g::database.find($tab_col_ref::table, Table)
     }
     LPAREN
@@ -711,7 +739,7 @@ procedure_definition :
 	( IS | AS ) declare_section? body
 	;
 
-body 	:
+body :
 	BEGIN statement SEMI ( statement SEMI | pragma SEMI )*
 	( EXCEPTION exception_handler+ )? END ID?
 	;
@@ -926,8 +954,15 @@ label_name:	ID;
 
 */
 
-expression
-    : or_expr
+expression returns [exp]
+scope { refs }
+@init {
+  $expression::refs = set()
+}
+@after {
+  $exp = Expression($e.text, $expression::refs)
+}
+    : e=or_expr
     ;
 
 or_expr
@@ -985,7 +1020,8 @@ exponent_expr
     ;
 
 atom
-    : variable_or_function_call ( PERCENT attribute )?
+    //: variable_or_function_call ( PERCENT attribute )?
+    : call ( PERCENT attribute )?
     | SQL PERCENT attribute
     | string_literal
     | numeric_atom
@@ -999,13 +1035,39 @@ global_name_literal
   : SYSDATE
   ;
 
+/*
 variable_or_function_call
-    : call ( DOT call )* /*( DOT delete_call )?*/
+    : call ( DOT call )* /*( DOT delete_call )?* /
     ;
+    */
 
 call
+@init {
+  is_call = False
+}
+@after {
+  if not is_call:
+    ref = $i.parts
+    found = None
+    if len(ref) > 1:
+      found = $g::database.find(ref, OracleObject, False)
+
+    if not found:
+      name = $expression_ctx::ctx_name
+      name_parts = []
+      if name.schema:
+        name_parts.append(name.schema)
+      name_parts.append(name.obj)
+      name_parts.extend(ref)
+      found = $g::database.find(name_parts, OracleObject)
+
+    if found:
+      $expression::refs.add(found)
+}
     : /* COLON? sqlplus vars */
-      ID ( LPAREN ( parameter ( COMMA parameter )* )? RPAREN )?
+      i=part_identifier
+      ( LPAREN ( parameter ( COMMA parameter )* )? RPAREN { is_call = True }
+        ( DOT call )? )?
     ;
 
 attribute
@@ -1124,6 +1186,7 @@ kROWCOUNT : {self.input.LT(1).text.lower() == "rowcount"}? ID;
 //kSHOW : {self.input.LT(1).text.lower() == "show"}? ID;
 
 
+kALWAYS : {self.input.LT(1).text.lower() == 'always'}? ID;
 kBFILE : {self.input.LT(1).text.lower() == 'bfile'}? ID;
 kBINARY_DOUBLE : {self.input.LT(1).text.lower() == 'binary_double'}? ID;
 kBINARY_FLOAT : {self.input.LT(1).text.lower() == 'binary_float'}? ID;
@@ -1144,6 +1207,7 @@ kENABLE : {self.input.LT(1).text.lower() == 'enable'}? ID;
 kFALSE : {self.input.LT(1).text.lower() == 'false'}? ID;
 kFOREIGN : {self.input.LT(1).text.lower() == 'foreign'}? ID;
 kFUNCTION : {self.input.LT(1).text.lower() == 'function'}? ID;
+kGENERATED : {self.input.LT(1).text.lower() == 'generated'}? ID;
 kINSERTING : {self.input.LT(1).text.lower() == 'inserting'}? ID;
 kINTERVAL : {self.input.LT(1).text.lower() == 'interval'}? ID;
 kISOPEN : {self.input.LT(1).text.lower() == 'isopen'}? ID;
@@ -1177,6 +1241,7 @@ kUPDATING : {self.input.LT(1).text.lower() == 'updating'}? ID;
 kURITYPE : {self.input.LT(1).text.lower() == 'uritype'}? ID;
 kUROWID : {self.input.LT(1).text.lower() == 'urowid'}? ID;
 kUSING : {self.input.LT(1).text.lower() == 'using'}? ID;
+kVIRTUAL : {self.input.LT(1).text.lower() == 'virtual'}? ID;
 kXMLTYPE : {self.input.LT(1).text.lower() == 'xmltype'}? ID;
 kYEAR : {self.input.LT(1).text.lower() == 'year'}? ID;
 kZONE : {self.input.LT(1).text.lower() == 'zone'}? ID;

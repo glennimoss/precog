@@ -15,7 +15,7 @@ class OracleIdentifier (str):
   def simple_name (name):
     return bool(re.match('^[A-Z_$#][0-9A-Z_$#]*$', name.strip('"')))
 
-  def __new__ (class_, identifier, trust_me=False):
+  def __new__ (class_, identifier, trust_me=False, generated=False):
     if isinstance(identifier, OracleIdentifier):
       return identifier
 
@@ -73,8 +73,22 @@ class OracleIdentifier (str):
     self = super().__new__(class_, identifier)
     self.quoted = quoted
     self.parts = parts
+    self._generated = generated
 
     return self
+
+  def __hash__ (self):
+    return super().__hash__()
+
+  def __eq__ (self, other):
+    if self.generated and other.generated:
+      # We can't really say if two generated IDs aren't equal...
+      return True
+    return super().__eq__(other)
+
+  @property
+  def generated (self):
+    return self._generated
 
   def lower (self):
     if self.parts:
@@ -94,8 +108,7 @@ class OracleFQN (OracleIdentifier):
   Create a fully-qualified Oracle identifier. If from_oracle is True, it will
   try to guess if the name should be quoted.
   """
-  def __new__ (class_, schema=None, obj=None, part=None, from_oracle=False,
-               generated=False):
+  def __new__ (class_, schema=None, obj=None, part=None, from_oracle=False):
     make_name = OracleIdentifier
     if from_oracle:
       make_name = name_from_oracle
@@ -113,9 +126,19 @@ class OracleFQN (OracleIdentifier):
     self._schema = schema
     self._obj = obj
     self._part = part
-    self._generated = generated
 
     return self
+
+  def __hash__ (self):
+    return super().__hash__()
+
+  def __eq__ (self, other):
+    if isinstance(other, OracleFQN):
+      # Allow comparison to succeed if some part of the name is generated...
+      return (self.schema == other.schema and self.obj == other.obj and
+              self.part == other.part)
+
+    return super().__eq__(other)
 
   @property
   def schema (self):
@@ -131,7 +154,9 @@ class OracleFQN (OracleIdentifier):
 
   @property
   def generated (self):
-    return self._generated
+    return ((self.schema and self.schema.generated) or
+            (self.obj and self.obj.generated) or
+            (self.part and self.part.generated))
 
   def lower (self):
     return ".".join(x.lower() for x in (self.schema, self.obj, self.part) if x)
@@ -141,6 +166,15 @@ class OracleFQN (OracleIdentifier):
         "{}='{}'".format(arg, val) for arg, val in
           (('schema', self.schema), ('obj', self.obj), ('part', self.part))
           if val))
+
+_generated_id = 0
+def GeneratedId ():
+  global _generated_id
+
+  name = OracleIdentifier("PRECOG_{}".format(_generated_id), generated=True)
+  _generated_id += 1
+
+  return name
 
 def name_from_oracle (name):
   if not name:

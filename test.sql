@@ -1,13 +1,14 @@
 create synonym myfoo for foo;
 
-create index baz_idx on baz ( obj.num );
+-- TODO: parse types so we can build hidden columns on object properties
+--create index baz_idx on baz ( obj.num );
 
 create index foo_idx on foo ( foo_id );
 
 create table foo
   ( foo_id number CONSTRAINT foo_pk PRIMARY KEY
   , text vArChaR2(156)
-  , bar_id varchar2(256) UNIQUE
+  , bar_id varchar2(256) CONSTRAINT foo_uk_bar_id UNIQUE
   , bar_whee date
   , moredata CLOB
   , id_len AS (length(to_char(foo_id)))

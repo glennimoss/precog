@@ -80,11 +80,12 @@ class ValidationError (Exception):
 def coerced_comparison (class_):
   def coerced_method (m):
     def c_m (self, other):
-      try:
-        other = class_(other)
-      except Exception:
-        # Compare as-is if coercion isn't possible
-        pass
+      if not isinstance(other, class_):
+        try:
+          other = class_(other)
+        except Exception:
+          # Compare as-is if coercion isn't possible
+          pass
 
       return m(self, other)
 

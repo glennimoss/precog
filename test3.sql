@@ -5,10 +5,10 @@ create table baz
   , c number(*,13)
   , e number
   , f varchar2(3)
-  , obj test_type
+  --, obj test_type
 );
 
-create unique index baz_fnidx on baz ( a + b + c);
+--create unique index baz_fnidx on baz ( a + b + c);
 
 create index foo_virtidx on foo (id_len);
 

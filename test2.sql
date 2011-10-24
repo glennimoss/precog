@@ -1,5 +1,5 @@
 create table bar
-  ( id number check (id > 1337)
+  ( id number CONSTRAINT bar_id_chk check (id > 1337)
   , whee date default SYSDATE + 3
   , data varchar2(32) not null
   , CONSTRAINT bar_pk PRIMARY KEY (id, whee)
