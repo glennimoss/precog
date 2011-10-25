@@ -364,6 +364,53 @@ class OracleObject (HasLog):
     raise UnimplementedFeatureError(
       "Unimplemented from_db for {}".format(class_.__name__))
 
+def HasProp (prop_name, dependency=None, assert_collection=None,
+             assert_type=None):
+  under_prop = '_' + prop_name
+
+  class HasProp (object):
+    def __init__ (self, name, **props):
+      prop_value = props.pop(prop_name)
+      setattr(self, under_prop, None)
+      super().__init__(name, **props)
+      setattr(self, prop, prop_value)
+
+    __hash__ = OracleObject.__hash__
+
+    def __eq__ (self, other):
+      if not super().__eq__(other):
+        return False
+
+      return getattr(self, prop_name) == getattr(other, prop_name)
+
+    def __repr__ (self, **other_props):
+      other_props[prop_name] = getattr(self, prop_name)
+      return super().__repr__(**other_props)
+
+    def satisfy (self, other):
+      if self.deferred:
+        super().satisfy(other)
+        setattr(self, prop_name, getattr(other, prop_name))
+
+  def getter (self):
+    return getattr(self, under_prop)
+
+  def setter (self, value):
+    if assert_collection or assert_type:
+      _assert_type(value, assert_collection or assert_type)
+
+    if assert_collection and assert_type:
+      _assert_contains_type(value, assert_type)
+
+    if dependency is not None:
+      self._depends_on(value, under_prop, dependency)
+    else:
+      setattr(self, under_prop, value)
+
+  setattr(HasProp, prop_name, property(getter, setter))
+
+  return HasProp
+
 class HasColumns (object):
   """ Mixin for objects that have the columns property """
 
@@ -441,12 +488,18 @@ class HasTable (object):
 
 class HasUserType (object):
 
+  def __init__ (self, name, user_type=None, **props):
+    super().__init__(name, **props)
+    self.user_type = user_type
+
   _user_type = _in_props('user_type')
 
   @_user_type.setter
   def user_type (self, value):
     _assert_type(value, Type)
     self._depends_on(value, '_user_type')
+
+HasUserType = HasProp('user_type', assert_type=Type)
 
 class HasConstraints (object):
 
@@ -670,7 +723,9 @@ class ObjectTable (HasUserType, Table):
   def _sub_sql (self):
     return " OF {}".format(self.props['table_type'])
 
-class Column (HasConstraints, HasTable, HasUserType, OracleObject):
+HasDataDefault = HasProp('data_default')
+class Column (HasConstraints, HasTable, HasUserType, HasDataDefault,
+              OracleObject):
 
   def __new__ (class_, *args, **props):
     if 'virtual_column' in props and 'YES' == props['virtual_column']:
@@ -721,9 +776,10 @@ class Column (HasConstraints, HasTable, HasUserType, OracleObject):
       part = self.props['qualified_col_name']
     return OracleFQN(self.name.schema, self.name.obj, part)
 
-  _data_default = _in_props('data_default')
+  #_data_default = _in_props('data_default')
 
-  @_data_default.setter
+  #@_data_default.setter
+  HasDataDefault.data_default.setter
   def data_default (self, value):
     if value and not isinstance(value, parser.Expression):
       value = parser.Expression(value, scope_obj=self.table,
