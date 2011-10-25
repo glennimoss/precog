@@ -1,8 +1,81 @@
 from precog.objects.base import OracleObject
-from precog.objects.hasprops import HasConstraints, HasColumns, HasUserType
+from precog.objects.has.columns import HasColumns, OwnsColumns
+from precog.objects.has.constraints import HasConstraints
+from precog.objects.has.prop import HasProp
+from precog.objects.has.user_type import HasUserType
 from precog.util import classproperty
 
-class Table (HasConstraints, HasColumns, OracleObject):
+class Data (HasColumns, OracleObject):
+
+  def __init__ (self, table, columns, expressions, **props):
+    super().__init__(OracleFQN(table.name.schema, table.name.obj,
+      "__DATA_{}".format(len(table.data))), columns=columns, **props)
+
+    self.table = table
+    self.expressions = expressions
+
+  def __eq__ (self, other):
+    if not isinstance(other, type(self)):
+      return False
+
+    return self.table.name == other.table.name and self._comp() == other._comp()
+
+  def __hash__ (self):
+    return hash((self.table.name, self._comp()))
+
+  def _comp (self):
+    """ A tuple view for hashing, comparing, etc. """
+    return tuple(sorted((col, val) for col, val in self.values().items()
+                        if val is not None))
+
+  def values (self):
+    return collections.OrderedDict(zip((col.name.part.lower()
+                                        for col in self.columns),
+                                       self.expressions))
+
+  def _sql (self, fq=True):
+    table_name = self.table.name
+    if not fq:
+      table_name = table_name.obj
+    values = self.values()
+    return "INSERT INTO {} ({}) VALUES ({})".format(self.table.name.lower(),
+      ", ".join(values.keys()), ", ".join(values.values()))
+
+  def _drop (self):
+    return Diff("DELETE FROM {} WHERE {}".format(
+      self.table.name.lower(), " AND ".join(
+        " = ".join((col, val)) if val is not None else "{} IS NULL".format(col)
+        for col, val in self.values().items())))
+
+  def diff (self, other):
+    return []
+
+  @staticmethod
+  def escape (string):
+    if isinstance(string, str):
+      return "'{}'".format(string.replace("'", "''"))
+    elif string is not None:
+      return str(string)
+    else:
+      return string
+
+  @classmethod
+  def from_db (class_, table):
+    if not table.data:
+      rs = db.query(""" SELECT *
+                        FROM {}
+                    """.format(table.name))
+
+      if rs:
+        columns = [table.database.find(
+          OracleFQN(table.name.schema, table.name.obj, column_name), Column)
+          for column_name in rs[0]]
+
+        for row in rs:
+          table.add_data(columns, [Data.escape(col) for col in row.values()])
+
+_HasData = HasProp('data', assert_collection=list, assert_type=Data)
+class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
 
   def __new__ (class_, *args, **props):
     if 'table_type' in props and props['table_type']:
@@ -10,12 +83,12 @@ class Table (HasConstraints, HasColumns, OracleObject):
     return super().__new__(class_, *args, **props)
 
   def __init__ (self, name, **props):
+    self._data = []
     super().__init__(name, column_reference=None, **props)
-    self.data = []
 
-  @HasColumns.columns.setter
+  @OwnsColumns.columns.setter
   def columns (self, value):
-    HasColumns.columns.__set__(self, value)
+    OwnsColumns.columns.__set__(self, value)
     if value:
       for column in value:
         column.table = self
@@ -56,11 +129,6 @@ class Table (HasConstraints, HasColumns, OracleObject):
 
   def add_data (self, columns, values):
     self.data.append(Data(self, columns, values))
-
-
-  def satisfy (self, other):
-    super().satisfy(other)
-    self.data = other.data
 
   def _sql (self, fq=True):
     name = self.name.obj
@@ -155,87 +223,14 @@ class Table (HasConstraints, HasColumns, OracleObject):
 
     return class_(name, database=into_database, **props)
 
-class ObjectTable (HasUserType, Table):
+class ObjectTable (HasUserType, HasProp('table_type', assert_type=str), Table):
   namespace = Table
-
-  @classproperty
-  def type (class_):
-    return Table.type
 
   @HasUserType.user_type.setter
   def user_type (self, value):
     HasUserType.user_type.__set__(self, value)
     if value:
-      self.props['table_type'] = value.name.lower()
+      self.table_type = self.user_type.name.lower()
 
   def _sub_sql (self):
-    return " OF {}".format(self.props['table_type'])
-
-class Data (HasColumns, OracleObject):
-
-  def __init__ (self, table, columns, expressions, **props):
-    super().__init__(OracleFQN(table.name.schema, table.name.obj,
-      "__DATA_{}".format(len(table.data))), columns=columns, **props)
-
-    self.table = table
-    self.expressions = expressions
-
-  def __eq__ (self, other):
-    if not isinstance(other, type(self)):
-      return False
-
-    return self.table.name == other.table.name and self._comp() == other._comp()
-
-  def __hash__ (self):
-    return hash((self.table.name, self._comp()))
-
-  def _comp (self):
-    """ A tuple view for hashing, comparing, etc. """
-    return tuple(sorted((col, val) for col, val in self.values().items()
-                        if val is not None))
-
-  def values (self):
-    return collections.OrderedDict(zip((col.name.part.lower()
-                                        for col in self.columns),
-                                       self.expressions))
-
-  def _sql (self, fq=True):
-    table_name = self.table.name
-    if not fq:
-      table_name = table_name.obj
-    values = self.values()
-    return "INSERT INTO {} ({}) VALUES ({})".format(self.table.name.lower(),
-      ", ".join(values.keys()), ", ".join(values.values()))
-
-  def _drop (self):
-    return Diff("DELETE FROM {} WHERE {}".format(
-      self.table.name.lower(), " AND ".join(
-        " = ".join((col, val)) if val is not None else "{} IS NULL".format(col)
-        for col, val in self.values().items())))
-
-  def diff (self, other):
-    return []
-
-  @staticmethod
-  def escape (string):
-    if isinstance(string, str):
-      return "'{}'".format(string.replace("'", "''"))
-    elif string is not None:
-      return str(string)
-    else:
-      return string
-
-  @classmethod
-  def from_db (class_, table):
-    if not table.data:
-      rs = db.query(""" SELECT *
-                        FROM {}
-                    """.format(table.name))
-
-      if rs:
-        columns = [table.database.find(
-          OracleFQN(table.name.schema, table.name.obj, column_name), Column)
-          for column_name in rs[0]]
-
-        for row in rs:
-          table.add_data(columns, [Data.escape(col) for col in row.values()])
+    return " OF {}".format(self.table_type)

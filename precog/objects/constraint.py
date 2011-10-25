@@ -1,12 +1,14 @@
+from precog.diff import Reference
 from precog.objects.base import OracleObject
-from precog.objects.hasprops import HasColumns
+from precog.objects.has.columns import HasColumns
+from precog.objects.has.expression import HasExpression
+from precog.objects.has.prop import HasProp
 
 def _in_props (*foo):
   return property()
 
-class Constraint (HasColumns, OracleObject):
-
-  is_enabled = _in_props('is_enabled')
+class Constraint (HasProp('is_enabled', assert_type=bool), HasColumns,
+                  OracleObject):
 
   @property
   def table (self):
@@ -150,65 +152,32 @@ class Constraint (HasColumns, OracleObject):
 
     return constraints
 
-class CheckConstraint (Constraint):
+class CheckConstraint (HasExpression, Constraint):
   namespace = Constraint
-
-  def __init__ (self, *args, **props):
-    super().__init__(*args, **props)
-    self._condition_refs = None
-
-  _condition = _in_props('condition')
-
-  @_condition.setter
-  def condition (self, value):
-    _assert_type(value, parser.Expression)
-    self._condition = value
-
-  @HasColumns.columns.getter
-  def columns (self):
-    columns = HasColumns.columns.__get__(self)
-    if not columns:
-      if self._condition_refs != self.condition.references:
-        self._depends_on(self.condition.references, '_condition_refs',
-                         Reference.HARD)
-      return list(self.condition.references)
-    return columns
-
-  def __repr__ (self):
-    return super().__repr__(condition=self.condition.text)
 
   def _sub_sql (self, inline):
-    return ['CHECK (', self.condition.text, ')']
+    return ['CHECK (', self.expression.text, ')']
 
-class UniqueConstraint (Constraint):
+_HasIndex = HasProp('index', dependency=Reference.HARD, assert_type=Index)
+class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
+                        Constraint):
   namespace = Constraint
 
-  def __init__ (self, name, index=None, **props):
-    super().__init__(name, **props)
-    self.index = index
-
-  is_pk = _in_props('is_pk')
-
-  _index = _in_props('index')
-
-  @_index.setter
+  @HasIndex.index.setter
   def index (self, value):
-    _assert_type(value, Index)
-    self._depends_on(value, '_index')
-
-    if value and not value.columns:
+    HasIndex.index.__set__(self, value)
+    if self.index and not self.index.columns:
       # If our index has no columns it was likely created as part of an inline
       # constraint, so once the constraint is told its columns, it should pass
       # them on to the index if it needs them.
-      value.columns = self.columns
-
+      self.index.columns = self.columns
 
   @Constraint.columns.setter
   def columns (self, value):
     Constraint.columns.__set__(self, value)
-    if value and self.index and not self.index.columns:
+    if self.columns and self.index and not self.index.columns:
       # see above
-      self.index.columns = value
+      self.index.columns = self.columns
 
   def _sub_sql (self, inline):
     parts = ['PRIMARY KEY' if self.is_pk else 'UNIQUE']
@@ -225,15 +194,10 @@ class UniqueConstraint (Constraint):
     diff.sql += ' KEEP INDEX'
     return diff
 
-class ForeignKeyConstraint (Constraint):
+_HasFkConstraint = HasProp('fk_constraint', dependency=Reference.HARD,
+                           assert_type=UniqueConstraint)
+class ForeignKeyConstraint (_HasFkConstraint, Constraint):
   namespace = Constraint
-
-  _fk_constraint = _in_props('fk_constraint')
-
-  @_fk_constraint.setter
-  def fk_constraint (self, value):
-    _assert_type(value, UniqueConstraint)
-    self._depends_on(value, '_fk_constraint')
 
   delete_rule = _in_props('delete_rule')
 

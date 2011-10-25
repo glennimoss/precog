@@ -1,10 +1,22 @@
+from precog.diff import Reference
 from precog.objects.base import OracleObject
-from precog.objects.hasprops import (HasConstraints, HasTable, HasUserType,
-                                     HasProp)
+from precog.objects.has.constraints import HasConstraints
+from precog.objects.has.expression import (HasDataDefault,
+                                           HasExpressionWithDataDefault)
+from precog.objects.has.prop import HasProp
+from precog.objects.has.user_type import HasUserType
+from precog.objects.table import Table
 
-HasDataDefault = HasProp('data_default')
-class Column (HasConstraints, HasTable, HasUserType, HasDataDefault,
-              OracleObject):
+class _HasTable (HasProp('table', dependency=Reference.AUTODROP,
+                        assert_type=Table)):
+
+  def _eq_table (self, other):
+    return ((not self.table and not other.table) or
+            (self.table and other.table and
+             self.table.name == other.table.name))
+
+class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
+              HasProp('qualified_col_name', assert_type=str), OracleObject):
 
   def __new__ (class_, *args, **props):
     if 'virtual_column' in props and 'YES' == props['virtual_column']:
@@ -14,7 +26,11 @@ class Column (HasConstraints, HasTable, HasUserType, HasDataDefault,
   def __init__ (self, name, **props):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(part=name)
+    if name.part.parts:
+      props['qualified_col_name'] = name.part
+      name = OracleFQN(name.schema, name.obj, GeneratedId())
     super().__init__(name, **props)
+
 
   @HasTable.table.setter
   def table (self, value):
@@ -50,27 +66,9 @@ class Column (HasConstraints, HasTable, HasUserType, HasDataDefault,
 
   @property
   def qualified_name (self):
-    part = self.name.part
-    if 'qualified_col_name' in self.props:
-      part = self.props['qualified_col_name']
-    return OracleFQN(self.name.schema, self.name.obj, part)
-
-  #_data_default = _in_props('data_default')
-
-  #@_data_default.setter
-  HasDataDefault.data_default.setter
-  def data_default (self, value):
-    if value and not isinstance(value, parser.Expression):
-      value = parser.Expression(value, scope_obj=self.table,
-                                database=self.database)
-      self._depends_on(value.references, '_default_exp_ids')
-    self._data_default = value
-
-  #@data_default.getter
-  def data_default (self):
-    if self._data_default and self._data_default.scope_obj is None:
-      self.data_default = self._data_default.text
-    return self._data_default
+    if self.qualified_col_name:
+      return OracleFQN(self.name.schema, self.name.obj, self.qualified_col_name)
+    return self.name
 
   @property
   def subobjects (self):
@@ -153,11 +151,6 @@ class Column (HasConstraints, HasTable, HasUserType, HasDataDefault,
 
     return diffs
 
-  #def add_subobjects (self, subobjects):
-    #return [Diff("ALTER TABLE {} MODIFY ({} {})"
-                 #.format(self.table.name.lower(), self.name.lower(),
-                         #" ".join(obj.sql(inline=True) for obj in subobjects)))]
-
   @classmethod
   def from_db (class_, name, into_database):
     rs = db.query(""" SELECT column_name
@@ -202,15 +195,13 @@ class Column (HasConstraints, HasTable, HasUserType, HasDataDefault,
     return [construct(OracleFQN(name.schema, name.obj, col_name), props)
             for (_, col_name), *props in (row.items() for row in rs)]
 
-class VirtualColumn (Column):
+class VirtualColumn (HasExpressionWithDataDefault, Column):
   namespace = Column
 
   def __init__ (self, name, **props):
     super().__init__(name, **props)
 
     self.props['virtual_column'] = 'YES'
-
-  expression = Column.data_default
 
   def _sql (self, fq=False, full_def=True):
     parts = []

@@ -170,28 +170,6 @@ class Expression (object):
 
     return references
 
-  """
-  def _parse_expression (self):
-    ids = re.findall('".+?"(?:\.".+?")*', self.text)
-    references = set()
-    for id in ids:
-      parts = re.split('(?<=")\.(?=")', id)
-      if len(parts) == 1:
-        dep = self.database.find(OracleFQN(self.scope_obj.name.schema,
-                                           self.scope_obj.name.obj, parts[0]),
-                                 Column)
-      else:
-        # TODO: we want to be able to reference items inside a package... for
-        # now, we'll limit to just the package.
-        # also, We're not sure if it's a global func/procedure or a package so
-        # do anonymous lookup
-        dep = self.database.find(OracleFQN(*parts[:2]), OracleObject)
-
-      references.add(dep)
-
-    return references
-  """
-
   def __eq__ (self, other):
     self.tree.pretty_print()
     other.tree.pretty_print()

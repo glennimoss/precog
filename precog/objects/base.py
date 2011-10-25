@@ -5,6 +5,8 @@ class OracleObject (HasLog):
 
   @classproperty
   def type (class_):
+    if hasattr(class_, 'namespace'):
+      class_ = class_.namespace
     return class_.pretty_type.upper()
 
   @classproperty

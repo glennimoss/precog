@@ -1,5 +1,5 @@
 from precog.objects.base import OracleObject
-from precog.objects.hasprops import HasColumns
+from precog.objects.has.columns import HasColumns
 
 class Index (HasColumns, OracleObject):
 
