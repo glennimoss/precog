@@ -1,0 +1,252 @@
+from precog.objects.base import OracleObject
+from precog.objects.hasprops import HasColumns
+
+def _in_props (*foo):
+  return property()
+
+class Constraint (HasColumns, OracleObject):
+
+  is_enabled = _in_props('is_enabled')
+
+  @property
+  def table (self):
+    if self.columns:
+      return self.columns[0].table
+    return None
+
+  def _sql (self, fq=False, inline=False):
+    parts = ['CONSTRAINT']
+    name = self.name if fq else self.name.obj
+    parts.append(name.lower())
+
+    parts.extend(self._sub_sql(inline))
+
+    if self.is_enabled is not None:
+      parts.append('ENABLE' if self.is_enabled else 'DISABLE')
+
+    return " ".join(parts)
+
+  def _sub_sql (self, inline):
+    return ['']
+
+  def _column_list (self):
+    return "( {} )".format(", ".join(col.sql(full_def=False)
+                                     for col in self.columns))
+
+  def create (self):
+    try:
+      return [Diff("ALTER TABLE {} ADD {}"
+                   .format(self.table.name.lower(), self.sql()),
+                   produces=self, priority=Diff.CREATE)]
+    except Exception as e:
+      import pdb
+      pdb.set_trace()
+
+  def _drop (self):
+    return Diff( "ALTER TABLE {} DROP CONSTRAINT {}"
+                .format(self.table.name.lower(), self.name.obj.lower()),
+                self, priority=Diff.DROP)
+
+  def diff (self, other):
+    diffs = super().diff(other, False)
+
+    prop_diff = self._diff_props(other)
+    if prop_diff:
+      diffs.append(Diff("ALTER TABLE {} MODIFY {}"
+                        .format(other.table.name.lower(), self.sql()),
+                        produces=self))
+
+    return diffs
+
+  @classmethod
+  def from_db (class_, name, into_database):
+    rs = db.query(""" SELECT constraint_name
+                           , constraint_type
+                           , status
+                           , generated
+                           , table_name
+                           , CURSOR(
+                               SELECT table_name
+                                    , column_name
+                               FROM dba_cons_columns acc
+                               WHERE acc.owner = ac.owner
+                                 AND acc.constraint_name = ac.constraint_name
+                               ORDER BY acc.position
+                             ) AS columns
+
+                           -- For check constraints
+                           , search_condition
+
+                           -- For foreign key constraints
+                           , r_owner
+                           , r_constraint_name
+                           , delete_rule
+
+                           -- For PK/unique constraints
+                           , index_owner
+                           , index_name
+                      FROM dba_constraints ac
+                      WHERE owner = :o
+                        AND table_name = :n
+                  """, o=name.schema, n=name.obj,
+                  oracle_names=['constraint_name', 'r_owner',
+                                'r_constraint_name', 'index_owner',
+                                'index_name', 'table_name', 'column_name'])
+
+    if not rs:
+      return None
+    constraints = set()
+    for row in rs:
+      if name.part:
+        # We're looking only for inlineable constraints on a specific column
+        if (len(row['columns']) > 1 or
+            row['columns'][0]['column_name'] != name.part):
+          continue
+      elif len(row['columns']) == 1:
+        # Only Constraints with multiple columns are at the Table level
+        continue
+
+      constraint_name = OracleFQN(name.schema,
+            OracleIdentifier(row['constraint_name'], trust_me=True,
+                             generated=(row['generated'] == 'GENERATED NAME')))
+      type = row['constraint_type']
+      constraint_class = None
+      props = {}
+      columns = None
+      if len(row['columns']) > 1:
+        # If there's only one column, we'll leave it up to the caller to set it
+        columns = [into_database.find(OracleFQN(name.schema,
+                                                col['table_name'],
+                                                col['column_name']),
+                                      Column)
+                   for col in row['columns']]
+      if type == 'C':
+        table = into_database.find(OracleFQN(name.schema, row['table_name']),
+                                   Table)
+        props['condition'] = parser.Expression(row['search_condition'],
+                                               scope_obj=table,
+                                               database=into_database)
+        constraint_class = CheckConstraint
+
+      elif type in ('P', 'U'):
+        props['is_pk'] = type == 'P'
+        props['index'] = into_database.find(OracleFQN(row['index_owner'],
+                                                      row['index_name']), Index)
+        constraint_class = UniqueConstraint
+
+      elif type == 'R':
+        props['fk_constraint'] = into_database.find(
+          OracleFQN(row['r_owner'], row['r_constraint_name']), UniqueConstraint)
+        props['delete_rule'] = row['delete_rule']
+        constraint_class = ForeignKeyConstraint
+      else:
+        raise UnimplementedFeatureError(
+          "Constraint {} has unsupported type {}".format(constraint_name, type))
+
+      constraints.add(constraint_class(constraint_name,
+                                       is_enabled=(row['status'] == 'ENABLED'),
+                                       database=into_database, columns=columns,
+                                       **props))
+
+    return constraints
+
+class CheckConstraint (Constraint):
+  namespace = Constraint
+
+  def __init__ (self, *args, **props):
+    super().__init__(*args, **props)
+    self._condition_refs = None
+
+  _condition = _in_props('condition')
+
+  @_condition.setter
+  def condition (self, value):
+    _assert_type(value, parser.Expression)
+    self._condition = value
+
+  @HasColumns.columns.getter
+  def columns (self):
+    columns = HasColumns.columns.__get__(self)
+    if not columns:
+      if self._condition_refs != self.condition.references:
+        self._depends_on(self.condition.references, '_condition_refs',
+                         Reference.HARD)
+      return list(self.condition.references)
+    return columns
+
+  def __repr__ (self):
+    return super().__repr__(condition=self.condition.text)
+
+  def _sub_sql (self, inline):
+    return ['CHECK (', self.condition.text, ')']
+
+class UniqueConstraint (Constraint):
+  namespace = Constraint
+
+  def __init__ (self, name, index=None, **props):
+    super().__init__(name, **props)
+    self.index = index
+
+  is_pk = _in_props('is_pk')
+
+  _index = _in_props('index')
+
+  @_index.setter
+  def index (self, value):
+    _assert_type(value, Index)
+    self._depends_on(value, '_index')
+
+    if value and not value.columns:
+      # If our index has no columns it was likely created as part of an inline
+      # constraint, so once the constraint is told its columns, it should pass
+      # them on to the index if it needs them.
+      value.columns = self.columns
+
+
+  @Constraint.columns.setter
+  def columns (self, value):
+    Constraint.columns.__set__(self, value)
+    if value and self.index and not self.index.columns:
+      # see above
+      self.index.columns = value
+
+  def _sub_sql (self, inline):
+    parts = ['PRIMARY KEY' if self.is_pk else 'UNIQUE']
+    if not inline:
+      parts.append(self._column_list())
+    if self.index:
+      parts.append('USING INDEX')
+      parts.append(self.index.name.lower())
+
+    return parts
+
+  def _drop (self):
+    diff = super()._drop()
+    diff.sql += ' KEEP INDEX'
+    return diff
+
+class ForeignKeyConstraint (Constraint):
+  namespace = Constraint
+
+  _fk_constraint = _in_props('fk_constraint')
+
+  @_fk_constraint.setter
+  def fk_constraint (self, value):
+    _assert_type(value, UniqueConstraint)
+    self._depends_on(value, '_fk_constraint')
+
+  delete_rule = _in_props('delete_rule')
+
+  def _sub_sql (self, inline):
+    parts = []
+    if not inline:
+      parts.append('FOREIGN KEY')
+      parts.append(self._column_list())
+
+    parts.extend(['REFERENCES', self.fk_constraint.table.name.lower(),
+                  self.fk_constraint._column_list()])
+    if self.delete_rule and self.delete_rule != 'NO ACTION':
+      parts.append('ON DELETE')
+      parts.append(self.delete_rule)
+
+    return parts
