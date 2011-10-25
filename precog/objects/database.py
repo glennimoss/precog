@@ -1,9 +1,9 @@
+from precog import db
+from precog import parser
+from precog.diff import order_diffs
+from precog.identifier import *
+from precog.objects import *
 from precog.objects._misc import *
-from precog.objects.base import OracleObject
-from precog.objects.plsql import *
-from precog.objects.sequence import Sequence
-from precog.objects.synonym import Synonym
-from precog.objects.table import Table
 from precog.util import HasLog
 
 class Schema (OracleObject):
@@ -59,10 +59,6 @@ class Schema (OracleObject):
       name = alternate_name
     name = OracleFQN(self.name.schema, name.obj, name.part)
 
-    print(name.obj)
-    if name.obj is None:
-      import pdb
-      pdb.set_trace()
     self.log.debug(
         "Adding {}{} as {}".format('deferred ' if obj.deferred else '',
           obj.pretty_name, name))
@@ -245,11 +241,11 @@ class Schema (OracleObject):
           "Fetching {} {}".format(obj['object_type'], object_name))
 
       try:
-        class_ = _type_to_class(obj['object_type'])
+        class_ = globals()[_type_to_class_name(obj['object_type'])]
         db_obj = class_.from_db(object_name, schema.database)
         db_obj.props['status'] = obj['status']
         schema.add(db_obj)
-      except _UnexpectedTypeError:
+      except KeyError:
         schema.log.warn("{} [{}]: unexpected type".format(
           obj['object_type'], obj['object_name']))
 

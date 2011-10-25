@@ -1,24 +1,26 @@
+from precog import db
+from precog.diff import Diff, PlsqlDiff, Reference
+from precog.errors import PlsqlSyntaxError, PrecogError
 from precog.objects._assert import *
 from precog.objects._misc import *
 from precog.objects.base import OracleObject
+from precog.objects.has.prop import HasProp
+from precog.util import HasLog
 
-def _in_props (*foo):
-  return property()
+def _type_to_class (type, name):
+    try:
+      return globals()[_type_to_class_name(type)]
+    except KeyError as e:
+      raise PrecogError(
+        "{} [{}]: unexpected PL/SQL type".format(type, name)) from e
 
 class PlsqlCode (OracleObject):
 
   @staticmethod
   def new (type, name, source, **props):
     # Create object of subclass, based on the Oracle type passed in
-    try:
-      class_ = _type_to_class(type)
-      if not issubclass(class_, PlsqlCode):
-        raise _UnexpectedTypeError()
-      return class_(name, source=source, **props)
-    except _UnexpectedTypeError:
-      self.log.warn("{} [{}]: unexpected PL/SQL type".format(
-        class_name, obj['object_name']))
-      raise
+    class_ = _type_to_class(type, name)
+    return class_(name, source=source, **props)
 
   def _sql (self, fq=True):
     return "CREATE OR REPLACE {}".format(self.props['source'])
@@ -83,19 +85,14 @@ class PlsqlCode (OracleObject):
 class PlsqlHeader (PlsqlCode):
   pass
 
-class PlsqlBody (PlsqlCode):
-
-  _header = _in_props('header')
-
-  @_header.setter
-  def header (self, value):
-    _assert_type(value, PlsqlHeader)
-    self._depends_on(value, '_header', Reference.AUTODROP)
+class PlsqlBody (HasProp('header', dependency=Reference.AUTODROP,
+                         assert_type=PlsqlHeader),
+                 PlsqlCode):
 
   @classmethod
   def from_db (class_, name, into_database):
     body = super().from_db(name, into_database)
-    header_class = _type_to_class(class_.type.split()[0])
+    header_class = _type_to_class(class_.type.split()[0], name)
     body.header = into_database.find(body.name, header_class)
 
     return body

@@ -228,7 +228,9 @@ scope { props; table_name }
     LPAREN
       table_item (COMMA table_item)*
     RPAREN
-    (tablespace_clause { props.update($tablespace_clause.props) })?
+    (tablespace_clause {
+      $create_table::props.update($tablespace_clause.props)
+    })?
   ;
 
 table_item
@@ -437,7 +439,7 @@ scope tab_col_ref;
           cons_class = ForeignKeyConstraint
         }
       | CHECK LPAREN check_exp=expression RPAREN {
-          props['condition'] = $check_exp.exp
+          props['expression'] = $check_exp.exp
           cons_class = CheckConstraint
         }
       )
@@ -513,7 +515,7 @@ scope tab_col_ref;
       | // Nothing
       )
     | CHECK LPAREN check_exp=expression RPAREN {
-        props['condition'] = $check_exp.exp
+        props['expression'] = $check_exp.exp
         cons_class = CheckConstraint
       }
     )
@@ -602,8 +604,9 @@ sequence_prop
 create_synonym returns [obj]
   : CREATE (OR kREPLACE)? SYNONYM syn=identifier FOR target=identifier
     {
-      $obj = Synonym($syn.ident, $g::database.find($target.ident, OracleObject),
-        database=$g::database)
+      $obj = Synonym($syn.ident,
+                     for_object=$g::database.find($target.ident, OracleObject),
+                     database=$g::database)
     }
   ;
 insert_statement returns [obj]

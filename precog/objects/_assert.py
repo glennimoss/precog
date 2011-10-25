@@ -1,8 +1,5 @@
 __all__ = ['_assert_type', '_assert_contains_type']
 
-class _UnexpectedTypeError (KeyError):
-  pass
-
 def _assert_type (value, type):
   if value is not None:
     if not isinstance(value, type):

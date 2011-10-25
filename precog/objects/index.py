@@ -1,3 +1,5 @@
+from precog import db
+from precog.identifier import *
 from precog.objects.base import OracleObject
 from precog.objects.has.columns import HasColumns
 
@@ -67,8 +69,6 @@ class Index (HasColumns, OracleObject):
     rs = db.query(""" SELECT index_type
                            , uniqueness
                            , tablespace_name
-                        -- , table_owner
-                        -- , table_name
                            , CURSOR(
                                SELECT table_owner
                                     , table_name
@@ -93,9 +93,9 @@ class Index (HasColumns, OracleObject):
       rs['index_type'] = 'NORMAL'
       #raise UnimplementedFeatureError(
       #  "Index {} is of unsupported type {}".format(name, rs['index_type']))
-    #*props, (_, table_owner), (_, table_name), (_, columns) = rs.items()
     *props, (_, columns) = rs.items()
 
+    from precog.objects.column import Column
     columns = [into_database.find(OracleFQN(col['table_owner'],
                                             col['table_name'],
                                             col['column_name']), Column)

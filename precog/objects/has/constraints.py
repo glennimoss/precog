@@ -1,3 +1,4 @@
+from precog.objects.constraint import Constraint, UniqueConstraint
 from precog.objects.has.prop import HasProp
 
 class HasConstraints (HasProp('constraints', assert_collection=set,

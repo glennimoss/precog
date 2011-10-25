@@ -1,3 +1,4 @@
+from precog import db
 from precog.objects.base import OracleObject
 
 class Sequence (OracleObject):

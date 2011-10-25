@@ -29,6 +29,7 @@ class Diff (object):
   DROP = 1
   CREATE = 2
   ALTER = 3
+  PLSQL = 10
   NamedConstant.name(locals())
 
   def __init__ (self, sql, dependencies=None, produces=None, priority=None,
@@ -116,9 +117,9 @@ class Diff (object):
 
 class PlsqlDiff (Diff):
 
-  def __init__ (self, sql, dependencies=None, produces=None, priority=None,
-      terminator='\n/'):
-    super().__init__(sql, dependencies, produces, priority, terminator)
+  def __init__ (self, sql, priority=None, terminator='\n/', **kwargs):
+    super().__init__(sql, priority=priority + Diff.PLSQL, terminator=terminator,
+                    **kwargs)
 
   def apply (self):
     super().apply()
@@ -149,6 +150,43 @@ class DiffCycleError (PrecogError):
 def order_diffs (diffs):
   log = logging.getLogger('precog.diff.order_diffs')
 
+  merged_diffs = {}
+  for diff in diffs:
+    if diff.sql in merged_diffs:
+      before = len(merged_diffs[diff.sql]._dependencies)
+      #log.debug("Before: {}".format({d.pretty_name for d in
+                                     #merged_diffs[diff.sql]._dependencies}))
+      merged_diffs[diff.sql].add_dependencies(diff._dependencies)
+      merged = len(merged_diffs[diff.sql]._dependencies)
+      if before != merged:
+        log.debug("After: {}".format({d.pretty_name for d in
+                                       merged_diffs[diff.sql]._dependencies}))
+
+    else:
+      merged_diffs[diff.sql] = diff
+  diffs = merged_diffs.values()
+
+  # filter diffs to remove object drops that are autodropped by other diffs
+  dropping = {diff.dropping: diff for diff in diffs if diff.dropping}
+  applicable_diffs = set()
+  for diff in diffs:
+    if diff.dropping:
+      log.debug("Dropping {}".format(diff.pretty_name))
+      autodroppers = (diff.dropping.dependencies_with(Reference.AUTODROP) &
+                      dropping.keys())
+      log.debug("    Autodroppers {}".format([a.pretty_name for a in
+                                              autodroppers]))
+      if autodroppers:
+        #diff.add_dependencies(dropping[d] for d in autodroppers)
+        for d in autodroppers:
+          # Swap dependencies
+          diff.add_dependencies(dropping[d])
+          dropping[d]._dependencies.discard(diff)
+        continue
+
+
+    applicable_diffs.add(diff)
+
   log.debug("All diffs:\n{}".format(pprint.pformat(
     {diff.pretty_name: {'sql': diff.sql,
                         'dependencies':
@@ -159,21 +197,15 @@ def order_diffs (diffs):
                           {dep.pretty_name
                               for dep in diff.dropping
                                 .dependencies_with(Reference.AUTODROP)},
-                        'created': diff.created
+                        #'created': diff.created
                        }
     for diff in diffs})))
-
-  # filter diffs to remove object drops that are autodropped by other diffs
-  dropping = {diff.dropping for diff in diffs if diff.dropping}
-  diffs = [diff for diff in diffs
-           if not diff.dropping or
-              not (diff.dropping.dependencies_with(Reference.AUTODROP) &
-                   dropping)]
 
   # list of obj: [dependencies, ...]
   edges = {}
   # Produced objects of diffs to be sorted
-  S = sorted(diffs, key=lambda x: x.priority)
+  #S = sorted(applicable_diffs, key=lambda x: x.priority)
+  S = sorted(applicable_diffs, key=lambda x: x.sql)
 
   # create edge list
   def add_edge (from_, to):
@@ -190,14 +222,16 @@ def order_diffs (diffs):
       add_edge(diff.produces, diff)
 
   for k,v in edges.items():
-    edges[k] = sorted(v, key=lambda x: x.priority if isinstance(x, Diff) else 0)
+    edges[k] = sorted(v, key=lambda x: -x.priority if isinstance(x, Diff) else 0)
   log.debug("Edge list:\n{}".format(_edge_list(edges)))
 
   # list of sorted diffs
   L = []
   visited = set()
 
+  indent = ''
   def visit (node, this_visit=()):
+    nonlocal indent
     cycle = False
     if node in this_visit:
       cycle = True
@@ -207,17 +241,23 @@ def order_diffs (diffs):
 
     if not node in visited:
       visited.add(node)
-      if isinstance(node, Diff):
-        log.debug("Can I apply {}?".format(node.pretty_name))
+
+      # A diff may have been filtered out of diffs but remains for
+      applicable = isinstance(node, Diff) and node in applicable_diffs
+      if applicable:
+        debugstr = "{}Can I apply {}?"
       else:
-        log.debug("Visiting {}".format(node.pretty_name))
+        debugstr = "{}Visiting {}"
+      log.debug(debugstr.format(indent, node.pretty_name))
 
       if node in edges:
         for dependent in edges[node]:
+          indent += '  '
           visit(dependent, this_visit)
+          indent = indent[:-2]
 
-      if isinstance(node, Diff):
-        log.debug("Apply {}".format(node.pretty_name))
+      if applicable:
+        log.debug("{}Apply {}".format(indent, node.pretty_name))
         L.append(node)
 
   for node in S:

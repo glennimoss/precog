@@ -1,6 +1,6 @@
 import argparse, logging, os, re, sys
 
-from precog.objects import Database
+from precog.objects.database import Database
 from precog.errors import PrecogError, OracleError, UnappliedDependencyError
 
 #Always print help
@@ -128,4 +128,4 @@ try:
 
 except PrecogError as e:
   print(e, file=sys.stderr)
-  raise
+  #raise

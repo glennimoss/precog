@@ -1,9 +1,14 @@
+from precog import db
+from precog.diff import Commit
+from precog.identifier import *
 from precog.objects.base import OracleObject
+from precog.objects.column import Column
+from precog.objects.constraint import Constraint
 from precog.objects.has.columns import HasColumns, OwnsColumns
 from precog.objects.has.constraints import HasConstraints
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType
-from precog.util import classproperty
+from precog.util import InsensitiveDict
 
 class Data (HasColumns, OracleObject):
 
@@ -29,9 +34,9 @@ class Data (HasColumns, OracleObject):
                         if val is not None))
 
   def values (self):
-    return collections.OrderedDict(zip((col.name.part.lower()
-                                        for col in self.columns),
-                                       self.expressions))
+    return InsensitiveDict(zip((col.name.part.lower()
+                                for col in self.columns),
+                               self.expressions))
 
   def _sql (self, fq=True):
     table_name = self.table.name

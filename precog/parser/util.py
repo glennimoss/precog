@@ -128,10 +128,9 @@ class Expression (object):
 
   @property
   def tree (self):
-    print(self._tree, self.text, self.scope_obj, self.database)
     if not self._tree and self.text and self.scope_obj and self.database:
-      self._tree = string_parser(text).parse_expression(scope_obj.name,
-                                                        database).tree
+      self._tree = string_parser(self.text).parse_expression(
+        self.scope_obj.name, self.database).tree
     return self._tree
 
   @property

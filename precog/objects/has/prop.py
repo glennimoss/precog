@@ -8,7 +8,7 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
 
   class HasProp (object):
     def __init__ (self, name, **props):
-      prop_value = props.pop(prop_name)
+      prop_value = props.pop(prop_name, None)
       setattr(self, under_prop,
               assert_collection() if assert_collection else None)
       super().__init__(name, **props)

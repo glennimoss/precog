@@ -1,4 +1,7 @@
-from precog.diff import Reference
+import logging
+
+from precog.diff import Diff, Reference
+from precog.identifier import *
 from precog.util import classproperty, HasLog, InsensitiveDict
 
 class OracleObject (HasLog):
@@ -86,17 +89,23 @@ class OracleObject (HasLog):
   def create (self):
     return [Diff(self.sql(), produces=self, priority=Diff.CREATE)]
 
-  def drop (self):
+  def drop (self, ref=None):
     self.log.debug("Dropping {}".format(self.pretty_name))
     for ref in self._referenced_by:
       self.log.debug(ref)
+    diffs = []
+    drop = None
     drop = self._drop()
+    #if ref is not Reference.AUTODROP:
+    diffs.append(drop)
     ref_diffs = [diff
                  for ref in self._referenced_by
-                   if ref.integrity is Reference.HARD
+                   if ref.integrity is not Reference.SOFT
                  for diff in ref.from_.drop()]
-    drop.add_dependencies(ref_diffs)
-    return [drop] + ref_diffs
+    if drop:
+      drop.add_dependencies(ref_diffs)
+    diffs.extend(ref_diffs)
+    return diffs
 
   def _drop (self):
     return Diff("DROP {} {}".format(self.type, self.name.lower()), self,
@@ -168,15 +177,9 @@ class OracleObject (HasLog):
     return []
 
   def _diff_props (self, other):
-    def get_prop (obj, prop):
-      if hasattr(obj, prop):
-        return getattr(obj, prop)
-      return obj.props[prop]
-
     prop_diff = InsensitiveDict((prop, expected)
-        for prop, expected in ((prop, get_prop(self, prop))
-                               for prop in self.props.items())
-        if expected != get_prop(other, prop))
+                                for prop, expected in self.props.items()
+                                if expected != other.props[prop])
 
     if self.log.isEnabledFor(logging.DEBUG):
       for prop in prop_diff:

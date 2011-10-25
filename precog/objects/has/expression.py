@@ -21,7 +21,7 @@ class HasExpression (_HasExpression, _HasExpressionRefs):
     if (expression and not expression.tree and
         self.table and self.database):
       # Try again for late binding
-      _HasExpression.expression.__set__(self, expression.text)
+      self.expression = expression.text
     return _HasExpression.expression.__get__(self)
 
   @OracleObject.dependencies.getter
@@ -35,6 +35,7 @@ class HasExpressionWithDataDefault (HasExpression):
   @HasExpression.expression.setter
   def expression (self, value):
     HasExpression.expression.__set__(self, value)
-    self.data_default = self.expression and self.expression.text
+    HasDataDefault.data_default.__set__(self, self.expression and
+                                              self.expression.text)
 
   data_default = HasDataDefault.data_default.setter(expression.__set__)

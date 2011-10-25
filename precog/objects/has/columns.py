@@ -1,10 +1,10 @@
 from precog.diff import Reference
-from precog.objects.column import Column
 from precog.objects.has.prop import HasProp
 
-def _HasColumns (column_reference=Reference.AUTODROP):
+def _HasColumns (column_reference):
+  # Can't assert type of Column because of circular dependency
   class HasColumns (HasProp('columns', dependency=column_reference,
-                            assert_collection=list, assert_type=Column))
+                            assert_collection=list)):
 
     def _eq_columns (self, other):
       mycols = {c.name: c for c in self.columns}
@@ -14,5 +14,5 @@ def _HasColumns (column_reference=Reference.AUTODROP):
 
   return HasColumns
 
-HasColumns = _HasColumns()
+HasColumns = _HasColumns(Reference.AUTODROP)
 OwnsColumns = _HasColumns(None)

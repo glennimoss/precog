@@ -1,14 +1,15 @@
-from precog.diff import Reference
+from precog import db
+from precog.diff import Diff, Reference
+from precog.identifier import *
 from precog.objects.base import OracleObject
+from precog.objects.constraint import Constraint, CheckConstraint
 from precog.objects.has.constraints import HasConstraints
 from precog.objects.has.expression import (HasDataDefault,
                                            HasExpressionWithDataDefault)
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType
-from precog.objects.table import Table
 
-class _HasTable (HasProp('table', dependency=Reference.AUTODROP,
-                        assert_type=Table)):
+class _HasTable (HasProp('table', dependency=Reference.AUTODROP)):
 
   def _eq_table (self, other):
     return ((not self.table and not other.table) or
@@ -32,9 +33,9 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     super().__init__(name, **props)
 
 
-  @HasTable.table.setter
+  @_HasTable.table.setter
   def table (self, value):
-    HasTable.table.__set__(self, value)
+    _HasTable.table.__set__(self, value)
     if value:
       self.name = OracleFQN(value.name.schema, value.name.obj, self.name.part)
     # Reset the table on constraints
@@ -54,7 +55,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
         if (isinstance(cons, CheckConstraint) and
             cons.name.generated and
             self.props['nullable'] == 'N' and
-            cons.condition.text == "{} IS NOT NULL"
+            cons.expression.text == "{} IS NOT NULL"
               .format(self.name.part.force_quoted())):
           # Get rid of the system generated constraint for NOT NULL
           not_null.add(cons)
@@ -179,7 +180,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                                 'data_type_owner', 'data_type'])
 
     def construct (name, props):
-      props = InsensitiveDict(props)
+      props = dict(props)
       if props['data_type_owner']:
         props['user_type'] = into_database.find(
           OracleFQN(props['data_type_owner'], props['data_type']), Type)
