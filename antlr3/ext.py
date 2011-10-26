@@ -154,7 +154,7 @@ class ValueNode (ComparableCommonTree):
     self.value = value
 
   def __eq__ (self, other):
-    return self.value == other.value
+    return isinstance(other, ValueNode) and self.value == other.value
 
   def isNil (self):
     return False
