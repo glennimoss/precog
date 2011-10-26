@@ -89,23 +89,25 @@ class OracleObject (HasLog):
   def create (self):
     return [Diff(self.sql(), produces=self, priority=Diff.CREATE)]
 
-  def drop (self, ref=None):
+  def drop (self):
     self.log.debug("Dropping {}".format(self.pretty_name))
+    drop = self._drop()
+    ref_diffs = self.teardown(drop=True)
+    drop.add_dependencies(ref_diffs)
+    return [drop] + ref_diffs
+
+  def teardown (self, drop=False):
+    """
+    Disable or drop all depdendent objects. This is necessary in certain
+    circumstances when modifying an object.
+    """
+
+    self.log.debug("Tearing down {}".format(self.pretty_name))
     for ref in self._referenced_by:
       self.log.debug(ref)
-    diffs = []
-    drop = None
-    drop = self._drop()
-    #if ref is not Reference.AUTODROP:
-    diffs.append(drop)
-    ref_diffs = [diff
-                 for ref in self._referenced_by
-                   if ref.integrity is not Reference.SOFT
-                 for diff in ref.from_.drop()]
-    if drop:
-      drop.add_dependencies(ref_diffs)
-    diffs.extend(ref_diffs)
-    return diffs
+    return [diff for ref in self._referenced_by
+              if ref.integrity is not Reference.SOFT
+            for diff in ref.from_.drop()]
 
   def _drop (self):
     return Diff("DROP {} {}".format(self.type, self.name.lower()), self,
@@ -133,6 +135,7 @@ class OracleObject (HasLog):
     invalid state. If it can't be done non-destructively, it will attempt to
     recreate the object.
     """
+
     return self.recreate(self)
 
   def rename (self, other):
@@ -184,8 +187,8 @@ class OracleObject (HasLog):
     if self.log.isEnabledFor(logging.DEBUG):
       for prop in prop_diff:
         self.log.debug("{}['{}']: expected {}, found {}".format(
-          self.pretty_name, prop, repr(get_prop(self, prop)),
-          repr(get_prop(other, prop))))
+          self.pretty_name, prop, repr(self.props[prop]),
+          repr(other.props[prop])))
 
     return prop_diff
 
