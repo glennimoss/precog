@@ -118,8 +118,8 @@ class Diff (object):
 class PlsqlDiff (Diff):
 
   def __init__ (self, sql, priority=None, terminator='\n/', **kwargs):
-    super().__init__(sql, priority=priority + Diff.PLSQL, terminator=terminator,
-                    **kwargs)
+    super().__init__(sql, priority=(priority and priority + Diff.PLSQL),
+                     terminator=terminator, **kwargs)
 
   def apply (self):
     super().apply()
@@ -177,7 +177,6 @@ def order_diffs (diffs):
       log.debug("    Autodroppers {}".format([a.pretty_name for a in
                                               autodroppers]))
       if autodroppers:
-        #diff.add_dependencies(dropping[d] for d in autodroppers)
         for d in autodroppers:
           # Swap dependencies
           diff.add_dependencies(dropping[d])
@@ -201,11 +200,10 @@ def order_diffs (diffs):
                        }
     for diff in diffs})))
 
-  # list of obj: [dependencies, ...]
+  # edges is dict of obj: [dependencies, ...]
   edges = {}
   # Produced objects of diffs to be sorted
-  #S = sorted(applicable_diffs, key=lambda x: x.priority)
-  S = sorted(applicable_diffs, key=lambda x: x.sql)
+  S = sorted(applicable_diffs, key=lambda x: x.priority)
 
   # create edge list
   def add_edge (from_, to):
@@ -222,7 +220,7 @@ def order_diffs (diffs):
       add_edge(diff.produces, diff)
 
   for k,v in edges.items():
-    edges[k] = sorted(v, key=lambda x: -x.priority if isinstance(x, Diff) else 0)
+    edges[k] = sorted(v, key=lambda x: x.priority if isinstance(x, Diff) else 0)
   log.debug("Edge list:\n{}".format(_edge_list(edges)))
 
   # list of sorted diffs
