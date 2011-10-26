@@ -443,7 +443,8 @@ scope tab_col_ref;
           cons_class = CheckConstraint
         }
       )
-      ( kENABLE { props['is_enabled'] = True }
+      { props['is_enabled'] = True }
+      ( kENABLE
       | kDISABLE { props['is_enabled'] = False } )?
     )
   ;
@@ -516,6 +517,8 @@ scope tab_col_ref;
       )
     | CHECK LPAREN check_exp=expression RPAREN {
         props['expression'] = $check_exp.exp
+        props['columns'] = [col for col in $check_exp.exp.references
+                            if isinstance(col, Column)]
         cons_class = CheckConstraint
       }
     )

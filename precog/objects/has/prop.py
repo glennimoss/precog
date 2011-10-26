@@ -2,7 +2,7 @@ from precog.objects._assert import *
 from precog.objects.base import OracleObject
 
 def HasProp (prop_name, dependency=None, assert_collection=None,
-             assert_type=None):
+             assert_type=None, strict_none=False):
   under_prop = '_' + prop_name
   eq_prop = '_eq_' + prop_name
 
@@ -23,6 +23,9 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
 
       if not hasattr(other, prop_name):
         return False
+
+      if not strict_none and getattr(self, prop_name) is None:
+        return True
 
       return getattr(self, eq_prop)(other)
 

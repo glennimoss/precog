@@ -51,11 +51,10 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasColumns,
 
   def diff (self, other):
     diffs = super().diff(other, False)
-
-    prop_diff = self._diff_props(other)
-    if prop_diff:
-      diffs.append(Diff("ALTER TABLE {} MODIFY {}"
-                        .format(other.table.name.lower(), self.sql()),
+    if self.is_enabled is not None and self.is_enabled != other.is_enabled:
+      diffs.append(Diff("ALTER TABLE {} MODIFY CONSTRAINT {} {}"
+                        .format(other.table.name.lower(), self.name.obj,
+                                'ENABLE' if self.is_enabled else 'DISABLE'),
                         produces=self))
 
     return diffs
@@ -129,8 +128,10 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasColumns,
 
       elif type in ('P', 'U'):
         props['is_pk'] = type == 'P'
-        props['index'] = into_database.find(OracleFQN(row['index_owner'],
-                                                      row['index_name']), Index)
+        if row['index_name']:
+          props['index'] = into_database.find(OracleFQN(row['index_owner'],
+                                                        row['index_name']),
+                                              Index)
         constraint_class = UniqueConstraint
 
       elif type == 'R':
@@ -163,6 +164,11 @@ class CheckConstraint (HasExpression, Constraint):
   def _sub_sql (self, inline):
     return ['CHECK (', self.expression.text, ')']
 
+  def diff (self, other):
+    if self.expression != other.expression:
+      return self.recreate(other)
+    return super().diff(other)
+
 _HasIndex = HasProp('index', dependency=Reference.HARD, assert_type=Index)
 class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
                         Constraint):
@@ -176,6 +182,9 @@ class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
       # constraint, so once the constraint is told its columns, it should pass
       # them on to the index if it needs them.
       self.index.columns = self.columns
+
+  def _eq_index (self, other):
+    return self.index and other.index and self.index.name == other.index.name
 
   @Constraint.columns.setter
   def columns (self, value):

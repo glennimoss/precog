@@ -7,8 +7,8 @@ def _HasColumns (column_reference):
                             assert_collection=list)):
 
     def _eq_columns (self, other):
-      mycols = {c.name: c for c in self.columns}
-      othercols = {c.name: c for c in other.columns}
+      mycols = {c.name for c in self.columns}
+      othercols = {c.name for c in other.columns}
 
       return mycols == othercols
 
