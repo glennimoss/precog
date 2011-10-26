@@ -12,7 +12,8 @@ create table foo
   , bar_whee date
   , moredata CLOB
   , id_len AS (length(to_char(foo_id)))
-  , CONSTRAINT foo_sum CHECK (foo_id + id_len > to_number(bar_id))
+  , id_len2 AS (length(to_char(foo_id)) - 5)
+  , CONSTRAINT foo_sum CHECK (foo_id +id_len> to_number (bar_id))
   , CONSTRAINT foo_fk_bar FOREIGN KEY (bar_id, bar_whee)
     references bar (id, whee)
 );
