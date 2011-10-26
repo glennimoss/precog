@@ -128,4 +128,5 @@ try:
 
 except PrecogError as e:
   print(e, file=sys.stderr)
-  #raise
+  if len(args.verbose) > 1:
+    raise
