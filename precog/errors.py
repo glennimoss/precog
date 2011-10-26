@@ -104,6 +104,14 @@ class TableConflict (ObjectError):
     return "{} does not belong to expected table [{}]".format(
         super().__str__(), self.tablename)
 
+class DataConflict (ObjectError):
+  def __init__ (self, obj, msg):
+    super().__init__(obj)
+    self.msg = msg
+
+  def __str__ (self):
+    return "{} {}".format(super().__str__(), self.msg)
+
 class DuplicateIndexConflict (SchemaConflict):
 
   def __str__ (self):

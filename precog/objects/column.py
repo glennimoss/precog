@@ -131,11 +131,47 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                         self.name.part.lower()),
                 produces=self)
 
-  def diff (self, other):
+  def diff (self, other, force=False):
     diffs = super().diff(other, False)
 
     prop_diff = self._diff_props(other)
-    if prop_diff:
+    if prop_diff or force:
+      #rebuild = False
+      #rs = db.query("""SELECT MAX(LENGTH({})) AS max_data_length
+                       #FROM {}
+                       #""".format(other.name.part, other.table.name))
+      #max_data_length = rs[0]['max_data_length']
+      #for prop, expected in prop_diff.items():
+        #if 'data_type' == prop:
+          #rebuild = True
+          #if expected == 'NVARCHAR2':
+            #if other.props['data_type'] == 'VARCHAR2'):
+        #elif 'data_length' == prop:
+          #if max_data_length is not None and max_data_length > expected:
+            #raise DataConflict(self,
+              #"has length too small for data found. (Max length {})"
+                               #.format(max_data_length))
+        #elif 'data_precision' == prop:
+          #if expected < other.props['data_precision']:
+            #rebuild = True
+          #pass
+        #elif 'data_scale' == prop:
+          #rebuild = True
+          #pass
+        #elif 'char_length' == prop:
+          #pass
+        #elif 'char_used' == prop:
+          #pass
+        #elif 'nullable' == prop:
+          #pass
+        #elif 'virtual_column' == prop:
+          #pass
+        #elif 'hidden_column' == prop:
+          #pass
+
+      #if rebuild:
+        #diffs.extend(self.teardown())
+
       diffs.append(Diff("ALTER TABLE {} MODIFY ( {} )"
                         .format(other.table.name.lower(), self.sql()),
                         produces=self))
@@ -223,3 +259,5 @@ class VirtualColumn (HasExpressionWithDataDefault, Column):
 
     return " ".join(parts)
 
+  def diff (self, other):
+    return super().diff(other, self.expression != other.expression)
