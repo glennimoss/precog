@@ -2,19 +2,13 @@ from precog import db
 from precog.diff import Diff, Reference
 from precog.identifier import *
 from precog.objects.base import OracleObject
-from precog.objects.has.columns import HasColumns
+from precog.objects.has.columns import HasColumns, HasTableFromColumns
 from precog.objects.has.expression import HasExpression
 from precog.objects.has.prop import HasProp
 from precog.objects.index import Index
 
-class Constraint (HasProp('is_enabled', assert_type=bool), HasColumns,
-                  OracleObject):
-
-  @property
-  def table (self):
-    if self.columns:
-      return self.columns[0].table
-    return None
+class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
+                  HasColumns, OracleObject):
 
   def _sql (self, fq=False, inline=False):
     parts = ['CONSTRAINT']
@@ -41,8 +35,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasColumns,
                    .format(self.table.name.lower(), self.sql()),
                    produces=self, priority=Diff.CREATE)]
     except Exception as e:
-      import pdb
-      pdb.set_trace()
+      self.log.error("{} had this problem: {}".format(self.pretty_name, e))
 
   def _drop (self):
     return Diff( "ALTER TABLE {} DROP CONSTRAINT {}"
@@ -122,6 +115,12 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasColumns,
                                                 col['column_name']),
                                       Column)
                    for col in row['columns']]
+        if not columns:
+          # I don't think there should be constraints without columns...
+          # but there seems to be...
+          into_database.log.warn(
+            "Constraint {} has no columns. Constraint skipped.".format(name))
+          return None
       if type == 'C':
         props['expression'] = row['search_condition']
         constraint_class = CheckConstraint

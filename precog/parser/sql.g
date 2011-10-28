@@ -81,7 +81,7 @@ scope g;
         ( stmt=sql_stmt
         | stmt=plsql_stmt
         )  { $g::database.add($stmt.obj) }
-        | sqlplus_stmt
+        | (~( CREATE | INSERT ))=> sqlplus_stmt
       )* EOF
     ;
 
@@ -112,7 +112,17 @@ plsql_object_def
     | TRIGGER { $plsql_stmt::type = 'TRIGGER' }
     | kTYPE tb=kBODY?
       { $plsql_stmt::type = "TYPE{}".format(' BODY' if $tb.text else '') }
-    ) i=identifier { $plsql_stmt::name = $i.ident }
+    )
+    i=identifier { $plsql_stmt::name = $i.ident }
+    ( { $plsql_stmt::type in ('FUNCTION', 'PROCEDURE') }?
+      LPAREN ~RPAREN* RPAREN
+    )?
+    ( { $plsql_stmt::type == 'FUNCTION' }?
+      kRETURN data_type[False]
+      kDETERMINISTIC?
+      kPIPELINED?
+    | // nothing
+    )
     ( IS | AS )
     ( (~TERMINATOR)=> ~TERMINATOR )+
   ;
@@ -128,21 +138,28 @@ sql_stmt returns [obj]
   ;
 
 sqlplus_stmt returns [stmt]
+/*
   : TERMINATOR { $stmt = 'Repeat me!' }
   | kQUIT  { $stmt = "Quittin' time!" }
-  | (AT_SIGN | relative=DOUBLE_AT_SIGN) { self.input.add(NL_CHANNEL) }
-    file_name=swallow_to_nl NL
-    {
-      file_name = $file_name.text
-      if $relative:
-        relative_dir = os.path.dirname(self.input.getSourceName())
+  */
+  : { self.input.add(NL_CHANNEL) }
 
-        file_name = ''.join((relative_dir,
-                             os.sep if relative_dir else '',
-                             file_name))
+    ( (AT_SIGN | relative=DOUBLE_AT_SIGN)
+      file_name=swallow_to_nl NL
+      {
+        file_name = $file_name.text
+        if $relative:
+          relative_dir = os.path.dirname(self.input.getSourceName())
 
-      $g::database.add_file(file_name)
-    }
+          file_name = ''.join((relative_dir,
+                               os.sep if relative_dir else '',
+                               file_name))
+
+        $g::database.add_file(file_name)
+      }
+    | (~( AT_SIGN | DOUBLE_AT_SIGN ))=> command=swallow_to_nl NL
+      { self.log.info("Ignoring SQL*Plus command: {}".format($command.text)) }
+    )
   ;
 finally {
   self.input.drop(NL_CHANNEL)
@@ -228,9 +245,9 @@ scope { props; table_name }
     LPAREN
       table_item (COMMA table_item)*
     RPAREN
-    (tablespace_clause {
-      $create_table::props.update($tablespace_clause.props)
-    })?
+    ( kTABLESPACE ID
+      { $create_table::props['tablespace_name'] = $ID.text }
+    )?
   ;
 
 table_item
@@ -241,40 +258,47 @@ table_item
   ;
 
 col_spec returns [column]
-scope { props }
 scope tab_col_ref;
 @init {
   $tab_col_ref::columns = []
   $tab_col_ref::table = $create_table::table_name
-  $col_spec::props = InsensitiveDict()
-  $col_spec::props['constraints'] = set()
+  props = InsensitiveDict()
+  props['constraints'] = set()
 }
 @after {
-  $column = Column($i.id, database=$g::database, **$col_spec::props)
+  $column = Column($i.id, database=$g::database, **props)
 }
   : i=tID
-    ( column_data_type
+    ( dt=data_type[True] { props.update($dt.props) }
       ( DEFAULT e=expression
-        { $col_spec::props['data_default'] = $e.exp.text } )?
+        { props['data_default'] = $e.exp.text } )?
     | ( kGENERATED kALWAYS )? AS LPAREN virt=expression RPAREN kVIRTUAL? {
-        $col_spec::props['virtual_column'] = 'YES'
-        $col_spec::props['expression'] = $virt.exp
+        props['virtual_column'] = 'YES'
+        props['expression'] = $virt.exp
       }
     )
-    ( ic=inline_constraint {
+    ( NOT? NULL { props['nullable'] = 'N' if $NOT else 'Y' }
+    | ic=inline_constraint {
         if $ic.cons:
-          $col_spec::props['constraints'].add($ic.cons)
+          props['constraints'].add($ic.cons)
       }
     )*
   ;
 
-column_data_type
-  : string_data_type
-  | numeric_data_type
-  | long_raw_data_type
-  | datetime_data_type
+data_type[sized] returns [props]
+scope { props_ }
+@init {
+  $data_type::props_ = InsensitiveDict()
+}
+@after {
+  $props = $data_type::props_
+}
+  : string_data_type[$sized]
+  | numeric_data_type[$sized]
+  | long_raw_data_type[$sized]
+  | datetime_data_type[$sized]
   | lob_data_type
-  | rowid_data_type
+  | rowid_data_type[$sized]
   | oracle_data_type
   | user_data_type
   ;
@@ -283,28 +307,32 @@ int_parameter returns [val]
   : LPAREN i=tINTEGER RPAREN { $val = $i.val }
   ;
 
-string_data_type
-  : (t=CHAR | t=VARCHAR2) { $col_spec::props['data_type'] = $t.text.upper() }
-    ( LPAREN
-      l=tINTEGER { $col_spec::props['char_length'] = $l.val }
-      ( kBYTE { $col_spec::props['char_used'] = 'B' }
-      | CHAR { $col_spec::props['char_used'] = 'C' }
+string_data_type[sized]
+  : (t=CHAR | t=VARCHAR2) { $data_type::props_['data_type'] = $t.text.upper() }
+    ( {$sized}? LPAREN
+      l=tINTEGER { $data_type::props_['char_length'] = $l.val }
+      ( kBYTE { $data_type::props_['char_used'] = 'B' }
+      | CHAR { $data_type::props_['char_used'] = 'C' }
       )?
       RPAREN
-    )?
+    | {not $sized}? // nothing
+    )
   | (nt=kNCHAR | nt=kNVARCHAR2) {
-      $col_spec::props['data_type'] = $nt.text.upper()
+      $data_type::props_['data_type'] = $nt.text.upper()
     }
-    (l=int_parameter { $col_spec::props['char_length'] = $l.val })?
+    ( {$sized}? l=int_parameter { $data_type::props_['char_length'] = $l.val }
+    | {not $sized}? // nothing
+    )
   ;
 
-numeric_data_type
+numeric_data_type[sized]
 @after {
-  $col_spec::props['data_type'] = (($t and $t.text) or
+  $data_type::props_['data_type'] = (($t and $t.text) or
                                    $k1.text or $k2.text).upper()
 }
-  : t=NUMBER number_precision?
-  | t=FLOAT (p=int_parameter { $col_spec::props['data_precision'] = $p.val })?
+  : t=NUMBER ({$sized}? number_precision)?
+  | t=FLOAT ({$sized}? p=int_parameter
+             { $data_type::props_['data_precision'] = $p.val })?
   | k1=kBINARY_FLOAT
   | k2=kBINARY_DOUBLE
   ;
@@ -312,45 +340,48 @@ numeric_data_type
 number_precision
   : LPAREN
      ( precision=tINTEGER
-       { $col_spec::props['data_precision'] = $precision.val }
+       { $data_type::props_['data_precision'] = $precision.val }
        (COMMA neg=HYPHEN? scale=tINTEGER)?
      | ASTERISK COMMA neg=HYPHEN? scale=tINTEGER
      )
      {
        if $scale.val:
-         $col_spec::props['data_scale'] = $scale.val * (-1 if $neg else 1)
+         $data_type::props_['data_scale'] = $scale.val * (-1 if $neg else 1)
      }
     RPAREN
   ;
 
-long_raw_data_type
+long_raw_data_type[sized]
 @after {
-  $col_spec::props['data_type'] = OracleIdentifier(
+  $data_type::props_['data_type'] = OracleIdentifier(
     ' '.join(w.text.upper() for w in $t), True)
 }
   : t+=LONG t+=RAW?
-  | t+=RAW i=int_parameter { $col_spec::props['data_length'] = $i.val }
+  | t+=RAW ({$sized}? i=int_parameter
+            { $data_type::props_['data_length'] = $i.val }
+           | {not $sized}? //nothing
+           )
   ;
 
-datetime_data_type
+datetime_data_type[sized]
   : DATE
-    { $col_spec::props['data_type'] = 'DATE' }
-  | kTIMESTAMP i=int_parameter? (t=WITH l=kLOCAL? kTIME kZONE)?
+    { $data_type::props_['data_type'] = 'DATE' }
+  | kTIMESTAMP ({$sized}? i=int_parameter)? (t=WITH l=kLOCAL? kTIME kZONE)?
     {
-      $col_spec::props['data_type'] = "TIMESTAMP({}){}".format(
+      $data_type::props_['data_type'] = "TIMESTAMP({}){}".format(
         $i.val or 6,
         " WITH {}TIME ZONE".format('LOCAL ' if $l.text else '')
           if $t else '')
     }
   | kINTERVAL
-    ( kYEAR i=int_parameter? TO kMONTH
+    ( kYEAR ({$sized}? i=int_parameter)? TO kMONTH
     {
-      $col_spec::props['data_type'] = "INTERVAL YEAR({}) TO MONTH".format(
+      $data_type::props_['data_type'] = "INTERVAL YEAR({}) TO MONTH".format(
         $i.val or 2)
     }
-    | kDAY d=int_parameter? TO kSECOND s=int_parameter?
+    | kDAY ({$sized}? d=int_parameter)? TO kSECOND ({$sized}? s=int_parameter)?
     {
-      $col_spec::props['data_type'] = "INTERVAL DAY({}) TO SECOND({})".format(
+      $data_type::props_['data_type'] = "INTERVAL DAY({}) TO SECOND({})".format(
         $d.val or 2, $s.val or 6)
     }
     )
@@ -358,7 +389,7 @@ datetime_data_type
 
 lob_data_type
 @after {
-  $col_spec::props['data_type'] = ($t1.text or $t2.text or $t3.text or
+  $data_type::props_['data_type'] = ($t1.text or $t2.text or $t3.text or
                                    $t4.text).upper()
 }
   : t1=kBLOB
@@ -367,14 +398,17 @@ lob_data_type
   | t4=kBFILE
   ;
 
-rowid_data_type
-@after { $col_spec::props['data_type'] = (($t and $t.text) or $k.text).upper() }
+rowid_data_type[sized]
+@after {
+  $data_type::props_['data_type'] = (($t and $t.text) or $k.text).upper()
+}
   : t=ROWID
-  | k=kUROWID (i=int_parameter { $col_spec::props['data_length'] = $i.val })?
+  | k=kUROWID ({$sized}? i=int_parameter
+               { $data_type::props_['data_length'] = $i.val })?
   ;
 
 oracle_data_type
-@after { $col_spec::props['data_type'] = ($t1.text or $t2.text).upper() }
+@after { $data_type::props_['data_type'] = ($t1.text or $t2.text).upper() }
   : t1=kXMLTYPE
   | t2=kURITYPE
   ;
@@ -382,7 +416,7 @@ oracle_data_type
 user_data_type
   : i=identifier {
       user_type = $g::database.find($i.ident, Type)
-      $col_spec::props['user_type'] = user_type
+      $data_type::props_['user_type'] = user_type
     }
   ;
 
@@ -401,52 +435,52 @@ scope tab_col_ref;
   else:
     $cons = None
 }
-  : ( NOT? NULL { $col_spec::props['nullable'] = 'N' if $NOT else 'Y' }
-    | ( kCONSTRAINT constraint_name=tID // Non-spec: making required
-      | {
-          token = self.input.LT(1)
-          self.logSyntaxError('"CONSTRAINT [constraint_name]" is required.',
-                              self.input, token.index, token.line,
-                              token.charPositionInLine)
-          constraint_name = self.tID_return()
-          constraint_name.id = GeneratedId()
-        } )
-      ( ( UNIQUE { props['is_pk'] = False }
-        | kPRIMARY kKEY { props['is_pk'] = True }
-        ) { index_props = InsensitiveDict() }
-        ( kUSING INDEX
-          ( index_name=identifier {
-              index = $g::database.find($index_name.ident, Index)
-            }
-          | LPAREN new_index=create_index RPAREN {
-              index = $new_index.obj
-              $g::database.add(index)
-            }
-          | ts=tablespace_clause { index_props.update($ts.props) }
-          )
-        )?
-        {
-          if not index:
-            index = Index($constraint_name.id, unique=True,
-                          database=$g::database, **index_props)
-            $g::database.add(index)
-
-          props['index'] = index
-          cons_class = UniqueConstraint
-        }
-      | ref=references_clause {
-          props.update($ref.props)
-          cons_class = ForeignKeyConstraint
-        }
-      | CHECK LPAREN check_exp=expression RPAREN {
-          props['expression'] = $check_exp.exp
-          cons_class = CheckConstraint
-        }
-      )
-      { props['is_enabled'] = True }
-      ( kENABLE
-      | kDISABLE { props['is_enabled'] = False } )?
+  : ( kCONSTRAINT constraint_name=tID // Non-spec: making required
+    | {
+        token = self.input.LT(1)
+        self.logSyntaxError('"CONSTRAINT [constraint_name]" is required.',
+                            self.input, token.index, token.line,
+                            token.charPositionInLine)
+        constraint_name = self.tID_return()
+        constraint_name.id = GeneratedId()
+      }
     )
+    ( ( UNIQUE { props['is_pk'] = False }
+      | kPRIMARY kKEY { props['is_pk'] = True }
+      ) { index_props = InsensitiveDict() }
+      ( kUSING INDEX
+        ( index_name=identifier {
+            index = $g::database.find($index_name.ident, Index)
+          }
+        | LPAREN new_index=create_index RPAREN {
+            index = $new_index.obj
+            $g::database.add(index)
+          }
+        | attr=index_attributes
+          { index_props.update($attr.props) }
+        )
+      )?
+      {
+        if not index:
+          index = Index($constraint_name.id, unique=True,
+                        database=$g::database, **index_props)
+          $g::database.add(index)
+
+        props['index'] = index
+        cons_class = UniqueConstraint
+      }
+    | ref=references_clause {
+        props.update($ref.props)
+        cons_class = ForeignKeyConstraint
+      }
+    | CHECK LPAREN check_exp=expression RPAREN {
+        props['expression'] = $check_exp.exp
+        cons_class = CheckConstraint
+      }
+    )
+    { props['is_enabled'] = True }
+    ( kENABLE
+    | kDISABLE { props['is_enabled'] = False } )?
   ;
 
 references_clause returns [props]
@@ -502,7 +536,8 @@ scope tab_col_ref;
               index = $new_index.obj
               $g::database.add(index)
             }
-          | ts=tablespace_clause { index_props.update($ts.props) }
+          | attr=index_attributes
+            { index_props.update($attr.props) }
           )
         )?
         {
@@ -527,7 +562,7 @@ scope tab_col_ref;
   ;
 
 column_ref
-  : c=aliased_identifier {
+  : ( ID (COMMA | RPAREN) )=> c=aliased_identifier {
       fqn = $c.ident
       if not isinstance(fqn, OracleFQN):
         fqn = OracleFQN($tab_col_ref::table.schema,
@@ -535,6 +570,12 @@ column_ref
 
       $tab_col_ref::columns.append($g::database.find(fqn, Column))
     }
+  | virt=expression {
+    fqn = OracleFQN($tab_col_ref::table.schema, $tab_col_ref::table.obj,
+                    GeneratedId())
+    $tab_col_ref::columns.append(VirtualColumn(fqn, expression=$virt.exp,
+                                 database=$g::database))
+  }
   ;
 
 create_index returns [obj]
@@ -542,10 +583,10 @@ scope tab_col_ref;
 @init {
   $tab_col_ref::columns = []
   props = InsensitiveDict()
+  props['index_type'] = 'NORMAL'
 }
 @after {
   table = $g::database.find($tab_col_ref::table, Table)
-  #$obj = Index($index_name.ident, table=table, columns=$tab_col_ref::columns,
   $obj = Index($index_name.ident, columns=$tab_col_ref::columns,
     database=$g::database, **props)
 }
@@ -559,13 +600,35 @@ scope tab_col_ref;
     LPAREN
       column_ref (COMMA column_ref)*
     RPAREN
-    (tablespace_clause { props.update($tablespace_clause.props) })?
+    (attr=index_attributes { props.update($attr.props) })?
   ;
 
-tablespace_clause returns [props]
-@init { $props = InsensitiveDict() }
-  : kTABLESPACE ID { $props['tablespace_name'] = $ID.text }
+index_attributes returns [props]
+scope { props_ }
+@init {
+  $index_attributes::props_ = InsensitiveDict()
+}
+@after {
+  $props = $index_attributes::props_
+}
+  // Remember, we had to do this because there is a bug when using more than one
+  // keyword ID token at the same level within a subrule where the first one is
+  // always chosen by lookahead, and so all other alternatives cause an error.
+  // By breaking out the subrule to its own rule, the code is generated
+  // correctly, without the bug.
+  : index_attribute+
   ;
+
+index_attribute
+  : kREVERSE { $index_attributes::props_['index_type'] = 'NORMAL/REV' }
+  | kTABLESPACE ID { $index_attributes::props_['tablespace_name'] = $ID.text }
+  ;
+
+/*
+tablespace_clause returns [ts_name]
+  : kTABLESPACE ID { $ts_name = $ID.text }
+  ;
+  */
 
 create_sequence returns [obj]
 scope { props }
@@ -1247,6 +1310,7 @@ kCONSTRAINT : {self.input.LT(1).text.lower() == 'constraint'}? ID;
 kCYCLE : {self.input.LT(1).text.lower() == 'cycle'}? ID;
 kDAY : {self.input.LT(1).text.lower() == 'day'}? ID;
 kDELETING : {self.input.LT(1).text.lower() == 'deleting'}? ID;
+kDETERMINISTIC : {self.input.LT(1).text.lower() == 'deterministic'}? ID;
 kDISABLE : {self.input.LT(1).text.lower() == 'disable'}? ID;
 kENABLE : {self.input.LT(1).text.lower() == 'enable'}? ID;
 kFALSE : {self.input.LT(1).text.lower() == 'false'}? ID;
@@ -1271,10 +1335,13 @@ kNOORDER : {self.input.LT(1).text.lower() == 'noorder'}? ID;
 kNOTFOUND : {self.input.LT(1).text.lower() == 'notfound'}? ID;
 kNVARCHAR2 : {self.input.LT(1).text.lower() == 'nvarchar2'}? ID;
 kPACKAGE : {self.input.LT(1).text.lower() == 'package'}? ID;
+kPIPELINED : {self.input.LT(1).text.lower() == 'pipelined'}? ID;
 kPRIMARY : {self.input.LT(1).text.lower() == 'primary'}? ID;
 kQUIT : {self.input.LT(1).text.lower() == 'quit' and self.aloneOnLine()}? ID;
 kREFERENCES : {self.input.LT(1).text.lower() == 'references'}? ID;
 kREPLACE : {self.input.LT(1).text.lower() == 'replace'}? ID;
+kRETURN : {self.input.LT(1).text.lower() == 'return'}? ID;
+kREVERSE : {self.input.LT(1).text.lower() == 'reverse'}? ID;
 kSECOND : {self.input.LT(1).text.lower() == 'second'}? ID;
 kSEQUENCE : {self.input.LT(1).text.lower() == 'sequence'}? ID;
 kTABLESPACE : {self.input.LT(1).text.lower() == 'tablespace'}? ID;

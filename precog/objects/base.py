@@ -4,6 +4,8 @@ from precog.diff import Diff, Reference
 from precog.identifier import *
 from precog.util import classproperty, HasLog, InsensitiveDict
 
+SkippedObject = object()
+
 class OracleObject (HasLog):
 
   @classproperty
@@ -35,11 +37,12 @@ class OracleObject (HasLog):
     if self.deferred:
       other_props['deferred'] = True
 
-    props = self.props.copy()
-    props.update(other_props)
-    return "{}({!r}, {})".format(type(self).__name__,
-        self.name,
-        ', '.join("{}={!r}".format(k, v) for k, v in props.items()))
+    return "<{}>".format(self.pretty_name)
+    #props = self.props.copy()
+    #props.update(other_props)
+    #return "{}({!r}, {})".format(type(self).__name__,
+        #self.name,
+        #', '.join("{}={!r}".format(k, v) for k, v in props.items()))
 
 
   def __str__ (self):

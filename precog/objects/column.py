@@ -8,6 +8,7 @@ from precog.objects.has.expression import (HasDataDefault,
                                            HasExpressionWithDataDefault)
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType
+from precog.objects.plsql import Type
 
 class _HasTable (HasProp('table', dependency=Reference.AUTODROP)):
 
@@ -20,7 +21,12 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
               HasProp('qualified_col_name', assert_type=str), OracleObject):
 
   def __new__ (class_, *args, **props):
-    if 'virtual_column' in props and 'YES' == props['virtual_column']:
+    # Sometimes columns are marked as virtual columns, but because they
+    # represent object columns, they're also virtual.
+    # We don't consider these VirtualColumns
+    if ('virtual_column' in props and 'YES' == props['virtual_column'] and
+        (('expression' in props and props['expression']) or
+         ('data_default' in props and props['data_default']))):
       class_ = VirtualColumn
     return super().__new__(class_, *args, **props)
 
@@ -229,6 +235,8 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
       return class_(name, constraints=constraints, database=into_database,
                     **props)
 
+    if not rs:
+      into_database.log.warn("Columns not found for {}".format(name))
     return [construct(OracleFQN(name.schema, name.obj, col_name), props)
             for (_, col_name), *props in (row.items() for row in rs)]
 

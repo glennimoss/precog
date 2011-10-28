@@ -60,5 +60,6 @@ class Sequence (OracleObject):
                         AND sequence_name = :n
                   """, o=name.schema, n=name.obj)
     if not rs:
+      into_database.log.warn("Sequence not found for {}".format(name))
       return None
     return class_(name, database=into_database, **rs[0])

@@ -1,13 +1,14 @@
 from precog import db
-from precog.diff import Commit
+from precog.diff import Commit, Diff
 from precog.identifier import *
-from precog.objects.base import OracleObject
+from precog.objects.base import OracleObject, SkippedObject
 from precog.objects.column import Column
 from precog.objects.constraint import Constraint
 from precog.objects.has.columns import HasColumns, OwnsColumns
 from precog.objects.has.constraints import HasConstraints
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType
+from precog.objects.plsql import Type
 from precog.util import InsensitiveDict
 
 class Data (HasColumns, OracleObject):
@@ -209,14 +210,29 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
                                   ELSE table_type_owner
                              END AS table_type_owner
                            , tablespace_name
+                           , iot_type
+                           , nested
                       FROM dba_all_tables
                       WHERE owner = :o
                         AND table_name = :t
                   """, o=name.schema, t=name.obj,
                   oracle_names=['tablespace_name'])
     if not rs:
+      into_database.log.warn("Table not found for {}".format(name))
       return None
     props = rs[0]
+    if props['iot_type'] is not None:
+      # TODO: currently ignoring index-organized tables
+      into_database.log.info(
+        "Table {} is an index-organized table. Skipping...".format(name))
+      return SkippedObject
+    if props['nested'] == 'YES':
+      # TODO: assuming that nested tables are managed by their parent tables
+      into_database.log.info(
+        "Table {} is a nested table. Skipping...".format(name))
+      return SkippedObject
+    del props['iot_type']
+    del props['nested']
     if props['table_type_owner']:
       props['user_type'] = into_database.find(
         OracleFQN(props['table_type_owner'], props['table_type']), Type)

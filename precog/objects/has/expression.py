@@ -22,7 +22,10 @@ class HasExpression (_HasExpression, _HasExpressionRefs):
         self.table and self.database):
       # Try again for late binding
       self.expression = expression.text
-    return _HasExpression.expression.__get__(self)
+    expression = _HasExpression.expression.__get__(self)
+    if expression:
+      return expression
+    self.log.warn("{} has no expression!".format(self.pretty_name))
 
   @OracleObject.dependencies.getter
   def dependencies (self):

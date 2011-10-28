@@ -1,14 +1,22 @@
 from precog import db
 from precog.identifier import *
-from precog.objects.base import OracleObject
-from precog.objects.has.columns import HasColumns
+from precog.objects.base import OracleObject, SkippedObject
+from precog.objects.has.columns import HasColumns, HasTableFromColumns
 
-class Index (HasColumns, OracleObject):
+class Index (HasTableFromColumns, HasColumns, OracleObject):
 
-  def __init__ (self, name, unique=None, **props):
+  def __init__ (self, name, unique=None, reverse=None, **props):
     super().__init__(name, **props)
     if unique is not None:
       self.unique = unique
+
+  @HasColumns.columns.setter
+  def colunms (self, value):
+    HasColumns.columns.__set__(self, value)
+    if (self.props['index_type'] and
+        [col for col in self.columns if isinstance(col, VirtualColumn)]):
+      self.props['index_type'] = "FUNCTION-BASED {}".format(
+        self.props['index_type'])
 
   @property
   def unique (self):
@@ -18,31 +26,31 @@ class Index (HasColumns, OracleObject):
   def unique (self, value):
     self.props['uniqueness'] = 'UNIQUE' if value else 'NONUNIQUE'
 
-  @property
-  def table (self):
-    if self.columns:
-      return self.columns[0].table
-    return None
-
   def _sql (self, fq=True):
-    name = self.name.obj
-    if fq:
-      name = self.name
-    parts = ['CREATE']
-    if self.unique:
-      parts.append('UNIQUE')
-    parts.append('INDEX')
-    parts.append(name.lower())
-    parts.append('ON')
-    parts.append(self.table.name.lower())
-    parts.append('(')
-    parts.append(', '.join(c.sql(full_def=False) for c in self.columns))
-    parts.append(')')
-    if 'index_type' in self.props and self.props['index_type'].endswith('/REV'):
-      parts.append('REVERSE')
-    if self.props['tablespace_name']:
-      parts.append('TABLESPACE')
-      parts.append(self.props['tablespace_name'].lower())
+    try:
+      name = self.name.obj
+      if fq:
+        name = self.name
+      parts = ['CREATE']
+      if self.unique:
+        parts.append('UNIQUE')
+      parts.append('INDEX')
+      parts.append(name.lower())
+      parts.append('ON')
+      parts.append(self.table.name.lower())
+      parts.append('(')
+      parts.append(', '.join(c.sql(full_def=False) for c in self.columns))
+      parts.append(')')
+      if ('index_type' in self.props and
+          self.props['index_type'].endswith('/REV')):
+        parts.append('REVERSE')
+      if self.props['tablespace_name']:
+        parts.append('TABLESPACE')
+        parts.append(self.props['tablespace_name'].lower())
+    except Exception as e:
+      self.log.error(
+        "Index {} has colums {} had the problem {}".format(self.pretty_name,
+                                                           self.columns, e))
 
     return " ".join(parts)
 
@@ -87,12 +95,15 @@ class Index (HasColumns, OracleObject):
     if not rs:
       return None
     rs = rs[0]
+    if rs['index_type'] == 'IOT - TOP':
+      into_database.log.info(
+        "Index {} is for an index-organized table. Skipping...".format(name))
+      return SkippedObject
+
     if rs['index_type'].find('NORMAL') == -1:
       into_database.log.warn(
         "Index {} is of unsupported type {}".format(name, rs['index_type']))
-      rs['index_type'] = 'NORMAL'
-      #raise UnimplementedFeatureError(
-      #  "Index {} is of unsupported type {}".format(name, rs['index_type']))
+      return None
     *props, (_, columns) = rs.items()
 
     from precog.objects.column import Column
@@ -100,4 +111,9 @@ class Index (HasColumns, OracleObject):
                                             col['table_name'],
                                             col['column_name']), Column)
                for col in columns]
+    # An index without columns is hardly an index at all!
+    if not columns:
+      into_database.log.warn(
+        "Index {} has no columns. Index skipped.".format(name))
+      return None
     return class_(name, database=into_database, columns=columns, **dict(props))

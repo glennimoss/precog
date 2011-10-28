@@ -32,6 +32,7 @@ class Synonym (HasProp('for_object', dependency=Reference.SOFT,
                         AND synonym_name = :n
                   """, o=name.schema, n=name.obj)
     if not rs:
+      into_database.log.warn("Synonym not found for {}".format(name))
       return None
     rs = rs[0]
     return class_(name, for_object=into_database.find(

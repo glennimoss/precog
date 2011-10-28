@@ -78,6 +78,7 @@ class PlsqlCode (OracleObject):
                       ORDER BY line
                   """, o=name.schema, n=name.obj, t=class_.type)
     if not rs:
+      into_database.log.warn("PL/SQL source not found for {}".format(name))
       return None
     return class_(name, source=''.join(row['text'] for row in rs),
         database=into_database)

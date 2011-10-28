@@ -243,8 +243,16 @@ class Schema (OracleObject):
       try:
         class_ = globals()[_type_to_class_name(obj['object_type'])]
         db_obj = class_.from_db(object_name, schema.database)
-        db_obj.props['status'] = obj['status']
-        schema.add(db_obj)
+        if db_obj is SkippedObject:
+          continue
+
+        if db_obj:
+          db_obj.props['status'] = obj['status']
+          schema.add(db_obj)
+        else:
+          schema.log.warn("Unable to load {} {}.{}".format(obj['object_type'],
+                                                           owner,
+                                                           obj['object_name']))
       except KeyError:
         schema.log.warn("{} [{}]: unexpected type".format(
           obj['object_type'], obj['object_name']))
