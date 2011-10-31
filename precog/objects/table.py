@@ -4,6 +4,7 @@ from precog.identifier import *
 from precog.objects.base import OracleObject, SkippedObject
 from precog.objects.column import Column
 from precog.objects.constraint import Constraint
+from precog.objects.index import Index
 from precog.objects.has.columns import HasColumns, OwnsColumns
 from precog.objects.has.constraints import HasConstraints
 from precog.objects.has.prop import HasProp

@@ -1,4 +1,5 @@
 from precog import db
+from precog.diff import Diff
 from precog.identifier import *
 from precog.objects.base import OracleObject, SkippedObject
 from precog.objects.has.columns import HasColumns, HasTableFromColumns

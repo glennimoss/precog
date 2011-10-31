@@ -1,4 +1,5 @@
 from precog import db
+from precog.diff import Diff
 from precog.objects.base import OracleObject
 
 class Sequence (OracleObject):
