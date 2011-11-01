@@ -112,7 +112,7 @@ try:
             print(e, file=sys.stderr)
             errored_objs.add(diff)
             if diff.produces:
-              errored_objs.add(diff.produces)
+              errored_objs.update(diff.produces)
             errors += 1
         if errors:
           print("\nUnable to apply {} changes".format(errors))

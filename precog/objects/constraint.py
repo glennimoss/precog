@@ -1,6 +1,7 @@
 from precog import db
 from precog.diff import Diff, Reference
 from precog.identifier import *
+from precog.objects._assert import _assert_type
 from precog.objects.base import OracleObject
 from precog.objects.has.columns import HasColumns, HasTableFromColumns
 from precog.objects.has.expression import HasExpression
@@ -42,15 +43,20 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                 .format(self.table.name.lower(), self.name.obj.lower()),
                 self, priority=Diff.DROP)
 
-  def diff (self, other):
-    diffs = super().diff(other, False)
-    if self.is_enabled is not None and self.is_enabled != other.is_enabled:
-      diffs.append(Diff("ALTER TABLE {} MODIFY CONSTRAINT {} {}"
-                        .format(other.table.name.lower(), self.name.obj,
-                                'ENABLE' if self.is_enabled else 'DISABLE'),
-                        produces=self))
+  def rename (self, other):
+    return Diff("ALTER TABLE {} RENAME CONSTRAINT {} TO {}"
+                .format(other.table.name.lower(), other.name.obj.lower(),
+                        self.name.obj.lower()), produces=self)
 
-    return diffs
+  def diff (self, other):
+    prop_diffs = self._diff_props(other)
+    if len(prop_diffs) == 1 and 'is_enabled' in prop_diffs:
+      return [Diff("ALTER TABLE {} MODIFY CONSTRAINT {} {}"
+                   .format(other.table.name.lower(), self.name.obj,
+                           'ENABLE' if self.is_enabled else 'DISABLE'),
+                   produces=self)]
+    else:
+      return super().diff(other)
 
   @classmethod
   def from_db (class_, name, into_database):
@@ -163,19 +169,24 @@ class CheckConstraint (HasExpression, Constraint):
   def _sub_sql (self, inline):
     return ['CHECK (', self.expression.text, ')']
 
-  def diff (self, other):
-    if self.expression != other.expression:
-      return self.recreate(other)
-    return super().diff(other)
-
-_HasIndex = HasProp('index', dependency=Reference.HARD, assert_type=Index)
+_HasIndex = HasProp('index')
 class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
                         Constraint):
   namespace = Constraint
 
+  FULL_INDEX_CREATE = object()
+  SHORT_INDEX_CREATE = object()
+  IMPLICIT_INDEX_CREATE = object()
+
+  def __init__ (self, name, index_ownership=None, **props):
+    self.index_ownership = index_ownership
+    super().__init__(name, **props)
+
   @_HasIndex.index.setter
   def index (self, value):
-    _HasIndex.index.__set__(self, value)
+    _assert_type(value, Index)
+    self._depends_on(value, '_index', Reference.AUTODROP
+                     if self.index_ownership else Reference.HARD)
     if self.index and not self.index.columns:
       # If our index has no columns it was likely created as part of an inline
       # constraint, so once the constraint is told its columns, it should pass
@@ -183,7 +194,13 @@ class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
       self.index.columns = self.columns
 
   def _eq_index (self, other):
-    return self.index and other.index and self.index.name == other.index.name
+    if not self.index:
+      return False
+    self.index._ignore_name = True
+    ret = other.index and (self.index.name == other.index.name
+                           or self.index == other.index)
+    self.index._ignore_name = False
+    return ret
 
   @Constraint.columns.setter
   def columns (self, value):
@@ -196,15 +213,33 @@ class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
     parts = ['PRIMARY KEY' if self.is_pk else 'UNIQUE']
     if not inline:
       parts.append(self._column_list())
-    if self.index:
+    if (self.index and
+        self.index_ownership is not UniqueConstraint.IMPLICIT_INDEX_CREATE):
       parts.append('USING INDEX')
-      parts.append(self.index.name.lower())
+
+      if self.index_ownership is UniqueConstraint.FULL_INDEX_CREATE:
+        parts.append('(')
+        parts.append(self.index.sql())
+        parts.append(')')
+      elif self.index_ownership is UniqueConstraint.SHORT_INDEX_CREATE:
+        parts.extend(self.index.index_properties_sql())
+      else:
+        parts.append(self.index.name.lower())
 
     return parts
 
+  @property
+  def sql_produces (self):
+    if self.index_ownership:
+      return {self, self.index}
+    return {self}
+
   def _drop (self):
     diff = super()._drop()
-    diff.sql += ' KEEP INDEX'
+    if self.index_ownership:
+      diff.sql += ' DROP INDEX'
+    else:
+      diff.sql += ' KEEP INDEX'
     return diff
 
 _HasFkConstraint = HasProp('fk_constraint', dependency=Reference.HARD,

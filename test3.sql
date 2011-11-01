@@ -3,12 +3,13 @@ create table baz
   , a number(7)
   , b number(7,9)
   , c number(*,13)
+  , d number
   , e number
   , f varchar2(3)
   --, obj test_type
 );
 
---create unique index baz_fnidx on baz ( a + b + c);
+create unique index baz_fnidx on baz ( round(a + b + c + d));
 
 create index foo_virtidx on foo (id_len);
 

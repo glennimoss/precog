@@ -33,11 +33,15 @@ class OracleObject (HasLog):
       self._dependencies = set()
       self._update_props(props)
 
-  def __repr__ (self, **other_props):
-    if self.deferred:
-      other_props['deferred'] = True
+      # Ugh this feels hacky
+      self._ignore_name = False
 
+  def __repr__ (self, **other_props):
+    #return super().__repr__()
     return "<{}>".format(self.pretty_name)
+    #if self.deferred:
+      #other_props['deferred'] = True
+
     #props = self.props.copy()
     #props.update(other_props)
     #return "{}({!r}, {})".format(type(self).__name__,
@@ -50,9 +54,16 @@ class OracleObject (HasLog):
 
   def __eq__ (self, other):
     if not isinstance(other, type(self)):
+      self.log.debug(
+        "instanceof({}, type({})) failed for type(other) = {!r}, type(self) = "
+        "{!r}".format(self and self.pretty_name, other and other.pretty_name,
+                      type(other), type(self)))
       return False
 
-    if self.name != other.name:
+    if not self._ignore_name and self.name != other.name:
+      self.log.debug(
+        "{} == {} failed for self.name = {!r}, other.name = {!r}".format(
+          self.pretty_name, other.pretty_name, self.name, other.name))
       return False
 
     common_props = self.props.keys() & other.props.keys()
@@ -89,8 +100,12 @@ class OracleObject (HasLog):
     return "-- Placeholder for {}{}".format(
         'deferred ' if self.deferred else '', self.pretty_name)
 
+  @property
+  def sql_produces (self):
+    return {self}
+
   def create (self):
-    return [Diff(self.sql(), produces=self, priority=Diff.CREATE)]
+    return [Diff(self.sql(), produces=self.sql_produces, priority=Diff.CREATE)]
 
   def drop (self):
     self.log.debug("Dropping {}".format(self.pretty_name))
@@ -150,8 +165,11 @@ class OracleObject (HasLog):
     if self.deferred:
       if type(self) is not type(other):
         self.become(type(other))
-      if self.name.generated:
+      if self.name.generated and not other.name.generated:
         self.name = other.name
+      elif other.name.generated:
+        self.name._generated = True
+
       self._update_props(other.props)
 
       self.deferred = False
@@ -160,7 +178,7 @@ class OracleObject (HasLog):
   def subobjects (self):
     return set()
 
-  def diff (self, other, create=True):
+  def diff (self, other, recreate=True):
     """
     Calculate differences between self, which is the desired definition, and
     other, which is the current database state.
@@ -170,8 +188,8 @@ class OracleObject (HasLog):
       self.log.warn(
           "Comparing {!r} to deferred object {!r}".format(self, other))
     if self != other:
-      if create:
-        return self.create()
+      if recreate:
+        return self.recreate(other)
       elif self.name.obj != other.name.obj:
         return [self.rename(other)]
     else:
@@ -189,13 +207,14 @@ class OracleObject (HasLog):
 
     if self.log.isEnabledFor(logging.DEBUG):
       for prop in prop_diff:
-        self.log.debug("{}['{}']: expected {}, found {}".format(
+        self.log.debug("{}['{}']: expected {!r}, found {!r}".format(
           self.pretty_name, prop, repr(self.props[prop]),
           repr(other.props[prop])))
 
     return prop_diff
 
-  def diff_subobjects (self, other, get_objects, label=lambda x: x.name):
+  def diff_subobjects (self, other, get_objects, label=lambda x: x.name,
+                       rename=True):
     self.log.debug("Diffing definition {} to live {}".format(self.pretty_name,
       other.pretty_name))
     diffs = []
@@ -217,6 +236,23 @@ class OracleObject (HasLog):
     addobjs = target_obj_names - current_obj_names
     dropobjs = current_obj_names - target_obj_names
 
+    # look for potential renames
+    modify_diffs = []
+    if rename:
+      not_add = set()
+      for add_name in addobjs:
+        add_obj = target_objs[add_name]
+        add_obj._ignore_name = True
+        for drop_name in dropobjs:
+          drop_obj = current_objs[drop_name]
+          if add_obj == drop_obj:
+            modify_diffs.append(add_obj.rename(drop_obj))
+            not_add.add(add_name)
+            dropobjs.remove(drop_name)
+            break
+        add_obj._ignore_name = False
+      addobjs.difference_update(not_add)
+
     pretty_type = ((target_objs and
                     type(next(iter(target_objs.values()))).pretty_type) or
                    (current_objs and
@@ -234,10 +270,10 @@ class OracleObject (HasLog):
       diffs.extend(
           other.drop_subobjects(current_objs[dropobj] for dropobj in dropobjs))
 
-    modify_diffs = [diff
+    modify_diffs.extend(diff
         for target_obj in target_objs.values()
           if target_obj.name in current_objs
-        for diff in target_obj.diff(current_objs[target_obj.name])]
+        for diff in target_obj.diff(current_objs[target_obj.name]))
     self.log.debug("  {} modifications for {}s".format(
       len(modify_diffs), pretty_type))
     diffs.extend(modify_diffs)

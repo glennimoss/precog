@@ -3,7 +3,14 @@ from precog.objects.base import OracleObject
 from precog.objects.has.prop import HasProp
 from precog.parser import Expression
 
-HasDataDefault = HasProp('data_default')
+_HasDataDefault = HasProp('data_default')
+class HasDataDefault (_HasDataDefault):
+
+  @_HasDataDefault.data_default.setter
+  def data_default (self, value):
+    if isinstance(value, str):
+      value = value.strip()
+    _HasDataDefault.data_default.__set__(self, value)
 
 _HasExpression = HasProp('expression', assert_type=Expression)
 _HasExpressionRefs = HasProp('_expression_refs', dependency=Reference.HARD)
@@ -35,10 +42,13 @@ class HasExpression (_HasExpression, _HasExpressionRefs):
 class HasExpressionWithDataDefault (HasExpression):
   """ Expects subclass to also inherit HasDataDefault somewhere. """
 
-  @HasExpression.expression.setter
-  def expression (self, value):
-    HasExpression.expression.__set__(self, value)
-    HasDataDefault.data_default.__set__(self, self.expression and
-                                              self.expression.text)
+  expression = HasExpression.expression
 
-  data_default = HasDataDefault.data_default.setter(expression.__set__)
+  @property
+  def data_default (self):
+    return self.expression and self.expression.text
+
+  data_default = data_default.setter(expression.__set__)
+
+  def _eq_data_default (self, other):
+    return self.expression == other.expression

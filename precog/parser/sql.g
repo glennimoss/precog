@@ -73,10 +73,16 @@ scope tab_col_ref { alias_map; table; columns }
       print(t)
 }
 
-sqlplus_file[database]
-scope { stmt_begin; }
+sqlplus_file[database] returns [included_files]
+scope { stmt_begin; included_files_ }
 scope g;
-@init { $g::database = $database }
+@init {
+  $g::database = $database
+  $sqlplus_file::included_files_ = []
+}
+@after {
+  $included_files = $sqlplus_file::included_files_
+}
     : ( { $sqlplus_file::stmt_begin = self.input.LT(1) }
         ( stmt=sql_stmt
         | stmt=plsql_stmt
@@ -155,10 +161,11 @@ sqlplus_stmt returns [stmt]
                                os.sep if relative_dir else '',
                                file_name))
 
-        $g::database.add_file(file_name)
+        #$g::database.add_file(file_name)
+        $sqlplus_file::included_files_.append(file_name)
       }
     | (~( AT_SIGN | DOUBLE_AT_SIGN ))=> command=swallow_to_nl NL
-      { self.log.info("Ignoring SQL*Plus command: {}".format($command.text)) }
+      { self.log.debug("Ignoring SQL*Plus command: {}".format($command.text)) }
     )
   ;
 finally {
@@ -447,27 +454,13 @@ scope tab_col_ref;
     )
     ( ( UNIQUE { props['is_pk'] = False }
       | kPRIMARY kKEY { props['is_pk'] = True }
-      ) { index_props = InsensitiveDict() }
-      ( kUSING INDEX
-        ( index_name=identifier {
-            index = $g::database.find($index_name.ident, Index)
-          }
-        | LPAREN new_index=create_index RPAREN {
-            index = $new_index.obj
-            $g::database.add(index)
-          }
-        | attr=index_attributes
-          { index_props.update($attr.props) }
-        )
-      )?
-      {
-        if not index:
-          index = Index($constraint_name.id, unique=True,
-                        database=$g::database, **index_props)
-          $g::database.add(index)
-
-        props['index'] = index
+      ) {
         cons_class = UniqueConstraint
+        index_props = InsensitiveDict()
+        props['index_ownership'] = UniqueConstraint.IMPLICIT_INDEX_CREATE
+      }
+      using_index[$constraint_name.id] {
+        props.update($using_index.props)
       }
     | ref=references_clause {
         props.update($ref.props)
@@ -515,7 +508,10 @@ scope tab_col_ref;
   : kCONSTRAINT constraint_name=tID // Non-spec: making required
     ( ( ( UNIQUE { props['is_pk'] = False }
         | kPRIMARY kKEY { props['is_pk'] = True } )
-        { cons_class = UniqueConstraint }
+        {
+          cons_class = UniqueConstraint
+          props['index_ownership'] = UniqueConstraint.IMPLICIT_INDEX_CREATE
+        }
       | kFOREIGN kKEY
         { cons_class = ForeignKeyConstraint }
       )
@@ -528,25 +524,8 @@ scope tab_col_ref;
           cons_class = ForeignKeyConstraint
         }
       | { cons_class is UniqueConstraint }?
-        ( kUSING INDEX
-          ( index_name=identifier {
-              index = $g::database.find($index_name.ident, Index)
-            }
-          | LPAREN new_index=create_index RPAREN {
-              index = $new_index.obj
-              $g::database.add(index)
-            }
-          | attr=index_attributes
-            { index_props.update($attr.props) }
-          )
-        )?
-        {
-          if not index:
-            index = Index($constraint_name.id, unique=True,
-                          database=$g::database, **index_props)
-            $g::database.add(index)
-
-          props['index'] = index
+        using_index[$constraint_name.id] {
+          props.update($using_index.props)
         }
       | // Nothing
       )
@@ -574,8 +553,37 @@ column_ref
     fqn = OracleFQN($tab_col_ref::table.schema, $tab_col_ref::table.obj,
                     GeneratedId())
     $tab_col_ref::columns.append(VirtualColumn(fqn, expression=$virt.exp,
-                                 database=$g::database))
+                                 database=$g::database, hidden_column='YES'))
   }
+  ;
+
+using_index [constraint_name] returns [props]
+@init {
+  $props = InsensitiveDict()
+  index_props = InsensitiveDict()
+}
+@after {
+  if not $props['index']:
+    $props['index'] = Index($constraint_name, unique=True,
+                            database=$g::database, **index_props)
+    $g::database.add($props['index'])
+}
+  : kUSING INDEX
+    ( index_name=identifier {
+        $props['index'] = $g::database.find($index_name.ident, Index)
+        $props['index_ownership'] = None
+      }
+    | LPAREN new_index=create_index RPAREN {
+        $props['index'] = $new_index.obj
+        $g::database.add($props['index'])
+        $props['index_ownership'] = UniqueConstraint.FULL_INDEX_CREATE
+      }
+    | attr=index_attributes {
+        index_props.update($attr.props)
+        $props['index_ownership'] = UniqueConstraint.SHORT_INDEX_CREATE
+      }
+    )
+  | // Nothing
   ;
 
 create_index returns [obj]

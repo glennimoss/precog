@@ -6,13 +6,27 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
   under_prop = '_' + prop_name
   eq_prop = '_eq_' + prop_name
 
+  def equal (self, other):
+    if not strict_none and (getattr(self, prop_name) is None or
+                            getattr(other, prop_name) is None):
+      return True
+
+    if not hasattr(other, prop_name):
+      return False
+
+    return getattr(self, eq_prop)(other)
+
   class HasProp (object):
     def __init__ (self, name, **props):
-      prop_value = props.pop(prop_name, None)
       setattr(self, under_prop,
               assert_collection() if assert_collection else None)
+      present = False
+      prop_value = None
+      if prop_name in props:
+        present = True
+        prop_value = props.pop(prop_name)
       super().__init__(name, **props)
-      if prop_value is not None:
+      if present:
         setattr(self, prop_name, prop_value)
 
     __hash__ = OracleObject.__hash__
@@ -21,17 +35,33 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
       if not super().__eq__(other):
         return False
 
-      if not hasattr(other, prop_name):
-        return False
-
-      if not strict_none and getattr(self, prop_name) is None:
-        return True
-
-      return getattr(self, eq_prop)(other)
+      ret = equal(self, other)
+      if not ret:
+        self.log.debug(
+          "{} == {} failed for self.{} = {!r}, other.{} = {!r}".format(
+            self.pretty_name, other.pretty_name, prop_name,
+            getattr(self, prop_name), prop_name, getattr(other, prop_name)))
+      return ret
 
     def __repr__ (self, **other_props):
-      other_props[prop_name] = getattr(self, prop_name)
+      prop_value = getattr(self, prop_name)
+      if not isinstance(prop_value, str):
+        try:
+          prop_value = type(prop_value)(obj.pretty_name for obj in prop_value)
+        except TypeError:
+          pass
+
+      other_props[prop_name] = prop_value
       return super().__repr__(**other_props)
+
+    def _diff_props (self, other):
+      prop_diff = super()._diff_props(other)
+      if not equal(self, other):
+        prop_diff[prop_name] = getattr(self, prop_name)
+        self.log.debug("{}['{}']: expected {!r}, found {!r}".format(
+          self.pretty_name, prop_name, repr(getattr(self, prop_name)),
+          repr(getattr(other, prop_name))))
+      return prop_diff
 
     def satisfy (self, other):
       if self.deferred:
@@ -44,11 +74,16 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
   setattr(HasProp, eq_prop, eq)
 
   def getter (self):
+    if not hasattr(self, under_prop):
+      return None
     return getattr(self, under_prop)
 
   def setter (self, value):
     if assert_collection or assert_type:
       _assert_type(value, assert_collection or assert_type)
+
+    if assert_collection and value is None:
+      value = assert_collection()
 
     if assert_collection and assert_type:
       _assert_contains_type(value, assert_type)

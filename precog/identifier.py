@@ -78,10 +78,13 @@ class OracleIdentifier (str):
     return self
 
   def __hash__ (self):
+    if self.generated:
+      # All generated identifiers are equal, so they must have the same hash
+      return 1
     return super().__hash__()
 
   def __eq__ (self, other):
-    if self.generated and other.generated:
+    if self.generated or other.generated:
       # We can't really say if two generated IDs aren't equal...
       return True
     return super().__eq__(other)
@@ -104,6 +107,9 @@ class OracleIdentifier (str):
     return "OracleIdentifier({}{})".format(super().__repr__(),
                                            ', generated=True' if self.generated
                                            else '')
+
+  def __getnewargs__ (self):
+    return (str(self), True)
 
 class OracleFQN (OracleIdentifier):
   """
@@ -132,7 +138,7 @@ class OracleFQN (OracleIdentifier):
     return self
 
   def __hash__ (self):
-    return super().__hash__()
+    return hash((self.schema, self.obj, self.part))
 
   def __eq__ (self, other):
     if isinstance(other, OracleFQN):
@@ -169,6 +175,9 @@ class OracleFQN (OracleIdentifier):
           (('schema', self.schema), ('obj', self.obj), ('part', self.part),
            ('generated', self.generated if self.generated else None))
           if val))
+
+  def __getnewargs__ (self):
+    return (self._schema, self._obj, self._part, True)
 
 _generated_id = 0
 def GeneratedId ():

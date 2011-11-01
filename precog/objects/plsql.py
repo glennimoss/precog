@@ -38,6 +38,9 @@ class PlsqlCode (OracleObject):
 
     return diffs
 
+  def recreate (self, other):
+    return self.create()
+
   def rebuild (self, plsql_type=None, extra_parameters=None):
     if not plsql_type:
       plsql_type = self.type
@@ -118,12 +121,6 @@ class Trigger (PlsqlCode):
   pass
 
 class Type (PlsqlHeader):
-
-  def diff (self, other):
-    if self != other:
-      return self.recreate(other)
-    else:
-      return super().diff(other)
 
   def rebuild(self):
     return super().rebuild(extra_parameters='SPECIFICATION')

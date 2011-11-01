@@ -26,7 +26,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     # We don't consider these VirtualColumns
     if ('virtual_column' in props and 'YES' == props['virtual_column'] and
         (('expression' in props and props['expression']) or
-         ('data_default' in props and props['data_default']))):
+        ('data_default' in props and props['data_default']))):
       class_ = VirtualColumn
     return super().__new__(class_, *args, **props)
 
@@ -37,15 +37,18 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
       props['qualified_col_name'] = name.part
       name = OracleFQN(name.schema, name.obj, GeneratedId())
     super().__init__(name, **props)
+    if not self.qualified_col_name:
+      self.qualified_col_name = self.name.part
 
+  @property
+  def hidden (self):
+    return self.props['hidden_column'] == 'YES'
 
   @_HasTable.table.setter
   def table (self, value):
     _HasTable.table.__set__(self, value)
     if value:
       self.name = OracleFQN(value.name.schema, value.name.obj, self.name.part)
-    # Reset the table on constraints
-    self.constraints = self._constraints
 
   @HasUserType.user_type.setter
   def user_type (self, value):
@@ -113,17 +116,23 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
           parts.append('NOT')
         parts.append('NULL')
 
-      for cons in self.other_constraints:
+      #for cons in self.other_constraints:
+      for cons in self.constraints:
         parts.append(cons.sql(inline=True))
 
     return " ".join(parts)
 
+  @property
+  def sql_produces (self):
+    return {product for cons in self.constraints
+            for product in cons.sql_produces} | {self}
+
   def create (self):
     diffs = [Diff("ALTER TABLE {} ADD ( {} )".format(self.table.name.lower(),
                                                      self.sql()),
-                  produces=self, priority=Diff.CREATE)]
-    diffs.extend(diff for cons in self.unique_constraints
-                 for diff in cons.create())
+                  produces=self.sql_produces, priority=Diff.CREATE)]
+    #diffs.extend(diff for cons in self.unique_constraints
+                 #for diff in cons.create())
     return diffs
 
   def _drop (self):
@@ -137,11 +146,11 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                         self.name.part.lower()),
                 produces=self)
 
-  def diff (self, other, force=False):
+  def diff (self, other):
     diffs = super().diff(other, False)
 
     prop_diff = self._diff_props(other)
-    if prop_diff or force:
+    if prop_diff:
       #rebuild = False
       #rs = db.query("""SELECT MAX(LENGTH({})) AS max_data_length
                        #FROM {}
@@ -221,7 +230,14 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                   oracle_names=['column_name', 'qualified_col_name',
                                 'data_type_owner', 'data_type'])
 
-    def construct (name, props):
+    def construct (row):
+      (_, col_name), *props = row.items()
+
+      #generated = row['hidden_column'] == 'YES'
+      #col_name._generated = generated
+      #row['qualified_col_name']._generated = generated
+      fqn = OracleFQN(name.schema, name.obj, col_name)
+
       props = dict(props)
       if props['data_type_owner']:
         props['user_type'] = into_database.find(
@@ -232,13 +248,12 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                                                  props['qualified_col_name']),
                                        into_database)
 
-      return class_(name, constraints=constraints, database=into_database,
+      return class_(fqn, constraints=constraints, database=into_database,
                     **props)
 
     if not rs:
       into_database.log.warn("Columns not found for {}".format(name))
-    return [construct(OracleFQN(name.schema, name.obj, col_name), props)
-            for (_, col_name), *props in (row.items() for row in rs)]
+    return [construct(row) for row in rs]
 
 class VirtualColumn (HasExpressionWithDataDefault, Column):
   namespace = Column
@@ -248,24 +263,30 @@ class VirtualColumn (HasExpressionWithDataDefault, Column):
 
     self.props['virtual_column'] = 'YES'
 
+  @HasExpressionWithDataDefault.expression.setter
+  def expression (self, value):
+    HasExpressionWithDataDefault.expression.__set__(self, value)
+    if self.expression.scope_obj:
+      self.table = self.expression.scope_obj
+
   def _sql (self, fq=False, full_def=True):
     parts = []
-    hidden = 'YES' == self.props['hidden_column']
 
-    if not hidden:
+    if not self.hidden:
       name = self.name if fq else self.name.part
       parts.append(name.lower())
 
       if full_def:
         parts.append('AS (')
 
-    if full_def or hidden:
+    if full_def or self.hidden:
       parts.append(self.expression.text)
 
-    if not hidden and full_def:
-      parts.append(')')
+    if full_def:
+      if not self.hidden:
+        parts.append(')')
+
+      for cons in self.constraints:
+        parts.append(cons.sql(inline=True))
 
     return " ".join(parts)
-
-  def diff (self, other):
-    return super().diff(other, self.expression != other.expression)

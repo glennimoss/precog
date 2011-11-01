@@ -113,9 +113,20 @@ class HasLog (object):
   """ Mixin for making a log named after the class """
 
   def __init__ (self, *args, **kwargs):
-    self.log = HasLog.log_for(self)
+    self._log = None
 
     super().__init__(*args, **kwargs)
+
+  @property
+  def log (self):
+    if not self._log:
+      self._log = HasLog.log_for(self)
+    return self._log
+
+  def __getstate__ (self):
+    state = self.__dict__.copy()
+    del state['_log']
+    return state
 
   @staticmethod
   def log_for (obj):

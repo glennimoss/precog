@@ -6,9 +6,9 @@ from precog.errors import PrecogError
 from precog.util import HasLog
 
 class Reference (object):
-  SOFT = "SOFT"
-  HARD = "HARD"
-  AUTODROP = "AUTODROP"
+  SOFT = 'SOFT'
+  HARD = 'HARD'
+  AUTODROP = 'AUTODROP'
 
   def __init__ (self, from_, to, integrity=HARD):
     self.from_ = from_
@@ -29,7 +29,6 @@ class Diff (object):
   DROP = 1
   CREATE = 2
   ALTER = 3
-  PLSQL = 10
   NamedConstant.name(locals())
 
   def __init__ (self, sql, dependencies=None, produces=None, priority=None,
@@ -52,19 +51,23 @@ class Diff (object):
       priority = Diff.DROP
     elif priority is None:
       priority = Diff.ALTER
-    self.priority=priority
+    self.priority = priority
+
+    def make_set (x):
+      if x is None:
+        return set()
+      if isinstance(x, set):
+        return x
+      try:
+        return set(x)
+      except TypeError:
+        return {x}
 
     self.dropping = None
-    if dependencies is None:
-      dependencies = set()
-    if isinstance(dependencies, list):
-      dependencies = set(dependencies)
-    if not isinstance(dependencies, set):
-      if priority == Diff.DROP:
-        self.dropping = dependencies
-      dependencies = {dependencies}
-    self._dependencies = dependencies
-    self.produces = produces
+    if priority == Diff.DROP and dependencies:
+      self.dropping = dependencies
+    self._dependencies = make_set(dependencies)
+    self.produces = make_set(produces)
 
 
     self.terminator = terminator
@@ -92,13 +95,18 @@ class Diff (object):
 
   @property
   def dependencies (self):
-    other_deps = set()
-    if self.produces:
-      other_deps = self.produces.dependencies
-    elif self.dropping:
-      other_deps = self.dropping.dependencies
+    try:
+      other_deps = set()
+      if self.produces:
+        other_deps = {dep for product in self.produces
+                      for dep in product.dependencies}
+      elif self.dropping:
+        other_deps = self.dropping.dependencies
 
-    return self._dependencies | other_deps
+      return (self._dependencies | other_deps) - self.produces
+    except AttributeError as exp:
+      import pdb
+      pdb.set_trace()
 
   def add_dependencies (self, others):
     try:
@@ -111,21 +119,22 @@ class Diff (object):
     pretty_deps = [dep.pretty_name for dep in self.dependencies
         if not isinstance(dep, Diff)]
     return "Diff {} [{}] {}".format(self.priority,
-        self.produces.pretty_name if self.produces
+        ", ".join(product.pretty_name for product in self.produces)
+        if self.produces
         else self.sql if self.priority == Diff.DROP else ", ".join(pretty_deps),
         id(self))
 
 class PlsqlDiff (Diff):
 
-  def __init__ (self, sql, priority=None, terminator='\n/', **kwargs):
-    super().__init__(sql, priority=(priority and priority + Diff.PLSQL),
-                     terminator=terminator, **kwargs)
+  def __init__ (self, sql, terminator='\n/', **kwargs):
+    super().__init__(sql, terminator=terminator, **kwargs)
 
   def apply (self):
     super().apply()
 
     # log compile errors
-    self.produces.errors()
+    for product in self.produces:
+      product.errors()
 
 class Commit (Diff):
 
@@ -146,6 +155,15 @@ class DiffCycleError (PrecogError):
     return "Diff cycle found:\nEdges:\n{}\nVisited:\n  {}".format(
         _edge_list(self.edges),
         "\n  ".join(v.pretty_name for v in self.visited))
+
+class DuplicateCreationError (PrecogError):
+
+  def __init__ (self, diff1, diff2):
+    self.diff1 = diff1
+    self.diff2 = diff2
+
+  def __str__ (self):
+    return "{} overlaps creation with {}".format(self.diff1, diff2)
 
 def order_diffs (diffs):
   log = logging.getLogger('precog.diff.order_diffs')
@@ -186,24 +204,51 @@ def order_diffs (diffs):
 
     applicable_diffs.add(diff)
 
-  log.debug("All diffs:\n{}".format(pprint.pformat(
-    {diff.pretty_name: {'sql': diff.sql,
-                        'dependencies':
-                          {dep.pretty_name for dep in diff._dependencies},
-                        'produces': diff.produces and diff.produces.pretty_name,
-                        'dropping': diff.dropping and diff.dropping.pretty_name,
-                        'autodrop chain': diff.dropping and
-                          {dep.pretty_name
-                              for dep in diff.dropping
-                                .dependencies_with(Reference.AUTODROP)},
-                        #'created': diff.created
-                       }
-    for diff in diffs})))
+  # Filter diffs to remove duplicate creates when a more encompassing statement
+  # is creating the same thing as an individual one.
 
+  creates = {}
+  unnecessary_creates = set()
+  for diff in applicable_diffs:
+    if diff.priority == Diff.CREATE and diff.produces:
+      for product in diff.produces:
+        if product in creates:
+          other_diff = creates[product]
+          if other_diff.produces.issuperset(diff.produces):
+            print("{} duplicates the creation of {}".format(diff, other_diff))
+            unnecessary_creates.add(diff)
+            break;
+          elif other_diff.produces.issubset(diff.produces):
+            print("{} duplicates the creation of {}".format(other_diff, diff))
+            unnecessary_creates.add(other_diff)
+          else:
+            raise DuplicateCreationError(diff, other_diff)
+        creates[product] = diff
+  applicable_diffs.difference_update(unnecessary_creates)
+
+
+
+  #log.debug("All diffs:\n{}".format(pprint.pformat(
+    #{diff.pretty_name: {'sql': diff.sql,
+                        #'dependencies':
+                          #{dep.pretty_name for dep in diff._dependencies},
+                        #'produces': {product.pretty_name
+                                     #for product in diff.produces},
+                        #'dropping': diff.dropping and diff.dropping.pretty_name,
+                        #'autodrop chain': diff.dropping and
+                          #{dep.pretty_name
+                              #for dep in diff.dropping
+                                #.dependencies_with(Reference.AUTODROP)},
+                        #'created': diff.created
+                       #}
+    #for diff in diffs})))
+
+  sort_by = (lambda x: x.priority + (10 if isinstance(x, PlsqlDiff) else 0)
+             if isinstance(x, Diff) else 0)
   # edges is dict of obj: [dependencies, ...]
   edges = {}
   # Produced objects of diffs to be sorted
-  S = sorted(applicable_diffs, key=lambda x: x.priority)
+  S = sorted(applicable_diffs, key=sort_by)
 
   # create edge list
   def add_edge (from_, to):
@@ -216,11 +261,11 @@ def order_diffs (diffs):
 
   for diff in diffs:
     add_edge(diff, diff.dependencies)
-    if diff.produces:
-      add_edge(diff.produces, diff)
+    for product in diff.produces:
+      add_edge(product, diff)
 
   for k,v in edges.items():
-    edges[k] = sorted(v, key=lambda x: x.priority if isinstance(x, Diff) else 0)
+    edges[k] = sorted(v, key=sort_by)
   log.debug("Edge list:\n{}".format(_edge_list(edges)))
 
   # list of sorted diffs

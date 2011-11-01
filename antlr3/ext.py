@@ -103,8 +103,8 @@ InputStream = InsensitiveInputStream
 
 class NamedConstant (int):
   """Augment constant numbers with printable names"""
-  def __new__ (self, id, text):
-    return super().__new__(self, id)
+  def __new__ (class_, id, text):
+    return super().__new__(class_, id)
 
   def __init__ (self, id, text):
     self._text = text
@@ -124,8 +124,10 @@ class NamedConstant (int):
 class ComparableCommonTree (CommonTree):
 
   def __eq__ (self, other):
-    return (self.token.type == other.token.type and
-            self.token.text.lower() == other.token.text.lower() and
+    return (((self.token is None and other.token is None) or
+            (self.token and other.token and
+             self.token.type == other.token.type and
+             self.token.text.lower() == other.token.text.lower())) and
             self.children == other.children)
 
   def pretty_print (self):

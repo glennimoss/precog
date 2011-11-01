@@ -1,3 +1,5 @@
+import os, pickle
+
 from precog import db
 from precog import parser
 from precog.diff import order_diffs
@@ -57,7 +59,16 @@ class Schema (OracleObject):
     name = obj.name
     if alternate_name:
       name = alternate_name
-    name = OracleFQN(self.name.schema, name.obj, name.part)
+
+    if name.generated:
+      # Clear generated flags, etc... so we don't have multiple version of the
+      # same name in the schema
+      clear_flags = lambda x: x and (OracleIdentifier(x.parts)
+                                     if x.parts else str(x))
+      name = OracleFQN(self.name.schema, clear_flags(name.obj),
+                       clear_flags(name.part))
+    else:
+      name = OracleFQN(self.name.schema, name.obj, name.part)
 
     self.log.debug(
         "Adding {}{} as {}".format('deferred ' if obj.deferred else '',
@@ -199,8 +210,7 @@ class Schema (OracleObject):
 
     types = (set(self.objects) | set(other.objects)) - {Column, Constraint}
     for t in types:
-      diffs.extend(self.diff_subobjects(other,
-        lambda o: o.objects[t] if t in o.objects else []))
+      diffs.extend(self.diff_subobjects(other, lambda o: o.objects.get(t, [])))
 
     return diffs
 
@@ -269,6 +279,7 @@ class Database (HasLog):
     self.default_schema = OracleIdentifier(default_schema)
     #self.log.debug("Creating with default schema {}".format(default_schema))
 
+    self.parser = None
     self.schemas = {}
     self.add(Schema(default_schema, database=self))
 
@@ -290,12 +301,10 @@ class Database (HasLog):
     self.schemas[schema_name].add(obj)
 
   def add_file (self, filename):
-    sql_parser = parser.file_parser(filename)
-    sql_parser.sqlplus_file(self)
-    num_errors = sql_parser.getNumberOfSyntaxErrors()
-    if num_errors:
-      # we don't want to compare to the database when our spec is incomplete
-      raise ParseError(num_errors)
+    if not self.parser:
+      self.parser = parser.SqlPlusFileParser()
+
+    self.parser.parse(filename, self)
 
   def __make_fqn (self, name):
     if not isinstance(name, OracleFQN):
@@ -334,6 +343,11 @@ class Database (HasLog):
 
         return found
 
+
+    if callable(name):
+      test = name # For clarity
+      return {obj for schema in self.schemas.values()
+              for obj in schema.find(test, obj_type)}
 
     name = self.__make_fqn(name)
     return self.schemas[name.schema].find(name, obj_type, deferred)
@@ -379,7 +393,12 @@ class Database (HasLog):
     #for schema in oracle_database.schemas.values():
       #Schema.from_db(schema)
 
-    #oracle_database.validate()
+    try:
+      oracle_database.validate()
+    except PrecogError:
+      self.log.error(
+        'The Oracle database has errors. This is probably the fault of Precog.')
+      raise
 
     for schema_name in self.schemas:
       diffs.extend(self.schemas[schema_name].diff(
@@ -411,17 +430,45 @@ class Database (HasLog):
 
   @classmethod
   def from_file (class_, filename, default_schema=None):
-    database = class_(default_schema)
+    database = None
+    #try:
+      #with open('precog_cache.pickle', 'rb') as cache_file:
+        #unpickler = pickle._Unpickler(cache_file)
+        ##cached_file, cached_mtime = pickle.load(cache_file)
+        #cached_file, cached_mtime = unpickler.load()
+        #if (filename.name == cached_file and
+            #os.fstat(filename.fileno()).st_mtime == cached_mtime):
+          ##database = pickle.load(cache_file)
+          #database = unpickler.load()
+          #database.log.info('Using cached definition...')
+    #except IOError:
+      #pass
+    #except EOFError:
+      #pass
 
-    database.add_file(filename)
+    if not database:
+      database = class_(default_schema)
 
-    for schema in database.schemas.values():
-      database.log.debug("Schema {}".format(schema.name))
-      for obj_type in schema.objects:
-        database.log.debug("  {}s:".format(obj_type.__name__))
-        for obj_name in sorted([obj_name for obj_name in
-            schema.objects[obj_type]], key=lambda n: str(n)):
-          database.log.debug(
+      database.add_file(filename)
+
+      #database.log.info('Caching parsed definition...')
+      #with open('precog_cache.pickle', 'wb') as cache_file:
+        #mtime = os.fstat(filename.fileno()).st_mtime
+        #pickle.dump((filename.name, mtime), cache_file)
+        #pickle.dump(database, cache_file)
+
+    if database.log.isEnabledFor(logging.DEBUG):
+      for schema in database.schemas.values():
+        database.log.debug("Schema {}".format(schema.name))
+        for obj_type in schema.objects:
+          database.log.debug("  {}s:".format(obj_type.__name__))
+          for obj_name in sorted([obj_name for obj_name in
+              schema.objects[obj_type]], key=lambda n: str(n)):
+            database.log.debug(
               "    {}".format(schema.objects[obj_type][obj_name].sql(fq=True)))
 
     return database
+
+  def __getstate__ (self):
+    return {'default_schema': self.default_schema,
+            'schemas': self.schemas}

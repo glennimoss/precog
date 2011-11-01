@@ -2,32 +2,30 @@ from precog.diff import Reference
 from precog.identifier import OracleIdentifier
 from precog.objects.has.prop import HasProp
 
-def _HasColumns (column_reference):
-  # Can't assert type of Column because of circular dependency
-  class HasColumns (HasProp('columns', dependency=column_reference,
-                            assert_collection=list)):
+class HasColumns (HasProp('columns', dependency=Reference.AUTODROP,
+                          assert_collection=list)):
 
-    def _eq_columns (self, other):
-      mycols = {c.name for c in self.columns}
-      othercols = {c.name for c in other.columns}
+  def _eq_columns (self, other):
+    return set(self.columns) == set(other.columns)
 
-      return mycols == othercols
 
-  return HasColumns
+_OwnsColumns = HasProp('columns', assert_collection=list)
+class OwnsColumns (_OwnsColumns):
 
-HasColumns = _HasColumns(Reference.AUTODROP)
-OwnsColumns = _HasColumns(None)
+  def _eq_columns (self, other):
+    mycols = {col for col in self.columns if not col.hidden}
+    othercols = {col for col in other.columns if not col.hidden}
+    return mycols == othercols
+
+  def _diff_props (self, other):
+    return super(_OwnsColumns, self)._diff_props(other)
 
 class HasTableFromColumns (object):
 
   @property
   def table (self):
-    col_name = ''
     if self.columns:
       table = self.columns[0].table
       if table:
         return table
-      col_name = " ON {}".format(self.columns[0].name)
-    from precog.objects.table import Table
-    return Table(OracleIdentifier('"NONEXISTENT TABLE{}"'.format(col_name),
-                                  trust_me=True), deferred=True)
+    return None

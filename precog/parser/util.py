@@ -13,7 +13,7 @@ from precog import reserved
 from precog.util import HasLog
 #import logging
 
-__all__ = ['aloneOnLine', 'LoggingLexer', 'LoggingParser', 'file_parser',
+__all__ = ['aloneOnLine', 'LoggingLexer', 'LoggingParser', 'SqlPlusFileParser',
            'string_parser', 'Expression']
 
 def aloneOnLine (LT):
@@ -33,7 +33,7 @@ def aloneOnLine (LT):
       #log.debug('At: %s saw: %s', p, repr(c))
       if c == '\n':
         return True
-      if not (c == ' ' or c == '\t'):
+      if c not in (' ', '\t', '\r'):
         return False
 
     # EOF is as good as a line terminator
@@ -95,25 +95,40 @@ class LoggingLexer (LoggingRecognizer, Lexer):
 class LoggingParser (LoggingRecognizer, Parser):
   pass
 
-def file_parser (filename):
-  stream = FileStream
-  #name = filename
-  if not isinstance(filename, str):
-    stream = InputStream
-    #name = filename.name
-  sql_parser = parser(stream(filename))
-  name = sql_parser.getSourceName()
-  logging.getLogger('precog.parser.file_parser()').info(
-      "Parsing file {}".format(name))
-  return sql_parser
+class SqlPlusFileParser (HasLog):
+
+  def __init__ (self):
+    super().__init__()
+    from precog.parser.sqlLexer import sqlLexer
+    from precog.parser.sqlParser import sqlParser
+    self.parser = sqlParser(MultiChannelTokenStream(sqlLexer()))
+
+  def parse (self, filename, database):
+    parse_queue = [filename]
+    num_errors = 0
+    for file in parse_queue:
+      stream = FileStream
+      if not isinstance(file, str):
+        stream = InputStream
+
+      token_stream = self.parser.input
+      lexer = token_stream.tokenSource
+      lexer.setCharStream(stream(file))
+      token_stream.setTokenSource(lexer)
+      self.parser.setTokenStream(token_stream)
+
+      self.log.info("Parsing file {}".format(self.parser.getSourceName()))
+      includes = self.parser.sqlplus_file(database).included_files
+      parse_queue.extend(includes)
+      num_errors += self.parser.getNumberOfSyntaxErrors()
+
+    if num_errors:
+      raise ParseError(num_errors)
 
 def string_parser (string):
-  return parser(StringStream(string))
-
-def parser (stream):
   from precog.parser.sqlLexer import sqlLexer
   from precog.parser.sqlParser import sqlParser
-  lexer = sqlLexer(stream)
+  lexer = sqlLexer(StringStream(string))
   tokenStream = MultiChannelTokenStream(lexer)
   parser = sqlParser(tokenStream)
   return parser
@@ -170,9 +185,7 @@ class Expression (object):
     return references
 
   def __eq__ (self, other):
-    self.tree.pretty_print()
-    other.tree.pretty_print()
-    if self.tree and other.tree:
+    if self.tree and hasattr(other, 'tree') and other.tree:
       return self.tree == other.tree
     return str(self) == str(other)
 
@@ -180,5 +193,11 @@ class Expression (object):
     return self.text
 
   def __repr__ (self):
-    return "Expression({!r})".format(self.text)
+    return "Expression({!r}, <{}>)".format(self.text, self.tree and
+                                           self.tree.pretty_print())
+
+  def __getstate__ (self):
+    state = self.__dict__.copy()
+    del state['_tree']
+    return state
 

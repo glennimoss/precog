@@ -1052,15 +1052,14 @@ class Lexer(BaseRecognizer, TokenSource):
     """
 
     def __init__(self, input, state=None):
-        BaseRecognizer.__init__(self, state)
-        TokenSource.__init__(self)
+        super().__init__(state)
 
         # Where is the lexer drawing characters from?
         self.input = input
 
 
     def reset(self):
-        BaseRecognizer.reset(self) # reset all recognizer state variables
+        super().reset() # reset all recognizer state variables
 
         if self.input is not None:
             # rewind the input

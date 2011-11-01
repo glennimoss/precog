@@ -81,7 +81,11 @@ class Data (HasColumns, OracleObject):
         for row in rs:
           table.add_data(columns, [Data.escape(col) for col in row.values()])
 
-_HasData = HasProp('data', assert_collection=list, assert_type=Data)
+_HasData_ = HasProp('data', assert_collection=list, assert_type=Data)
+class _HasData (_HasData_):
+  def _diff_props (self, other):
+    return super(_HasData_, self)._diff_props(other)
+
 class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
 
   def __new__ (class_, *args, **props):
@@ -150,16 +154,24 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
   def _sub_sql (self):
     parts = [col.sql() for col in self.columns
              if col.props['hidden_column'] != 'YES']
-    parts.extend(cons.sql() for cons in self.other_constraints)
+    #parts.extend(cons.sql() for cons in self.other_constraints)
+    parts.extend(cons.sql() for cons in self.constraints)
     return "\n  ( {}\n  )".format("\n  , ".join(parts))
+
+  @property
+  def sql_produces (self):
+    return ({product for col in self.columns
+             for product in col.sql_produces} |
+            {product for cons in self.constraints
+             for product in cons.sql_produces} | {self})
 
   def create (self):
     diffs = super().create()
-    diffs.extend(diff for cons in self.unique_constraints
-                 for diff in cons.create())
-    diffs.extend(diff for column in self.columns
-                 for cons in column.unique_constraints
-                 for diff in cons.create())
+    #diffs.extend(diff for cons in self.unique_constraints
+                 #for diff in cons.create())
+    #diffs.extend(diff for column in self.columns
+                 #for cons in column.unique_constraints
+                 #for diff in cons.create())
     inserts = [diff for datum in self.data for diff in datum.create()]
     if inserts:
       diffs.extend(inserts)
@@ -169,8 +181,8 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
   def diff (self, other):
     diffs = super().diff(other, False)
 
-    if (self.props['tablespace_name'] and
-        self.props['tablespace_name'] != other.props['tablespace_name']):
+    prop_diffs = self._diff_props(other)
+    if len(prop_diffs) == 1 and 'tablespace_name' in prop_diffs:
       diffs.append(Diff("ALTER TABLE {} MOVE TABLESPACE {}"
                         .format(other.name.lower(),
                                 self.props['tablespace_name'].lower()),
@@ -181,7 +193,10 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
                                                        Index)
                    for diff in idx.rebuild())
 
-    diffs.extend(self.diff_subobjects(other, lambda o: o.columns))
+    diffs.extend(self.diff_subobjects(other,
+                                      lambda o: (column for column in o.columns
+                                                 if not column.hidden),
+                                      rename=False))
     diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
 
     if self.data:

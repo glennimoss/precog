@@ -12,13 +12,33 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
       self.unique = unique
 
   @HasColumns.columns.setter
-  def colunms (self, value):
+  def columns (self, value):
+    from precog.objects.column import VirtualColumn
     HasColumns.columns.__set__(self, value)
     if (self.props['index_type'] and
         [col for col in self.columns if isinstance(col, VirtualColumn)]):
       self.props['index_type'] = "FUNCTION-BASED {}".format(
-        self.props['index_type'])
+        self.props['index_type'].split()[-1])
 
+  def _eq_columns (self, other):
+    for col in self.columns:
+      col._ignore_name = True
+    for col in other.columns:
+      col._ignore_name = True
+    ret = self.columns == other.columns
+    for col in self.columns:
+      col._ignore_name = False
+    for col in other.columns:
+      col._ignore_name = False
+    return ret
+
+  @property
+  def dependencies (self):
+    deps = OracleObject.dependencies.__get__(self)
+    return (deps |
+            {dep for col in self.columns
+             if col.hidden
+             for dep in col.dependencies if dep != self})
   @property
   def unique (self):
     return self.props['uniqueness'] == 'UNIQUE'
@@ -42,36 +62,39 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
       parts.append('(')
       parts.append(', '.join(c.sql(full_def=False) for c in self.columns))
       parts.append(')')
-      if ('index_type' in self.props and
-          self.props['index_type'].endswith('/REV')):
-        parts.append('REVERSE')
-      if self.props['tablespace_name']:
-        parts.append('TABLESPACE')
-        parts.append(self.props['tablespace_name'].lower())
+      parts.extend(self.index_properties_sql())
     except Exception as e:
+      import pdb
+      pdb.set_trace()
       self.log.error(
-        "Index {} has colums {} had the problem {}".format(self.pretty_name,
-                                                           self.columns, e))
+        "Index {} has columns {} had the problem {}".format(self.pretty_name,
+                                                            self.columns, e))
 
     return " ".join(parts)
+
+  def index_properties_sql (self):
+    parts = []
+    if ('index_type' in self.props and
+        self.props['index_type'].endswith('/REV')):
+      parts.append('REVERSE')
+    if self.props['tablespace_name']:
+      parts.append('TABLESPACE')
+      parts.append(self.props['tablespace_name'].lower())
+    return parts
 
   def rebuild (self):
     return [Diff("ALTER INDEX {} REBUILD".format(self.name.lower()),
                  produces=self)]
 
   def diff (self, other):
-    diffs = super().diff(other, False)
-
     prop_diffs = self._diff_props(other)
-    if len(prop_diffs) == 1 and 'tablespace_name' in self.props:
-      diffs.append(Diff("ALTER INDEX {} REBUILD TABLESPACE {}"
-                        .format(other.name.lower(),
-                                self.props['tablespace_name'].lower()),
-                        produces=self))
-    elif len(prop_diffs):
-      diffs.extend(self.recreate(other))
-
-    return diffs
+    if len(prop_diffs) == 1 and 'tablespace_name' in prop_diffs:
+      return [Diff("ALTER INDEX {} REBUILD TABLESPACE {}"
+                   .format(other.name.lower(),
+                           self.props['tablespace_name'].lower()),
+                   produces=self)]
+    else:
+      return super().diff(other)
 
   @classmethod
   def from_db (class_, name, into_database):

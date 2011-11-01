@@ -1,8 +1,8 @@
 from precog.objects.constraint import Constraint, UniqueConstraint
 from precog.objects.has.prop import HasProp
 
-class HasConstraints (HasProp('constraints', assert_collection=set,
-                              assert_type=Constraint)):
+_parent = HasProp('constraints', assert_collection=set, assert_type=Constraint)
+class HasConstraints (_parent):
 
   @property
   def other_constraints (self):
@@ -23,3 +23,6 @@ class HasConstraints (HasProp('constraints', assert_collection=set,
     othercons = {c.name for c in other.constraints}
 
     return mycons == othercons
+
+  def _diff_props (self, other):
+    return super(_parent, self)._diff_props(other)
