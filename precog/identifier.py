@@ -84,12 +84,13 @@ class OracleIdentifier (str):
     return super().__hash__()
 
   def __eq__ (self, other):
-    if self.generated and other.generated:
-      # We can't really say if two generated IDs aren't equal...
-      return True
-    if self.generated or other.generated:
-      # We must do this because otherwise the hash/eq contract is violated
-      return False
+    if isinstance(other, OracleIdentifier):
+      if self.generated and other.generated:
+        # We can't really say if two generated IDs aren't equal...
+        return True
+      if self.generated or other.generated:
+        # We must do this because otherwise the hash/eq contract is violated
+        return False
     return super().__eq__(other)
 
   @property

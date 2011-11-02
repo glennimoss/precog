@@ -10,7 +10,7 @@ create table foo
   , text vArChaR2(156) CONSTRAINT foo_pk PRIMARY KEY
   , bar_id number CONSTRAINT foo_uk_bar_id UNIQUE
   , bar_whee date
-  , moredata CLOB
+  , moredata CLOB default sysdate
   , id_len AS (length(to_char(foo_id)))
   , id_len2 AS (length(to_char(foo_id)) - 2)
   , CONSTRAINT foo_sum CHECK (foo_id + id_len > to_number(bar_id))

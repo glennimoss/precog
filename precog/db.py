@@ -42,6 +42,7 @@ except ImportError as e:
 _connection = None
 _numbers_as_strings = False
 user = None
+location = None
 
 def connect (connect_string):
   global _connection, user
@@ -50,6 +51,7 @@ def connect (connect_string):
 
   _connection = cx_Oracle.connect(connect_string)
   user = OracleIdentifier(_connection.username)
+  location = "{}@{}".format(user, _connection.dsn)
   # The recyclebin causes problems when trying to drop several objects that
   # depend on each other.
   execute('ALTER SESSION SET RECYCLEBIN=OFF')

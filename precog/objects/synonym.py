@@ -37,4 +37,4 @@ class Synonym (HasProp('for_object', dependency=Reference.SOFT,
     rs = rs[0]
     return class_(name, for_object=into_database.find(
       OracleFQN(rs['table_owner'], rs['table_name']), OracleObject),
-      database=into_database)
+      database=into_database, create_location=(db.location))

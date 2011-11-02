@@ -151,7 +151,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
       constraints.add(constraint_class(constraint_name,
                                        is_enabled=(row['status'] == 'ENABLED'),
                                        database=into_database, columns=columns,
-                                       **props))
+                                       create_location=(db.location), **props))
 
     return constraints
 
@@ -233,6 +233,13 @@ class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
     if self.index_ownership:
       return {self, self.index}
     return {self}
+
+  def diff (self, other):
+    if self.index_ownership is not None and other.index_ownership is None:
+      # The DB doesn't have a way to query index ownership, so we'll adopt the
+      # definition's setting
+      other.index_ownership = self.index_ownership
+    return super().diff(other)
 
   def _drop (self):
     diff = super()._drop()

@@ -5,6 +5,7 @@ from precog.identifier import *
 from precog.util import classproperty, HasLog, InsensitiveDict
 
 SkippedObject = object()
+UnsetProperty = object()
 
 class OracleObject (HasLog):
 
@@ -19,13 +20,20 @@ class OracleObject (HasLog):
     return re.sub('([A-Z])', r' \1', class_.__name__).strip()
 
   def __init__ (self, name, deferred=False, database=None, reinit=False,
-                **props):
+                create_location=None, **props):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(obj=name)
     self.name = name
 
     if not reinit:
       super().__init__()
+      if create_location:
+        self.create_location = []
+        self.create_location.append('in "{}"'.format(create_location[0]))
+        if len(create_location) > 1:
+          self.create_location.append('line {}'.format(create_location[1]))
+      else:
+        self.create_location = ('unknown',)
       self.deferred = deferred
       self.database = database
       self.props = InsensitiveDict(props)
@@ -163,7 +171,13 @@ class OracleObject (HasLog):
       elif other.name.generated:
         self.name._generated = True
 
-      self.props.update(other.props)
+      for k, v in other.props.items():
+        if k in self.props and self.props[k] is UnsetProperty:
+          del self.props[k]
+          # TODO: ACK! this is craziness
+          del other.props[k]
+        else:
+          self.props[k] = v
 
       self.deferred = False
 
@@ -200,7 +214,7 @@ class OracleObject (HasLog):
 
     if self.log.isEnabledFor(logging.DEBUG):
       for prop in prop_diff:
-        self.log.debug("{}['{}']: expected {!r}, found {!r}".format(
+        self.log.debug("{} ['{}']: expected {!r}, found {!r}".format(
           self.pretty_name, prop, repr(self.props[prop]),
           repr(other.props[prop])))
 
@@ -215,8 +229,12 @@ class OracleObject (HasLog):
 
     target_objs = get_objects(self)
     current_objs = get_objects(other)
-    self.log.info("len(target_objs) = {}, len(current_objs) = {}".format(
-      len(target_objs), len(current_objs)))
+    try:
+      self.log.info("len(target_objs) = {}, len(current_objs) = {}".format(
+        len(target_objs), len(current_objs)))
+    except TypeError:
+      import pdb
+      pdb.set_trace()
 
     if not isinstance(target_objs, dict):
       target_objs = {label(obj): obj for obj in target_objs}

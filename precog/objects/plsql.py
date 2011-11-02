@@ -84,7 +84,7 @@ class PlsqlCode (OracleObject):
       into_database.log.warn("PL/SQL source not found for {}".format(name))
       return None
     return class_(name, source=''.join(row['text'] for row in rs),
-        database=into_database)
+        database=into_database, create_location=(db.location))
 
 class PlsqlHeader (PlsqlCode):
   pass

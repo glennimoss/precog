@@ -63,4 +63,5 @@ class Sequence (OracleObject):
     if not rs:
       into_database.log.warn("Sequence not found for {}".format(name))
       return None
-    return class_(name, database=into_database, **rs[0])
+    return class_(name, database=into_database, create_location=(db.location),
+                  **rs[0])

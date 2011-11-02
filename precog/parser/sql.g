@@ -265,6 +265,15 @@ scope { props; table_name }
 table_item
   : col=col_spec { $create_table::props['columns'].append($col.column) }
   | cons=out_of_line_constraint {
+      constraint = $cons.constraint
+      if isinstance(constraint, UniqueConstraint) and constraint.is_pk:
+        #// PKs are unconditionally not null, so let's not create
+        #// unnecessary not null constraints
+        for col in constraint.columns:
+          if col.deferred:
+            col.props['nullable'] = UnsetProperty
+          elif 'nullable' in col.props:
+            del col.props['nullable']
       $create_table::props['constraints'].add($cons.constraint)
     }
   ;
@@ -276,8 +285,14 @@ scope tab_col_ref;
   $tab_col_ref::table = $create_table::table_name
   props = InsensitiveDict()
   props['constraints'] = set()
+  props['nullable'] = 'Y'
 }
 @after {
+  if [c for c in props['constraints']
+      if isinstance(c, UniqueConstraint) and c.is_pk]:
+    #// PKs are unconditionally not null, so let's not create
+    #// unnecessary not null constraints
+    del props['nullable']
   $column = Column($i.id, database=$g::database,
                    create_location=(self.getSourceName(),
                                     self.input.LT(1).line), **props)

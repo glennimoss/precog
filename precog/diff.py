@@ -1,4 +1,4 @@
-import logging, pprint, inspect
+import logging, pprint, inspect, itertools
 
 from antlr3.ext import NamedConstant
 from precog import db
@@ -32,8 +32,21 @@ class Diff (object):
   NamedConstant.name(locals())
 
   def __init__ (self, sql, dependencies=None, produces=None, priority=None,
-      terminator=';', binds={}):
-    self.sql = sql
+      terminator=';', binds=None):
+
+    def make (t, x):
+      if x is None:
+        return t()
+      if isinstance(x, t):
+        return x
+      if not isinstance(x, str):
+        try:
+          return t(x)
+        except TypeError:
+          pass
+      return t((x,))
+
+    self.sql = make(list, sql)
     stack = inspect.stack()
     self.created = []
     ininit = True
@@ -53,25 +66,14 @@ class Diff (object):
       priority = Diff.ALTER
     self.priority = priority
 
-    def make_set (x):
-      if x is None:
-        return set()
-      if isinstance(x, set):
-        return x
-      try:
-        return set(x)
-      except TypeError:
-        return {x}
-
     self.dropping = None
     if priority == Diff.DROP and dependencies:
       self.dropping = dependencies
-    self._dependencies = make_set(dependencies)
-    self.produces = make_set(produces)
-
+    self._dependencies = make(set, dependencies)
+    self.produces = make(set, produces)
 
     self.terminator = terminator
-    self.binds = binds
+    self.binds = make(list, binds)
 
   def __repr__ (self):
     return "Diff({!r}, {!r}, {!r})".format(self.sql, self.dependencies,
@@ -79,19 +81,24 @@ class Diff (object):
 
   def __str__ (self):
     binds = ''
-    if self.binds:
-      binds = "-- {}\n".format(", ".join(":{} = {}".format(col, val)
-                                       for col,val in self.binds.items()))
-    return binds + self.sql + self.terminator
+    parts = []
+    for sql, binds in itertools.zip_longest(self.sql, self.binds):
+      if binds:
+        parts.append("-- {}".format(", ".join(":{} = {}".format(col, val)
+                                              for col,val in binds)))
+      parts.append("".join((sql, self.terminator)))
+
+    return "\n".join(parts)
 
   def __eq__ (self, other):
     return self.sql == other.sql
 
   def __hash__ (self):
-    return hash(self.sql)
+    return hash(tuple(self.sql))
 
   def apply (self):
-    return db.execute(self.sql, **self.binds)
+    for sql, binds in itertools.zip_longest(self.sql, self.binds):
+      db.execute(sql, **(binds or {}))
 
   @property
   def dependencies (self):
@@ -170,44 +177,40 @@ def order_diffs (diffs):
 
   log.info('Ordering statements...')
 
+  log.info('merging diffs...')
+
   merged_diffs = {}
   for diff in diffs:
-    if diff.sql in merged_diffs:
-      before = len(merged_diffs[diff.sql]._dependencies)
-      #log.debug("Before: {}".format({d.pretty_name for d in
-                                     #merged_diffs[diff.sql]._dependencies}))
-      merged_diffs[diff.sql].add_dependencies(diff._dependencies)
-      merged = len(merged_diffs[diff.sql]._dependencies)
-      if before != merged:
-        log.debug("After: {}".format({d.pretty_name for d in
-                                       merged_diffs[diff.sql]._dependencies}))
-
+    sql = tuple(diff.sql)
+    if sql in merged_diffs:
+      merged_diffs[sql].add_dependencies(diff._dependencies)
     else:
-      merged_diffs[diff.sql] = diff
+      merged_diffs[sql] = diff
   diffs = merged_diffs.values()
 
-  log.info('merged diffs...')
+
+  log.info('filtering autodrops...')
 
   # filter diffs to remove object drops that are autodropped by other diffs
   applicable_diffs = set(diffs)
-  #dropping = {diff.dropping: diff for diff in diffs if diff.dropping}
-  #applicable_diffs = set()
-  #for diff in diffs:
-    #if diff.dropping:
-      #log.debug("Dropping {}".format(diff.pretty_name))
-      #autodroppers = (diff.dropping.dependencies_with(Reference.AUTODROP) &
-                      #dropping.keys())
-      #log.debug("    Autodroppers {}".format([a.pretty_name for a in
-                                              #autodroppers]))
-      #if autodroppers:
-        #for d in autodroppers:
-          ## Swap dependencies
-          #diff.add_dependencies(dropping[d])
-          #dropping[d]._dependencies.discard(diff)
-        #continue
-    #applicable_diffs.add(diff)
+  dropping = {diff.dropping: diff for diff in diffs if diff.dropping}
+  applicable_diffs = set()
+  for diff in diffs:
+    if diff.dropping:
+      log.debug("Dropping {}".format(diff.pretty_name))
+      autodroppers = (diff.dropping.dependencies_with(Reference.AUTODROP) &
+                      dropping.keys())
+      log.debug("    Autodroppers {}".format([a.pretty_name for a in
+                                              autodroppers]))
+      if autodroppers:
+        for d in autodroppers:
+          # Swap dependencies
+          diff.add_dependencies(dropping[d])
+          dropping[d]._dependencies.discard(diff)
+        continue
+    applicable_diffs.add(diff)
 
-  log.info('filtered autodrops...')
+  log.info('filtering creates...')
 
   # Filter diffs to remove duplicate creates when a more encompassing statement
   # is creating the same thing as an individual one.
@@ -219,16 +222,17 @@ def order_diffs (diffs):
         if product in creates:
           other_diff = creates[product]
           if other_diff.produces.issuperset(diff.produces):
+            log.debug("Filtering {}, covered by {}".format(diff, other_diff))
             unnecessary_creates.add(diff)
             break;
           elif other_diff.produces.issubset(diff.produces):
+            log.debug("Filtering {}, covered by {}".format(other_diff, diff))
             unnecessary_creates.add(other_diff)
           else:
             raise DuplicateCreationError(diff, other_diff)
         creates[product] = diff
   applicable_diffs.difference_update(unnecessary_creates)
 
-  log.info('filtered creates...')
 
   #log.debug("All diffs:\n{}".format(pprint.pformat(
     #{diff.pretty_name: {'sql': diff.sql,
@@ -261,7 +265,7 @@ def order_diffs (diffs):
     except TypeError:
       edges[from_].add(to)
 
-  log.info('building edge list')
+  log.info('building edge list...')
 
   for diff in diffs:
     add_edge(diff, diff.dependencies)
@@ -276,7 +280,7 @@ def order_diffs (diffs):
   L = []
   visited = set()
 
-  log.info('walking dep tree')
+  log.info('walking dep tree...')
 
   indent = ''
   def visit (node, this_visit=()):

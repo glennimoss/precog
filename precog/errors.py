@@ -133,9 +133,6 @@ class UnsatisfiedDependencyError (PrecogError):
     return super().__str__() + "\n  ".join(line for obj in self.unsatisfied
                                            for line in (
       ['', "{} referenced by:".format(obj.pretty_name)] +
-      ['  {}, in "{}", line {}'.format(ref.from_.pretty_name,
-                                       ref.from_.props.get('create_location',
-                                                           ('',))[0],
-                                       ref.from_.props.get('create_location',
-                                                           ('', 0))[1])
+      ["  {}".format(", ".join([ref.from_.pretty_name] +
+                               ref.from_.create_location))
        for ref in obj._referenced_by]))

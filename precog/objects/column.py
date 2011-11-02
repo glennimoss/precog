@@ -1,3 +1,5 @@
+import re
+
 from precog import db
 from precog.diff import Diff, Reference
 from precog.identifier import *
@@ -8,7 +10,14 @@ from precog.objects.has.expression import (HasDataDefault,
                                            HasExpressionWithDataDefault)
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType
+from precog.objects.index import Index
 from precog.objects.plsql import Type
+
+_is_char = re.compile('(VAR)?CHAR', re.I)
+_is_nchar = re.compile('N(VAR)?CHAR', re.I)
+_valid_string_type = re.compile('^(N)?(VAR)?CHAR(2)?$', re.I)
+_is_string_type = lambda data_type: _valid_string_type.match(data_type)
+_is_number_type = lambda data_type: data_type in ('NUMBER', 'FLOAT')
 
 class _HasTable (HasProp('table', dependency=Reference.AUTODROP)):
 
@@ -86,7 +95,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
   def subobjects (self):
     return self.constraints
 
-  def _sql (self, fq=False, full_def=True):
+  def _sql (self, fq=False, full_def=True, default_clause=True):
     parts = []
     name = self.qualified_name
     if not fq:
@@ -94,23 +103,9 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     parts.append(name.lower())
 
     if full_def:
-      data_type = self.props['data_type']
-      if data_type in ('NUMBER', 'FLOAT'):
-        if self.props['data_precision'] or self.props['data_scale']:
-          precision = (self.props['data_precision']
-              if self.props['data_precision'] else '*')
-          scale = (",{}".format(self.props["data_scale"])
-              if self.props['data_scale'] else '')
-          data_type += "({}{})".format(precision, scale)
-      elif not self.user_type and data_type.find('CHAR') != -1:
-        length = self.props['char_length'] or self.props['data_length']
-        if length:
-          data_type += "({}{})".format(length,
-            (" CHAR" if self.props['char_used'] == 'C' else " BYTE")
-            if self.props['char_used'] else '')
-      parts.append(data_type)
+      parts.append(self._data_type_sql())
 
-      if self.data_default:
+      if default_clause and self.data_default:
         parts.append("DEFAULT {}".format(self.data_default))
 
       if self.props['nullable']:
@@ -123,6 +118,24 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
         parts.append(cons.sql(inline=True))
 
     return " ".join(parts)
+
+
+  def _data_type_sql (self):
+    data_type = self.props['data_type']
+    if data_type in ('NUMBER', 'FLOAT'):
+      if self.props['data_precision'] or self.props['data_scale']:
+        precision = (self.props['data_precision']
+            if self.props['data_precision'] else '*')
+        scale = (",{}".format(self.props["data_scale"])
+            if self.props['data_scale'] else '')
+        data_type += "({}{})".format(precision, scale)
+    elif not self.user_type and data_type.find('CHAR') != -1:
+      length = self.props['char_length'] or self.props['data_length']
+      if length:
+        data_type += "({}{})".format(length,
+          (" CHAR" if self.props['char_used'] == 'C' else " BYTE")
+          if self.props['char_used'] else '')
+    return data_type
 
   @property
   def sql_produces (self):
@@ -153,53 +166,116 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
 
     prop_diff = self._diff_props(other)
     if prop_diff:
-      #rebuild = False
-      #rs = db.query("""SELECT MAX(LENGTH({})) AS max_data_length
-                       #FROM {}
-                       #""".format(other.name.part, other.table.name))
-      #max_data_length = rs[0]['max_data_length']
-      #for prop, expected in prop_diff.items():
-        #if 'data_type' == prop:
-          #rebuild = True
-          #if expected == 'NVARCHAR2':
-            #if other.props['data_type'] == 'VARCHAR2'):
-        #elif 'data_length' == prop:
-          #if max_data_length is not None and max_data_length > expected:
-            #raise DataConflict(self,
-              #"has length too small for data found. (Max length {})"
-                               #.format(max_data_length))
-        #elif 'data_precision' == prop:
-          #if expected < other.props['data_precision']:
-            #rebuild = True
-          #pass
-        #elif 'data_scale' == prop:
-          #rebuild = True
-          #pass
-        #elif 'char_length' == prop:
-          #pass
-        #elif 'char_used' == prop:
-          #pass
-        #elif 'nullable' == prop:
-          #pass
-        #elif 'virtual_column' == prop:
-          #pass
-        #elif 'hidden_column' == prop:
-          #pass
+      teardown = False
+      if (self.database.find(lambda o: o.table.name == self.table.name and
+                            self in o.columns, Constraint) or
+          self.database.find(lambda o: self in o.columns, Index)):
+        teardown = True
+      recreate = False
+      copypasta = False
+      data_type_change = False
+      nullable = None
+      data_default_change = False
 
-      #if rebuild:
-        #diffs.extend(self.teardown())
+      max_data_length = None
+      max_data_precision = None
+      max_data_scale = None
+      other_data_type = other.props['data_type']
+      if _is_string_type(other_data_type):
+        rs = db.query("""SELECT MAX(LENGTH({})) AS max_data_length
+                         FROM {}
+                         """.format(other.name.part, other.table.name))
+        max_data_length = rs[0]['max_data_length']
+      elif _is_number_type(other_data_type):
+        rs = db.query("""SELECT MAX(LENGTH(TRUNC(ABS({0}))))
+                                  AS max_data_precision
+                              , MAX(LENGTH(ABS({0} - TRUNC({0}))) - 1)
+                                  AS max_data_scale
+                         FROM {1}
+                         """.format(other.name.part, other.table.name))
+        max_data_precision = rs[0]['max_data_precision']
+        max_data_scale = rs[0]['max_data_scale']
+      for prop, expected in prop_diff.items():
+        other_prop = other.props[prop]
+        if 'data_type' == prop:
+          data_type_change = True
+          if (max_data_length and
+              not (_is_char.match(other_prop) and
+                   _is_nchar.match(expected))):
+            copypasta = True
+        elif 'data_length' == prop:
+          data_type_change = True
+          if max_data_length is not None and max_data_length > expected:
+            raise DataConflict(self,
+              "has length too small for data found. (Min length {})"
+                               .format(max_data_length))
+        elif 'data_precision' == prop:
+          data_type_change = True
+          if max_data_precision:
+            if max_data_precision > expected:
+              raise DataConflict(self,
+                "has precision too small for data found. (Min precision {})"
+                                 .format(max_data_precision))
 
-      diffs.append(Diff("ALTER TABLE {} MODIFY ( {} )"
-                        .format(other.table.name.lower(), self.sql()),
-                        produces=self))
+            if expected < other_prop:
+              copypasta = True
+        elif 'data_scale' == prop:
+          if max_data_scale:
+            copypasta = True
+            if max_data_scale > expected:
+              raise DataConflict(self,
+                "has scale too small for data found. (Min scale {})"
+                                 .format(max_data_scale))
+          data_type_change = True
+        elif prop in ('char_length', 'char_used'):
+          # TODO: How do you even trigger this?
+          self.log.fatal("{} had {} changed from {} to {}".format(
+            other.pretty_name, prop, other_prop, expected))
+          data_type_change = True
+        elif 'nullable' == prop:
+          if expected == 'N':
+            nullable = False
+          nullable = True
+        elif 'virtual_column' == prop:
+          self.log.warn("{} is changing virtual_column from {} to {}".format(
+            other.pretty_name, other_prop, expected))
+          recreate = True
+        elif 'hidden_column' == prop:
+          self.log.warn("{} is changing hidden_column from {} to {}".format(
+            other.pretty_name, other_prop, expected))
+          recreate = True
+        elif ('data_default' == prop and
+              (expected or other_prop.upper() != 'NULL')):
+          if isinstance(self, VirtualColumn):
+            data_type_change = True
+          else:
+            data_default_change = True
 
-    if (other.data_default and
-        other.data_default != 'NULL' and
-        not self.data_default):
-      diffs.append(Diff("ALTER TABLE {} MODIFY ( {} DEFAULT NULL)"
-                        .format(other.table.name.lower(),
-                                other.name.part.lower()),
-                        produces=self))
+        elif 'expression' == prop:
+          data_type_change = True
+
+      modify_clauses = []
+      if data_type_change:
+        # Data type must always come directly after the name
+        modify_clauses.append(self._data_type_sql())
+
+      if data_default_change:
+        modify_clauses.append(
+          "DEFAULT {}".format(self.data_default or 'NULL'))
+
+      if nullable is not None:
+        if not nullable:
+          modify_clauses.append('NOT')
+        modify_clauses.append('NULL')
+
+      if recreate:
+        diffs.extend(self.recreate(other))
+      elif modify_clauses:
+        diffs.append(Diff("ALTER TABLE {} MODIFY ( {} {} )"
+                          .format(other.table.name.lower(),
+                                  self._sql(full_def=False),
+                                  " ".join(modify_clauses)),
+                                  produces=self))
 
     diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
 
@@ -252,7 +328,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                                        into_database)
 
       return class_(fqn, constraints=constraints, database=into_database,
-                    **props)
+                    create_location=(db.location), **props)
 
     if not rs:
       into_database.log.warn("Columns not found for {}".format(name))
@@ -273,23 +349,10 @@ class VirtualColumn (HasExpressionWithDataDefault, Column):
       self.table = self.expression.scope_obj
 
   def _sql (self, fq=False, full_def=True):
-    parts = []
-
     if not self.hidden:
-      name = self.name if fq else self.name.part
-      parts.append(name.lower())
+      return super()._sql(fq=fq, full_def=full_def, default_clause=False)
 
-      if full_def:
-        parts.append('AS (')
+    return self.expression.text
 
-    if full_def or self.hidden:
-      parts.append(self.expression.text)
-
-    if full_def:
-      if not self.hidden:
-        parts.append(')')
-
-      for cons in self.constraints:
-        parts.append(cons.sql(inline=True))
-
-    return " ".join(parts)
+  def _data_type_sql (self):
+    return "AS ( {} )".format(self.expression.text)

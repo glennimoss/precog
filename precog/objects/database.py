@@ -246,6 +246,7 @@ class Schema (OracleObject):
 
     count = 0
     prev_progress = 0
+
     for obj in rs:
       object_name = OracleFQN(owner,
               OracleIdentifier(obj['object_name'],
@@ -272,9 +273,13 @@ class Schema (OracleObject):
       count += 1
       progress = math.floor(count/len(rs)*100)
       if progress > prev_progress:
+        old = schema.log.root.handlers[0].terminator
+        schema.log.root.handlers[0].terminator = '\r'
         schema.log.info("Fetched {}% of schema {}".format(progress, owner))
+        schema.log.root.handlers[0].terminator = old
         prev_progress = progress
 
+    schema.log.info('')
 
     #schema.log.info("Fetching schema {} complete".format(owner))
     return schema

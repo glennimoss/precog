@@ -3,7 +3,7 @@ from precog.objects.base import OracleObject
 from precog.objects.has.prop import HasProp
 from precog.parser import Expression
 
-_HasDataDefault = HasProp('data_default')
+_HasDataDefault = HasProp('data_default', strict_none=True)
 class HasDataDefault (_HasDataDefault):
 
   @_HasDataDefault.data_default.setter

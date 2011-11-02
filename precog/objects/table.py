@@ -168,15 +168,11 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
 
   def create (self):
     diffs = super().create()
-    #diffs.extend(diff for cons in self.unique_constraints
-                 #for diff in cons.create())
-    #diffs.extend(diff for column in self.columns
-                 #for cons in column.unique_constraints
-                 #for diff in cons.create())
-    inserts = [diff for datum in self.data for diff in datum.create()]
-    if inserts:
-      diffs.extend(inserts)
-      diffs.append(Commit(inserts))
+
+    if self.data:
+      diffs.append(Diff([datum.sql() for datum in self.data] + ['COMMIT'],
+                        produces={datum.sql_produces for datum in self.data},
+                        priority=Diff.CREATE))
     return diffs
 
   def diff (self, other):
@@ -195,8 +191,8 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
                    for diff in idx.rebuild())
 
     diffs.extend(self.diff_subobjects(other,
-                                      lambda o: (column for column in o.columns
-                                                 if not column.hidden),
+                                      lambda o: [column for column in o.columns
+                                                 if not column.hidden],
                                       rename=False))
     diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
 
@@ -253,7 +249,8 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
 
     props['constraints'] = Constraint.from_db(name, into_database)
 
-    return class_(name, database=into_database, **props)
+    return class_(name, database=into_database, create_location=(db.location),
+                  **props)
 
 class ObjectTable (HasUserType, HasProp('table_type', assert_type=str), Table):
   namespace = Table

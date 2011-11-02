@@ -145,4 +145,5 @@ class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
       into_database.log.warn(
         "Index {} has no columns. Index skipped.".format(name))
       return None
-    return class_(name, database=into_database, columns=columns, **dict(props))
+    return class_(name, database=into_database, columns=columns,
+                  create_location=(db.location), **dict(props))
