@@ -36,11 +36,11 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
         return False
 
       ret = equal(self, other)
-      if not ret:
-        self.log.debug(
-          "{} == {} failed for self.{} = {!r}, other.{} = {!r}".format(
-            self.pretty_name, other.pretty_name, prop_name,
-            getattr(self, prop_name), prop_name, getattr(other, prop_name)))
+      #if not ret:
+        #self.log.debug(
+          #"{} == {} failed for self.{} = {!r}, other.{} = {!r}".format(
+            #self.pretty_name, other.pretty_name, prop_name,
+            #getattr(self, prop_name), prop_name, getattr(other, prop_name)))
       return ret
 
     def __repr__ (self, **other_props):

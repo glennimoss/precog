@@ -6,10 +6,11 @@ create table baz
   , d number
   , e number
   , f varchar2(3)
-  --, obj test_type
+  , obj test_type
 );
 
 create unique index baz_fnidx on baz ( round(a + b + c + d));
+create unique index baz_fnidx2 on baz ( round(a + b + c));
 
 create index foo_virtidx on foo (id_len);
 

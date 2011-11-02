@@ -84,9 +84,12 @@ class OracleIdentifier (str):
     return super().__hash__()
 
   def __eq__ (self, other):
-    if self.generated or other.generated:
+    if self.generated and other.generated:
       # We can't really say if two generated IDs aren't equal...
       return True
+    if self.generated or other.generated:
+      # We must do this because otherwise the hash/eq contract is violated
+      return False
     return super().__eq__(other)
 
   @property
@@ -159,6 +162,18 @@ class OracleFQN (OracleIdentifier):
   @property
   def part (self):
     return self._part
+
+  def with_ (self, schema=None, obj=None, part=None):
+    if schema is None:
+      schema = self.schema
+    if obj is None:
+      obj = self.obj
+    if part is None:
+      part = self.part
+    return OracleFQN(schema, obj, part)
+
+  def without_part (self):
+    return OracleFQN(self.schema, self.obj)
 
   @property
   def generated (self):

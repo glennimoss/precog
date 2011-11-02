@@ -1,4 +1,4 @@
-import os, pickle
+import math, os, pickle
 
 from precog import db
 from precog import parser
@@ -68,7 +68,7 @@ class Schema (OracleObject):
       name = OracleFQN(self.name.schema, clear_flags(name.obj),
                        clear_flags(name.part))
     else:
-      name = OracleFQN(self.name.schema, name.obj, name.part)
+      name = name.with_(schema=self.name.schema)
 
     self.log.debug(
         "Adding {}{} as {}".format('deferred ' if obj.deferred else '',
@@ -114,20 +114,21 @@ class Schema (OracleObject):
 
     # Special case for deferred lookups to unique constraints by FK constraints
     if isinstance(obj, UniqueConstraint):
-      columns_tup = tuple(col.name for col in obj.columns)
-      if columns_tup in self.deferred:
+      columns_set = frozenset(col.name.with_(schema=self.name.schema)
+                          for col in obj.columns)
+      if columns_set in self.deferred:
         self.log.debug(
           "Satisfying deferred Unique Key {} on {} with {}".format(
-            self.deferred[columns_tup], columns_tup, obj))
-        self.deferred[columns_tup].satisfy(obj)
-        del self.deferred[columns_tup]
+            self.deferred[columns_set], columns_set, obj))
+        self.deferred[columns_set].satisfy(obj)
+        del self.deferred[columns_set]
 
-  def __make_fqn (self, name) :
+  def __make_fqn (self, name):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(self.name.schema, name)
 
     if not name.schema:
-      name = OracleFQN(self.name.schema, name.obj, name.part)
+      name = name.with_(schema=self.name.schema)
 
     return name
 
@@ -163,16 +164,15 @@ class Schema (OracleObject):
     return None
 
   def find_unique_constraint (self, columns, deferred=True):
-    column_names = [col.name for col in columns]
-    columns_tup = tuple(column_names)
-    if columns_tup in self.deferred:
-      return self.deferred[columns_tup]
+    column_names = [col.name.with_(schema=self.name.schema) for col in columns]
+    columns_set = frozenset(column_names)
+    if columns_set in self.deferred:
+      return self.deferred[columns_set]
 
     if len(columns) == 1:
       constraints = columns[0].unique_constraints
     else:
-      table_name = self.__make_fqn(OracleFQN(columns[0].name.schema,
-                                             columns[0].name.obj))
+      table_name = self.__make_fqn(columns[0].name.without_part())
       table = self.find(table_name, Table)
       constraints = table.unique_constraints
 
@@ -198,9 +198,9 @@ class Schema (OracleObject):
     if deferred:
       cons = UniqueConstraint(OracleFQN(self.name.schema, GeneratedId()),
                               columns=columns, deferred=True)
-      self.log.debug("Deferring Unique Key on {} as {}".format(columns_tup,
+      self.log.debug("Deferring Unique Key on {} as {}".format(columns_set,
                                                                cons))
-      self.deferred[columns_tup] = cons
+      self.deferred[columns_set] = cons
       return cons
 
     return None
@@ -210,6 +210,7 @@ class Schema (OracleObject):
 
     types = (set(self.objects) | set(other.objects)) - {Column, Constraint}
     for t in types:
+      self.log.info("Comparing {}s".format(t.pretty_type))
       diffs.extend(self.diff_subobjects(other, lambda o: o.objects.get(t, [])))
 
     return diffs
@@ -243,6 +244,8 @@ class Schema (OracleObject):
                                            )
                   """, o=owner, oracle_names=['object_name'])
 
+    count = 0
+    prev_progress = 0
     for obj in rs:
       object_name = OracleFQN(owner,
               OracleIdentifier(obj['object_name'],
@@ -266,8 +269,14 @@ class Schema (OracleObject):
       except KeyError:
         schema.log.warn("{} [{}]: unexpected type".format(
           obj['object_type'], obj['object_name']))
+      count += 1
+      progress = math.floor(count/len(rs)*100)
+      if progress > prev_progress:
+        schema.log.info("Fetched {}% of schema {}".format(progress, owner))
+        prev_progress = progress
 
-    schema.log.info("Fetching schema {} complete".format(owner))
+
+    #schema.log.info("Fetching schema {} complete".format(owner))
     return schema
 
 class Database (HasLog):
@@ -378,7 +387,7 @@ class Database (HasLog):
   def diff_to_db (self, connection_string):
     self.validate()
 
-    self.log.info('Comparing database definition to current database state')
+    self.log.info('Loading current database state')
 
     db.connect(connection_string)
 
@@ -390,15 +399,14 @@ class Database (HasLog):
       oracle_database.add(db_schema)
       Schema.from_db(db_schema)
 
-    #for schema in oracle_database.schemas.values():
-      #Schema.from_db(schema)
-
     try:
       oracle_database.validate()
     except PrecogError:
       self.log.error(
         'The Oracle database has errors. This is probably the fault of Precog.')
       raise
+
+    self.log.info('Comparing database definition to current database state')
 
     for schema_name in self.schemas:
       diffs.extend(self.schemas[schema_name].diff(

@@ -7,6 +7,7 @@ from precog.objects.constraint import Constraint
 from precog.objects.index import Index
 from precog.objects.has.columns import HasColumns, OwnsColumns
 from precog.objects.has.constraints import HasConstraints
+from precog.objects.has.extradeps import HasExtraDeps
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType
 from precog.objects.plsql import Type
@@ -86,7 +87,7 @@ class _HasData (_HasData_):
   def _diff_props (self, other):
     return super(_HasData_, self)._diff_props(other)
 
-class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
+class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
 
   def __new__ (class_, *args, **props):
     if 'table_type' in props and props['table_type']:
@@ -209,14 +210,8 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
 
     return diffs
 
-  @property
-  def dependencies (self):
-    deps = OracleObject.dependencies.__get__(self)
-    return (deps |
-            {dep for col in self.columns
-             for dep in col.dependencies if dep != self} |
-            {dep for cons in self.other_constraints
-             for dep in cons.dependencies if dep != self})
+  def _extra_deps (self):
+    return set(self.columns) | self.constraints
 
   @classmethod
   def from_db (class_, name, into_database):

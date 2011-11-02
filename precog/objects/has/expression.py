@@ -34,10 +34,10 @@ class HasExpression (_HasExpression, _HasExpressionRefs):
       return expression
     self.log.warn("{} has no expression!".format(self.pretty_name))
 
-  @OracleObject.dependencies.getter
-  def dependencies (self):
+  def _build_dep_set (self, *args, **kwargs):
+    # refresh expression references
     self._expression_refs = self.expression.references
-    return OracleObject.dependencies.__get__(self)
+    return super()._build_dep_set(*args, **kwargs)
 
 class HasExpressionWithDataDefault (HasExpression):
   """ Expects subclass to also inherit HasDataDefault somewhere. """

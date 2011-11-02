@@ -96,7 +96,10 @@ scope { type; name; props }
 @init { $plsql_stmt::props = InsensitiveDict() }
 @after {
   $obj = PlsqlCode.new($plsql_stmt::type, $plsql_stmt::name, $source.text,
-                       database=$g::database, **$plsql_stmt::props)
+                       database=$g::database,
+                       create_location=(self.getSourceName(),
+                                        self.input.LT(1).line),
+                       **$plsql_stmt::props)
 }
   : CREATE (OR kREPLACE)? source=plsql_object_def
     TERMINATOR
@@ -244,7 +247,9 @@ scope { props; table_name }
   $create_table::props = InsensitiveDict({'columns': [], 'constraints': set()})
 }
 @after {
-  $obj = Table($ident.ident, database=$g::database, **$create_table::props)
+  $obj = Table($ident.ident, database=$g::database,
+               create_location=(self.getSourceName(), self.input.LT(1).line),
+               **$create_table::props)
 }
   : CREATE TABLE ident=identifier {
       $create_table::table_name = $ident.ident
@@ -273,7 +278,9 @@ scope tab_col_ref;
   props['constraints'] = set()
 }
 @after {
-  $column = Column($i.id, database=$g::database, **props)
+  $column = Column($i.id, database=$g::database,
+                   create_location=(self.getSourceName(),
+                                    self.input.LT(1).line), **props)
 }
   : i=tID
     ( dt=data_type[True] { props.update($dt.props) }
@@ -438,7 +445,9 @@ scope tab_col_ref;
 }
 @after {
   if cons_class:
-    $cons = cons_class($constraint_name.id, database=$g::database, **props)
+    $cons = cons_class($constraint_name.id, database=$g::database,
+                       create_location=(self.getSourceName(),
+                                        self.input.LT(1).line), **props)
   else:
     $cons = None
 }
@@ -503,7 +512,9 @@ scope tab_col_ref;
   index = None
 }
 @after {
-  $constraint = cons_class($constraint_name.id, database=$g::database, **props)
+  $constraint = cons_class($constraint_name.id, database=$g::database,
+                           create_location=(self.getSourceName(),
+                                            self.input.LT(1).line), **props)
 }
   : kCONSTRAINT constraint_name=tID // Non-spec: making required
     ( ( ( UNIQUE { props['is_pk'] = False }
@@ -565,7 +576,10 @@ using_index [constraint_name] returns [props]
 @after {
   if not $props['index']:
     $props['index'] = Index($constraint_name, unique=True,
-                            database=$g::database, **index_props)
+                            database=$g::database,
+                            create_location=(self.getSourceName(),
+                                             self.input.LT(1).line),
+                            **index_props)
     $g::database.add($props['index'])
 }
   : kUSING INDEX
@@ -596,7 +610,9 @@ scope tab_col_ref;
 @after {
   table = $g::database.find($tab_col_ref::table, Table)
   $obj = Index($index_name.ident, columns=$tab_col_ref::columns,
-    database=$g::database, **props)
+               database=$g::database, create_location=(self.getSourceName(),
+                                                       self.input.LT(1).line),
+               **props)
 }
   : CREATE ( UNIQUE { props['uniqueness'] = 'UNIQUE' }
            | kBITMAP
@@ -642,7 +658,9 @@ create_sequence returns [obj]
 scope { props }
 @init { $create_sequence::props = InsensitiveDict() }
 @after {
-  $obj = Sequence($i.ident, database=$g::database, **$create_sequence::props)
+  $obj = Sequence($i.ident, database=$g::database,
+                  create_location=(self.getSourceName(), self.input.LT(1).line),
+                  **$create_sequence::props)
 }
   : CREATE kSEQUENCE i=identifier
     sequence_prop*
@@ -680,7 +698,9 @@ create_synonym returns [obj]
     {
       $obj = Synonym($syn.ident,
                      for_object=$g::database.find($target.ident, OracleObject),
-                     database=$g::database)
+                     database=$g::database,
+                     create_location=(self.getSourceName(),
+                                      self.input.LT(1).line))
     }
   ;
 insert_statement returns [obj]
@@ -1648,7 +1668,7 @@ DOUBLEQUOTED_STRING
 NL : '\r'? '\n' { $channel = NL_CHANNEL } ;
 SPACE	:	(' '|'\t') { $channel=HIDDEN } ;
 SL_COMMENT
-	:	'--' ~('\n'|'\r')* NL {$channel=HIDDEN;}
+	:	'--' ~('\n'|'\r')* {$channel=HIDDEN;}
 	;
 ML_COMMENT
 	:	'/*' ( options {greedy=false;} : . )* '*/' {$channel=HIDDEN;}

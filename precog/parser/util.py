@@ -8,7 +8,7 @@ from antlr3.recognizers import Lexer, Parser
 from antlr3.streams import TokenStream
 
 
-from precog.errors import SqlSyntaxError
+from precog.errors import ParseError, SqlSyntaxError
 from precog import reserved
 from precog.util import HasLog
 #import logging

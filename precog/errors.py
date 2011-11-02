@@ -130,7 +130,12 @@ class UnsatisfiedDependencyError (PrecogError):
     self.unsatisfied = unsatisfied
 
   def __str__ (self):
-    return super().__str__() + "\n  ".join(
-        [''] + ["{} referenced by {}".format(obj.pretty_name,
-          ", ".join(ref.from_.pretty_name for ref in obj._referenced_by))
-        for obj in self.unsatisfied])
+    return super().__str__() + "\n  ".join(line for obj in self.unsatisfied
+                                           for line in (
+      ['', "{} referenced by:".format(obj.pretty_name)] +
+      ['  {}, in "{}", line {}'.format(ref.from_.pretty_name,
+                                       ref.from_.props.get('create_location',
+                                                           ('',))[0],
+                                       ref.from_.props.get('create_location',
+                                                           ('', 0))[1])
+       for ref in obj._referenced_by]))

@@ -24,9 +24,11 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     # Sometimes columns are marked as virtual columns, but because they
     # represent object columns, they're also virtual.
     # We don't consider these VirtualColumns
-    if ('virtual_column' in props and 'YES' == props['virtual_column'] and
-        (('expression' in props and props['expression']) or
-        ('data_default' in props and props['data_default']))):
+    # Or maybe none of that is true... :P
+    #if ('virtual_column' in props and 'YES' == props['virtual_column'] and
+        #(('expression' in props and props['expression']) or
+        #('data_default' in props and props['data_default']))):
+    if 'virtual_column' in props and 'YES' == props['virtual_column']:
       class_ = VirtualColumn
     return super().__new__(class_, *args, **props)
 
@@ -233,9 +235,10 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     def construct (row):
       (_, col_name), *props = row.items()
 
-      #generated = row['hidden_column'] == 'YES'
-      #col_name._generated = generated
-      #row['qualified_col_name']._generated = generated
+      generated = row['hidden_column'] == 'YES'
+      if col_name == row['qualified_col_name']:
+        row['qualified_col_name']._generated = generated
+      col_name._generated = generated
       fqn = OracleFQN(name.schema, name.obj, col_name)
 
       props = dict(props)

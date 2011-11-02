@@ -1,4 +1,4 @@
-import logging
+import logging, time
 
 from precog.diff import Diff, Reference
 from precog.identifier import *
@@ -28,10 +28,9 @@ class OracleObject (HasLog):
       super().__init__()
       self.deferred = deferred
       self.database = database
-      self.props = InsensitiveDict()
+      self.props = InsensitiveDict(props)
       self._referenced_by = set()
       self._dependencies = set()
-      self._update_props(props)
 
       # Ugh this feels hacky
       self._ignore_name = False
@@ -54,16 +53,16 @@ class OracleObject (HasLog):
 
   def __eq__ (self, other):
     if not isinstance(other, type(self)):
-      self.log.debug(
-        "instanceof({}, type({})) failed for type(other) = {!r}, type(self) = "
-        "{!r}".format(self and self.pretty_name, other and other.pretty_name,
-                      type(other), type(self)))
+      #self.log.debug(
+        #"instanceof({}, type({})) failed for type(other) = {!r}, type(self) = "
+        #"{!r}".format(self and self.pretty_name, other and other.pretty_name,
+                      #type(other), type(self)))
       return False
 
     if not self._ignore_name and self.name != other.name:
-      self.log.debug(
-        "{} == {} failed for self.name = {!r}, other.name = {!r}".format(
-          self.pretty_name, other.pretty_name, self.name, other.name))
+      #self.log.debug(
+        #"{} == {} failed for self.name = {!r}, other.name = {!r}".format(
+          #self.pretty_name, other.pretty_name, self.name, other.name))
       return False
 
     common_props = self.props.keys() & other.props.keys()
@@ -76,16 +75,10 @@ class OracleObject (HasLog):
   def __hash__ (self):
     return hash((type(self), self.name))
 
-  def _update_props (self, props):
-    for prop, value in props.items():
-      if hasattr(self, prop):
-        setattr(self, prop, value)
-      else:
-        self.props[prop] = value
-
   @property
   def pretty_name (self):
     return " ".join((self.pretty_type, self.name) +
+                    ( ('*',) if self.name.generated else ()) +
                     (
                       (str(id(self)),) if self.log.isEnabledFor(logging.DEBUG)
                       else ()
@@ -170,7 +163,7 @@ class OracleObject (HasLog):
       elif other.name.generated:
         self.name._generated = True
 
-      self._update_props(other.props)
+      self.props.update(other.props)
 
       self.deferred = False
 
@@ -215,12 +208,15 @@ class OracleObject (HasLog):
 
   def diff_subobjects (self, other, get_objects, label=lambda x: x.name,
                        rename=True):
+    start_time = time.time()
     self.log.debug("Diffing definition {} to live {}".format(self.pretty_name,
       other.pretty_name))
     diffs = []
 
     target_objs = get_objects(self)
     current_objs = get_objects(other)
+    self.log.info("len(target_objs) = {}, len(current_objs) = {}".format(
+      len(target_objs), len(current_objs)))
 
     if not isinstance(target_objs, dict):
       target_objs = {label(obj): obj for obj in target_objs}
@@ -278,6 +274,9 @@ class OracleObject (HasLog):
       len(modify_diffs), pretty_type))
     diffs.extend(modify_diffs)
 
+    end_time = time.time()
+    self.log.info("--> {} obj/s".format(len(current_objs)/(end_time -
+                                                           start_time)))
     return diffs
 
   def add_subobjects (self, subobjects):
@@ -327,7 +326,7 @@ class OracleObject (HasLog):
         dep.to._referenced_by.difference_update(remove_refs)
     self._dependencies.difference_update(remove_deps)
 
-  def _build_set (self, get_objects, get_ref, test=lambda x: True):
+  def _build_dep_set (self, get_objects, get_ref, test=lambda x: True):
     all = set()
 
     def recurse (_object):
@@ -348,12 +347,13 @@ class OracleObject (HasLog):
 
   @property
   def dependencies (self):
-    return self._build_set(lambda self: self._dependencies, lambda ref: ref.to)
+    return self._build_dep_set(lambda self: self._dependencies,
+                               lambda ref: ref.to)
 
   def dependencies_with(self, integrity):
-    ret =  self._build_set(lambda self: self._dependencies, lambda ref: ref.to,
-                           lambda ref: ref.integrity == integrity)
-    return ret
+    return self._build_dep_set(lambda self: self._dependencies,
+                               lambda ref: ref.to,
+                               lambda ref: ref.integrity == integrity)
 
   @classmethod
   def from_db (class_, name, into_database):

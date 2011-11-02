@@ -168,6 +168,8 @@ class DuplicateCreationError (PrecogError):
 def order_diffs (diffs):
   log = logging.getLogger('precog.diff.order_diffs')
 
+  log.info('Ordering statements...')
+
   merged_diffs = {}
   for diff in diffs:
     if diff.sql in merged_diffs:
@@ -184,29 +186,31 @@ def order_diffs (diffs):
       merged_diffs[diff.sql] = diff
   diffs = merged_diffs.values()
 
+  log.info('merged diffs...')
+
   # filter diffs to remove object drops that are autodropped by other diffs
-  dropping = {diff.dropping: diff for diff in diffs if diff.dropping}
-  applicable_diffs = set()
-  for diff in diffs:
-    if diff.dropping:
-      log.debug("Dropping {}".format(diff.pretty_name))
-      autodroppers = (diff.dropping.dependencies_with(Reference.AUTODROP) &
-                      dropping.keys())
-      log.debug("    Autodroppers {}".format([a.pretty_name for a in
-                                              autodroppers]))
-      if autodroppers:
-        for d in autodroppers:
-          # Swap dependencies
-          diff.add_dependencies(dropping[d])
-          dropping[d]._dependencies.discard(diff)
-        continue
+  applicable_diffs = set(diffs)
+  #dropping = {diff.dropping: diff for diff in diffs if diff.dropping}
+  #applicable_diffs = set()
+  #for diff in diffs:
+    #if diff.dropping:
+      #log.debug("Dropping {}".format(diff.pretty_name))
+      #autodroppers = (diff.dropping.dependencies_with(Reference.AUTODROP) &
+                      #dropping.keys())
+      #log.debug("    Autodroppers {}".format([a.pretty_name for a in
+                                              #autodroppers]))
+      #if autodroppers:
+        #for d in autodroppers:
+          ## Swap dependencies
+          #diff.add_dependencies(dropping[d])
+          #dropping[d]._dependencies.discard(diff)
+        #continue
+    #applicable_diffs.add(diff)
 
-
-    applicable_diffs.add(diff)
+  log.info('filtered autodrops...')
 
   # Filter diffs to remove duplicate creates when a more encompassing statement
   # is creating the same thing as an individual one.
-
   creates = {}
   unnecessary_creates = set()
   for diff in applicable_diffs:
@@ -215,18 +219,16 @@ def order_diffs (diffs):
         if product in creates:
           other_diff = creates[product]
           if other_diff.produces.issuperset(diff.produces):
-            print("{} duplicates the creation of {}".format(diff, other_diff))
             unnecessary_creates.add(diff)
             break;
           elif other_diff.produces.issubset(diff.produces):
-            print("{} duplicates the creation of {}".format(other_diff, diff))
             unnecessary_creates.add(other_diff)
           else:
             raise DuplicateCreationError(diff, other_diff)
         creates[product] = diff
   applicable_diffs.difference_update(unnecessary_creates)
 
-
+  log.info('filtered creates...')
 
   #log.debug("All diffs:\n{}".format(pprint.pformat(
     #{diff.pretty_name: {'sql': diff.sql,
@@ -259,6 +261,8 @@ def order_diffs (diffs):
     except TypeError:
       edges[from_].add(to)
 
+  log.info('building edge list')
+
   for diff in diffs:
     add_edge(diff, diff.dependencies)
     for product in diff.produces:
@@ -271,6 +275,8 @@ def order_diffs (diffs):
   # list of sorted diffs
   L = []
   visited = set()
+
+  log.info('walking dep tree')
 
   indent = ''
   def visit (node, this_visit=()):
@@ -305,5 +311,7 @@ def order_diffs (diffs):
 
   for node in S:
     visit(node)
+
+  log.info('Finished ordering statements')
 
   return L

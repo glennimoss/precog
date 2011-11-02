@@ -1,10 +1,11 @@
 from precog import db
-from precog.diff import Diff
+from precog.diff import Diff, Reference
 from precog.identifier import *
 from precog.objects.base import OracleObject, SkippedObject
 from precog.objects.has.columns import HasColumns, HasTableFromColumns
+from precog.objects.has.extradeps import HasExtraDeps
 
-class Index (HasTableFromColumns, HasColumns, OracleObject):
+class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
 
   def __init__ (self, name, unique=None, reverse=None, **props):
     super().__init__(name, **props)
@@ -32,13 +33,17 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
       col._ignore_name = False
     return ret
 
-  @property
-  def dependencies (self):
-    deps = OracleObject.dependencies.__get__(self)
-    return (deps |
-            {dep for col in self.columns
-             if col.hidden
-             for dep in col.dependencies if dep != self})
+  def _extra_deps (self):
+    return {col for col in self.columns if col.hidden}
+
+  def dependencies_with (self, integrity):
+    deps = super().dependencies_with(integrity)
+    if integrity == Reference.AUTODROP:
+      deps |= {subdep for dep in self._extra_deps()
+               if hasattr(dep, 'expression')
+               for subdep in dep.expression.references if subdep != self}
+    return deps
+
   @property
   def unique (self):
     return self.props['uniqueness'] == 'UNIQUE'
