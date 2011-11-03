@@ -205,7 +205,7 @@ def GeneratedId ():
   return name
 
 def name_from_oracle (name):
-  if not name:
+  if not name or isinstance(name, OracleIdentifier):
     return name
 
   if OracleIdentifier.has_parts(name):

@@ -103,47 +103,61 @@ class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
 
   @classmethod
   def from_db (class_, name, into_database):
-    rs = db.query(""" SELECT index_type
+    rs = db.query(""" SELECT index_name
+                           , index_type
                            , uniqueness
                            , tablespace_name
                            , CURSOR(
                                SELECT table_owner
                                     , table_name
                                     , column_name
-                               FROM dba_ind_columns aic
-                               WHERE aic.index_owner = ai.owner
-                                 AND aic.index_name = ai.index_name
-                               ORDER BY aic.column_position
+                               FROM dba_ind_columns dic
+                               WHERE dic.index_owner = di.owner
+                                 AND dic.index_name = di.index_name
+                               ORDER BY dic.column_position
                              ) AS columns
-                      FROM dba_indexes ai
+                      FROM dba_indexes di
                       WHERE owner = :o
-                        AND index_name = :n
+                        AND (:n IS NULL OR index_name = :n)
                   """, o=name.schema, n=name.obj,
                   oracle_names=['tablespace_name', 'table_owner', 'table_name',
                     'column_name'])
-    if not rs:
-      return None
-    rs = rs[0]
-    if rs['index_type'] == 'IOT - TOP':
-      into_database.log.info(
-        "Index {} is for an index-organized table. Skipping...".format(name))
-      return SkippedObject
 
-    if rs['index_type'].find('NORMAL') == -1:
-      into_database.log.warn(
-        "Index {} is of unsupported type {}".format(name, rs['index_type']))
-      return None
-    *props, (_, columns) = rs.items()
+    indexes = set()
+    for row in rs:
+      index_name = OracleFQN(name.schema,
+            OracleIdentifier(row['index_name'], trust_me=True,
+                             generated=(row['generated'] == 'Y')))
+      index_type = row['index_type']
+      if index_type == 'IOT - TOP':
+        into_database.log.info(
+          "Index {} is for an index-organized table. Skipping..."
+          .format(index_name))
+        if name.obj:
+          return SkippedObject
+        continue
 
-    from precog.objects.column import Column
-    columns = [into_database.find(OracleFQN(col['table_owner'],
-                                            col['table_name'],
-                                            col['column_name']), Column)
-               for col in columns]
-    # An index without columns is hardly an index at all!
-    if not columns:
-      into_database.log.warn(
-        "Index {} has no columns. Index skipped.".format(name))
-      return None
-    return class_(name, database=into_database, columns=columns,
-                  create_location=(db.location), **dict(props))
+      if index_type.find('NORMAL') == -1:
+        raise UnimplementedFeatureError(
+          "Index {} has unsupported type {}".format(index_name, index_type))
+
+      from precog.objects.column import Column
+      columns = [into_database.find(OracleFQN(col['table_owner'],
+                                              col['table_name'],
+                                              col['column_name']), Column)
+                 for col in row['columns']]
+      # An index without columns is hardly an index at all!
+      if not columns:
+        into_database.log.warn(
+          "Index {} has no columns. Index skipped.".format(name))
+        if name.obj:
+          return SkippedObject
+        continue
+
+      indexes.add(class_(index_name, columns=columns,
+                         index_type=index_type,
+                         uniqueness=row['uniqueness'],
+                         tablespace_name=row['tablespace_name'],
+                         database=into_database,
+                         create_location=(db.location,)))
+    return indexes

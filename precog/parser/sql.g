@@ -74,7 +74,7 @@ scope tab_col_ref { alias_map; table; columns }
 }
 
 sqlplus_file[database] returns [included_files]
-scope { stmt_begin; included_files_ }
+scope { included_files_ }
 scope g;
 @init {
   $g::database = $database
@@ -83,23 +83,27 @@ scope g;
 @after {
   $included_files = $sqlplus_file::included_files_
 }
-    : ( { $sqlplus_file::stmt_begin = self.input.LT(1) }
+    : ( {
+          create_location = (self.getSourceName(), self.input.LT(1).line)
+        }
         ( stmt=sql_stmt
         | stmt=plsql_stmt
-        )  { $g::database.add($stmt.obj) }
+        ) {
+            $stmt.obj.create_location = create_location
+            $g::database.add($stmt.obj)
+          }
         | (~( CREATE | INSERT ))=> sqlplus_stmt
       )* EOF
     ;
 
 plsql_stmt returns [obj]
 scope { type; name; props }
-@init { $plsql_stmt::props = InsensitiveDict() }
+@init {
+  $plsql_stmt::props = InsensitiveDict()
+}
 @after {
   $obj = PlsqlCode.new($plsql_stmt::type, $plsql_stmt::name, $source.text,
-                       database=$g::database,
-                       create_location=(self.getSourceName(),
-                                        self.input.LT(1).line),
-                       **$plsql_stmt::props)
+                       database=$g::database, **$plsql_stmt::props)
 }
   : CREATE (OR kREPLACE)? source=plsql_object_def
     TERMINATOR
@@ -247,9 +251,7 @@ scope { props; table_name }
   $create_table::props = InsensitiveDict({'columns': [], 'constraints': set()})
 }
 @after {
-  $obj = Table($ident.ident, database=$g::database,
-               create_location=(self.getSourceName(), self.input.LT(1).line),
-               **$create_table::props)
+  $obj = Table($ident.ident, database=$g::database, **$create_table::props)
 }
   : CREATE TABLE ident=identifier {
       $create_table::table_name = $ident.ident
@@ -279,6 +281,7 @@ table_item
   ;
 
 col_spec returns [column]
+scope { column_ }
 scope tab_col_ref;
 @init {
   $tab_col_ref::columns = []
@@ -286,16 +289,10 @@ scope tab_col_ref;
   props = InsensitiveDict()
   props['constraints'] = set()
   props['nullable'] = 'Y'
+  create_location = (self.getSourceName(), self.input.LT(1).line)
 }
 @after {
-  if [c for c in props['constraints']
-      if isinstance(c, UniqueConstraint) and c.is_pk]:
-    #// PKs are unconditionally not null, so let's not create
-    #// unnecessary not null constraints
-    del props['nullable']
-  $column = Column($i.id, database=$g::database,
-                   create_location=(self.getSourceName(),
-                                    self.input.LT(1).line), **props)
+  $column = $col_spec::column_
 }
   : i=tID
     ( dt=data_type[True] { props.update($dt.props) }
@@ -306,7 +303,12 @@ scope tab_col_ref;
         props['expression'] = $virt.exp
       }
     )
-    ( NOT? NULL { props['nullable'] = 'N' if $NOT else 'Y' }
+    {
+      $col_spec::column_ = $g::database.add(
+        Column($create_table::table_name.with_(part=$i.id),
+               database=$g::database, create_location=create_location, **props))
+    }
+    ( NOT? NULL { $col_spec::column_.props['nullable'] = 'N' if $NOT else 'Y' }
     | ic=inline_constraint {
         if $ic.cons:
           props['constraints'].add($ic.cons)
@@ -457,12 +459,15 @@ scope tab_col_ref;
   cons_class = None
   props = InsensitiveDict()
   index = None
+  create_location = (self.getSourceName(), self.input.LT(1).line)
 }
 @after {
   if cons_class:
-    $cons = cons_class($constraint_name.id, database=$g::database,
-                       create_location=(self.getSourceName(),
-                                        self.input.LT(1).line), **props)
+    $cons = $g::database.add(cons_class($constraint_name.id,
+                                        columns=[$col_spec::column_],
+                                        database=$g::database,
+                                        create_location=create_location,
+                                        **props))
   else:
     $cons = None
 }
@@ -525,11 +530,13 @@ scope tab_col_ref;
   cons_class = Constraint
   index_props = InsensitiveDict()
   index = None
+  create_location = (self.getSourceName(), self.input.LT(1).line)
 }
 @after {
-  $constraint = cons_class($constraint_name.id, database=$g::database,
-                           create_location=(self.getSourceName(),
-                                            self.input.LT(1).line), **props)
+  $constraint = $g::database.add(cons_class($constraint_name.id,
+                                            database=$g::database,
+                                            create_location=create_location,
+                                            **props))
 }
   : kCONSTRAINT constraint_name=tID // Non-spec: making required
     ( ( ( UNIQUE { props['is_pk'] = False }
@@ -575,11 +582,12 @@ column_ref
 
       $tab_col_ref::columns.append($g::database.find(fqn, Column))
     }
-  | virt=expression {
-    fqn = OracleFQN($tab_col_ref::table.schema, $tab_col_ref::table.obj,
-                    GeneratedId())
-    $tab_col_ref::columns.append(VirtualColumn(fqn, expression=$virt.exp,
-                                 database=$g::database, hidden_column='YES'))
+  | { create_location = (self.getSourceName(), self.input.LT(1).line) }
+    virt=expression {
+    $tab_col_ref::columns.append($g::database.add(
+      VirtualColumn($tab_col_ref::table.with_(part=GeneratedId()),
+                    expression=$virt.exp, database=$g::database,
+                    hidden_column='YES', create_location=create_location)))
   }
   ;
 
@@ -590,21 +598,18 @@ using_index [constraint_name] returns [props]
 }
 @after {
   if not $props['index']:
-    $props['index'] = Index($constraint_name, unique=True,
-                            database=$g::database,
-                            create_location=(self.getSourceName(),
-                                             self.input.LT(1).line),
-                            **index_props)
-    $g::database.add($props['index'])
+    $props['index'] = $g::database.add(
+      Index($constraint_name, unique=True, database=$g::database,
+            create_location=create_location, **index_props))
 }
   : kUSING INDEX
+    { create_location = (self.getSourceName(), self.input.LT(1).line) }
     ( index_name=identifier {
         $props['index'] = $g::database.find($index_name.ident, Index)
         $props['index_ownership'] = None
       }
     | LPAREN new_index=create_index RPAREN {
-        $props['index'] = $new_index.obj
-        $g::database.add($props['index'])
+        $props['index'] = $g::database.add($new_index.obj)
         $props['index_ownership'] = UniqueConstraint.FULL_INDEX_CREATE
       }
     | attr=index_attributes {
@@ -621,13 +626,12 @@ scope tab_col_ref;
   $tab_col_ref::columns = []
   props = InsensitiveDict()
   props['index_type'] = 'NORMAL'
+  create_location = (self.getSourceName(), self.input.LT(1).line)
 }
 @after {
   table = $g::database.find($tab_col_ref::table, Table)
   $obj = Index($index_name.ident, columns=$tab_col_ref::columns,
-               database=$g::database, create_location=(self.getSourceName(),
-                                                       self.input.LT(1).line),
-               **props)
+               database=$g::database, create_location=create_location, **props)
 }
   : CREATE ( UNIQUE { props['uniqueness'] = 'UNIQUE' }
            | kBITMAP
@@ -671,11 +675,11 @@ tablespace_clause returns [ts_name]
 
 create_sequence returns [obj]
 scope { props }
-@init { $create_sequence::props = InsensitiveDict() }
+@init {
+  $create_sequence::props = InsensitiveDict()
+}
 @after {
-  $obj = Sequence($i.ident, database=$g::database,
-                  create_location=(self.getSourceName(), self.input.LT(1).line),
-                  **$create_sequence::props)
+  $obj = Sequence($i.ident, database=$g::database, **$create_sequence::props)
 }
   : CREATE kSEQUENCE i=identifier
     sequence_prop*
@@ -713,9 +717,7 @@ create_synonym returns [obj]
     {
       $obj = Synonym($syn.ident,
                      for_object=$g::database.find($target.ident, OracleObject),
-                     database=$g::database,
-                     create_location=(self.getSourceName(),
-                                      self.input.LT(1).line))
+                     database=$g::database)
     }
   ;
 insert_statement returns [obj]

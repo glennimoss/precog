@@ -70,8 +70,11 @@ class SchemaConflict (ObjectError):
     self.other = other
 
   def __str__ (self):
-    return "{} is present in schema as {}".format(
-        super().__str__(), self.other.sql(fq=True))
+    return "{}, {} is present in schema as {}".format(
+      super().__str__(), ", ".join(self.obj.create_location),
+      ", ".join([self.other.pretty_name] + self.other.create_location))
+
+      #self.other.sql(fq=True))
 
 class TypeConflict (ObjectError):
 

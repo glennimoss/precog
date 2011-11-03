@@ -90,6 +90,7 @@ class Schema (OracleObject):
           deferred.pretty_name, obj.pretty_name))
         deferred.satisfy(obj)
       del self.deferred[(name, obj_type)]
+      obj = deferred
     else:
       if name in namespace:
         raise SchemaConflict(obj, namespace[name])
@@ -104,8 +105,7 @@ class Schema (OracleObject):
           self.shared_namespace[name] = obj
 
     if not alternate_name:
-      for subobj in obj.subobjects:
-        self.add(subobj)
+      #obj.subobjects = [self.add(subobj) for subobj in obj.subobjects]
 
       # Special case for object columns. We want to look them up by true name or
       # their qualified name
@@ -121,7 +121,10 @@ class Schema (OracleObject):
           "Satisfying deferred Unique Key {} on {} with {}".format(
             self.deferred[columns_set], columns_set, obj))
         self.deferred[columns_set].satisfy(obj)
+        obj = self.deferred[columns_set]
         del self.deferred[columns_set]
+
+    return obj
 
   def __make_fqn (self, name):
     if not isinstance(name, OracleFQN):
@@ -211,12 +214,14 @@ class Schema (OracleObject):
     types = (set(self.objects) | set(other.objects)) - {Column, Constraint}
     for t in types:
       self.log.info("Comparing {}s".format(t.pretty_type))
-      diffs.extend(self.diff_subobjects(other, lambda o: o.objects.get(t, [])))
+      rename = t not in {Sequence, Synonym}
+      diffs.extend(self.diff_subobjects(other, lambda o: o.objects.get(t, []),
+                                        rename=rename))
 
     return diffs
 
   @classmethod
-  def from_db (class_, schema=None, into_database=None):
+  def from_db (class_, schema=None):
     if not isinstance(schema, class_):
       schema = class_(schema, database=into_database)
 
@@ -244,42 +249,74 @@ class Schema (OracleObject):
                                            )
                   """, o=owner, oracle_names=['object_name'])
 
-    count = 0
-    prev_progress = 0
-
+    objects = {}
     for obj in rs:
       object_name = OracleFQN(owner,
               OracleIdentifier(obj['object_name'],
                                generated=(obj['generated'] == 'Y')))
-      schema.log.debug(
-          "Fetching {} {}".format(obj['object_type'], object_name))
 
       try:
         class_ = globals()[_type_to_class_name(obj['object_type'])]
-        db_obj = class_.from_db(object_name, schema.database)
-        if db_obj is SkippedObject:
-          continue
-
-        if db_obj:
-          db_obj.props['status'] = obj['status']
-          schema.add(db_obj)
-        else:
-          schema.log.warn("Unable to load {} {}.{}".format(obj['object_type'],
-                                                           owner,
-                                                           obj['object_name']))
+        if class_ not in objects:
+          objects[class_] = {}
+        objects[class_][object_name] = obj['status']
       except KeyError:
         schema.log.warn("{} [{}]: unexpected type".format(
           obj['object_type'], obj['object_name']))
-      count += 1
-      progress = math.floor(count/len(rs)*100)
-      if progress > prev_progress:
-        old = schema.log.root.handlers[0].terminator
-        schema.log.root.handlers[0].terminator = '\r'
-        schema.log.info("Fetched {}% of schema {}".format(progress, owner))
-        schema.log.root.handlers[0].terminator = old
-        prev_progress = progress
 
+    count = 0
+    total_objects = len(objects)
+    def add (obj):
+      obj.props['status'] = objects[type(obj)].get(obj.name)
+      return schema.add(obj)
+    for obj_type in objects:
+      all_objs = {add(obj) for obj in obj_type.from_db(schema.name,
+                                                       schema.database)}
+      count += len(all_objs)
+      # Maybe we got fewer objects than expected. Keep the total on track so
+      # that the percentage is correct.
+      total_objects -= len(objects[obj_type]) - len(all_objs)
+      progress = math.floor(count/total_objects*100)
+      old_terminator = schema.log.root.handlers[0].terminator
+      schema.log.root.handlers[0].terminator = '\r'
+      schema.log.info("Fetched {}% of schema {}".format(progress, owner))
+      schema.log.root.handlers[0].terminator = old_terminator
     schema.log.info('')
+
+    # old....
+    #for obj in rs:
+      #object_name = OracleFQN(owner,
+              #OracleIdentifier(obj['object_name'],
+                               #generated=(obj['generated'] == 'Y')))
+      #schema.log.debug(
+          #"Fetching {} {}".format(obj['object_type'], object_name))
+
+      #try:
+        #class_ = globals()[_type_to_class_name(obj['object_type'])]
+        #db_obj = class_.from_db(object_name, schema.database)
+        #if db_obj is SkippedObject:
+          #continue
+
+        #if db_obj:
+          #db_obj.props['status'] = obj['status']
+          #schema.add(db_obj)
+        #else:
+          #schema.log.warn("Unable to load {} {}.{}".format(obj['object_type'],
+                                                           #owner,
+                                                           #obj['object_name']))
+      #except KeyError:
+        #schema.log.warn("{} [{}]: unexpected type".format(
+          #obj['object_type'], obj['object_name']))
+      #count += 1
+      #progress = math.floor(count/len(rs)*100)
+      #if progress > prev_progress:
+        #old = schema.log.root.handlers[0].terminator
+        #schema.log.root.handlers[0].terminator = '\r'
+        #schema.log.info("Fetched {}% of schema {}".format(progress, owner))
+        #schema.log.root.handlers[0].terminator = old
+        #prev_progress = progress
+
+    #schema.log.info('')
 
     #schema.log.info("Fetching schema {} complete".format(owner))
     return schema
@@ -299,8 +336,9 @@ class Database (HasLog):
 
   def add (self, obj):
     if not obj:
-      return
+      return obj
 
+    obj.database = self
     schema_name = obj.name.schema
     if isinstance(obj, Schema):
       self.schemas[schema_name] = obj
@@ -310,9 +348,9 @@ class Database (HasLog):
       schema_name = self.default_schema
 
     if schema_name not in self.schemas:
-      self.schemas[schema_name] = Schema(schema_name, database=self)
+      self.add(Schema(schema_name))
 
-    self.schemas[schema_name].add(obj)
+    return self.schemas[schema_name].add(obj)
 
   def add_file (self, filename):
     if not self.parser:
@@ -470,15 +508,15 @@ class Database (HasLog):
         #pickle.dump((filename.name, mtime), cache_file)
         #pickle.dump(database, cache_file)
 
-    if database.log.isEnabledFor(logging.DEBUG):
-      for schema in database.schemas.values():
-        database.log.debug("Schema {}".format(schema.name))
-        for obj_type in schema.objects:
-          database.log.debug("  {}s:".format(obj_type.__name__))
-          for obj_name in sorted([obj_name for obj_name in
-              schema.objects[obj_type]], key=lambda n: str(n)):
-            database.log.debug(
-              "    {}".format(schema.objects[obj_type][obj_name].sql(fq=True)))
+    #if database.log.isEnabledFor(logging.DEBUG):
+      #for schema in database.schemas.values():
+        #database.log.debug("Schema {}".format(schema.name))
+        #for obj_type in schema.objects:
+          #database.log.debug("  {}s:".format(obj_type.__name__))
+          #for obj_name in sorted([obj_name for obj_name in
+              #schema.objects[obj_type]], key=lambda n: str(n)):
+            #database.log.debug(
+              #"    {}".format(schema.objects[obj_type][obj_name].sql(fq=True)))
 
     return database
 

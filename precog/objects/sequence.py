@@ -1,6 +1,6 @@
 from precog import db
 from precog.diff import Diff
-from precog.objects.base import OracleObject
+from precog.objects.base import OracleObject, OracleFQN
 
 class Sequence (OracleObject):
 
@@ -50,7 +50,8 @@ class Sequence (OracleObject):
 
   @classmethod
   def from_db (class_, name, into_database):
-    rs = db.query(""" SELECT min_value
+    rs = db.query(""" SELECT sequence_name
+                           , min_value
                            , max_value
                            , increment_by
                            , cycle_flag
@@ -58,10 +59,11 @@ class Sequence (OracleObject):
                            , cache_size
                       FROM dba_sequences
                       WHERE sequence_owner = :o
-                        AND sequence_name = :n
-                  """, o=name.schema, n=name.obj)
-    if not rs:
-      into_database.log.warn("Sequence not found for {}".format(name))
-      return None
-    return class_(name, database=into_database, create_location=(db.location),
-                  **rs[0])
+                        AND (:n IS NULL OR sequence_name = :n)
+                  """, o=name.schema, n=name.obj,
+                  oracle_names=['sequence_name', 'table_owner', 'table_name'])
+
+    return {class_(OracleFQN(name.schema, row.pop('sequence_name')),
+                   database=into_database, create_location=(db.location,),
+                  **row)
+            for row in rs}

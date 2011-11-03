@@ -39,7 +39,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
       self.log.error("{} had this problem: {}".format(self.pretty_name, e))
 
   def _drop (self):
-    return Diff( "ALTER TABLE {} DROP CONSTRAINT {}"
+    return Diff("ALTER TABLE {} DROP CONSTRAINT {}"
                 .format(self.table.name.lower(), self.name.obj.lower()),
                 self, priority=Diff.DROP)
 
@@ -64,14 +64,13 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                            , constraint_type
                            , status
                            , generated
-                           , table_name
                            , CURSOR(
                                SELECT table_name
                                     , column_name
-                               FROM dba_cons_columns acc
-                               WHERE acc.owner = ac.owner
-                                 AND acc.constraint_name = ac.constraint_name
-                               ORDER BY acc.position
+                               FROM dba_cons_columns dcc
+                               WHERE dcc.owner = dc.owner
+                                 AND dcc.constraint_name = dc.constraint_name
+                               ORDER BY dcc.position
                              ) AS columns
 
                            -- For check constraints
@@ -85,48 +84,35 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                            -- For PK/unique constraints
                            , index_owner
                            , index_name
-                      FROM dba_constraints ac
+                      FROM dba_constraints dc
                       WHERE owner = :o
-                        AND table_name = :n
+                        AND (:n IS NULL OR constraint_name = :n)
                   """, o=name.schema, n=name.obj,
                   oracle_names=['constraint_name', 'r_owner',
                                 'r_constraint_name', 'index_owner',
                                 'index_name', 'table_name', 'column_name'])
 
-    if not rs:
-      return None
     constraints = set()
     for row in rs:
-      if name.part:
-        # We're looking only for inlineable constraints on a specific column
-        if (len(row['columns']) > 1 or
-            row['columns'][0]['column_name'] != name.part):
-          continue
-      elif len(row['columns']) == 1:
-        # Only Constraints with multiple columns are at the Table level
-        continue
-
       constraint_name = OracleFQN(name.schema,
             OracleIdentifier(row['constraint_name'], trust_me=True,
                              generated=(row['generated'] == 'GENERATED NAME')))
       type = row['constraint_type']
       constraint_class = None
       props = {}
-      columns = None
-      if len(row['columns']) > 1:
-        # If there's only one column, we'll leave it up to the caller to set it
-        from precog.objects.column import Column
-        columns = [into_database.find(OracleFQN(name.schema,
-                                                col['table_name'],
-                                                col['column_name']),
-                                      Column)
-                   for col in row['columns']]
-        if not columns:
-          # I don't think there should be constraints without columns...
-          # but there seems to be...
-          into_database.log.warn(
-            "Constraint {} has no columns. Constraint skipped.".format(name))
-          return None
+      from precog.objects.column import Column
+      columns = [into_database.find(OracleFQN(name.schema,
+                                              col['table_name'],
+                                              col['column_name']),
+                                    Column)
+                 for col in row['columns']]
+      if not columns:
+        # I don't think there should be constraints without columns...
+        # but there seems to be...
+        into_database.log.warn(
+          "Constraint {} has no columns. Constraint skipped.".format(name))
+        continue
+
       if type == 'C':
         props['expression'] = row['search_condition']
         constraint_class = CheckConstraint
@@ -151,7 +137,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
       constraints.add(constraint_class(constraint_name,
                                        is_enabled=(row['status'] == 'ENABLED'),
                                        database=into_database, columns=columns,
-                                       create_location=(db.location), **props))
+                                       create_location=(db.location,), **props))
 
     return constraints
 
@@ -244,9 +230,9 @@ class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
   def _drop (self):
     diff = super()._drop()
     if self.index_ownership:
-      diff.sql += ' DROP INDEX'
+      diff.sql[0] += ' DROP INDEX'
     else:
-      diff.sql += ' KEEP INDEX'
+      diff.sql[0] += ' KEEP INDEX'
     return diff
 
 _HasFkConstraint = HasProp('fk_constraint', dependency=Reference.HARD,

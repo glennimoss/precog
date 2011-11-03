@@ -4,7 +4,8 @@ from precog import db
 from precog.diff import Diff, Reference
 from precog.identifier import *
 from precog.objects.base import OracleObject
-from precog.objects.constraint import Constraint, CheckConstraint
+from precog.objects.constraint import (Constraint, CheckConstraint,
+                                       UniqueConstraint)
 from precog.objects.has.constraints import HasConstraints
 from precog.objects.has.expression import (HasDataDefault,
                                            HasExpressionWithDataDefault)
@@ -41,7 +42,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
       class_ = VirtualColumn
     return super().__new__(class_, *args, **props)
 
-  def __init__ (self, name, **props):
+  def __init__ (self, name, internal_column_id=None, **props):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(part=name)
     if name.part.parts:
@@ -50,16 +51,20 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     super().__init__(name, **props)
     if not self.qualified_col_name:
       self.qualified_col_name = self.name.part
+    self.internal_column_id = internal_column_id
 
   @property
   def hidden (self):
     return self.props['hidden_column'] == 'YES'
 
-  @_HasTable.table.setter
-  def table (self, value):
-    _HasTable.table.__set__(self, value)
-    if value:
-      self.name = OracleFQN(value.name.schema, value.name.obj, self.name.part)
+  @_HasTable.table.getter
+  def table (self):
+    table = _HasTable.table.__get__(self)
+    if not table:
+      from precog.objects.table import Table
+      table = self.database.find(self.name.without_part(), Table)
+      self.table = table
+    return table
 
   @HasUserType.user_type.setter
   def user_type (self, value):
@@ -92,8 +97,11 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     return self.name
 
   @property
-  def subobjects (self):
-    return self.constraints
+  def _is_pk (self):
+    for ref in self._referenced_by:
+      if isinstance(ref, UniqueConstraint) and ref.is_pk:
+        return True
+    return False
 
   def _sql (self, fq=False, full_def=True, default_clause=True):
     parts = []
@@ -108,7 +116,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
       if default_clause and self.data_default:
         parts.append("DEFAULT {}".format(self.data_default))
 
-      if self.props['nullable']:
+      if self.props['nullable'] and not self._is_pk:
         if 'N' == self.props['nullable']:
           parts.append('NOT')
         parts.append('NULL')
@@ -283,7 +291,8 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
 
   @classmethod
   def from_db (class_, name, into_database):
-    rs = db.query(""" SELECT column_name
+    rs = db.query(""" SELECT table_name
+                           , column_name
                            , qualified_col_name
                            , data_type
                            , CASE WHEN data_type_owner = 'PUBLIC'
@@ -299,40 +308,54 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                            , nullable
                            , virtual_column
                            , hidden_column
-                      FROM dba_tab_cols
+                           , internal_column_id
+                           , CURSOR(
+                               SELECT constraint_name
+                               FROM dba_cons_columns dcc
+                               WHERE dcc.owner = dtc.owner
+                                 AND dcc.table_name = dtc.table_name
+                               GROUP BY constraint_name
+                               HAVING COUNT(*) = 1
+                                  AND MAX(column_name) = dtc.column_name
+                             ) AS constraints
+                      FROM dba_tab_cols dtc
                       WHERE owner = :o
-                        AND table_name = :t
+                        AND (:t IS NULL OR table_name = :t)
                         AND (:c IS NULL OR column_name = :c)
-                      ORDER BY internal_column_id
                   """, o=name.schema, t=name.obj, c=name.part,
                   oracle_names=['column_name', 'qualified_col_name',
-                                'data_type_owner', 'data_type'])
+                                'constraint_name', 'data_type_owner',
+                                'data_type'])
 
     def construct (row):
-      (_, col_name), *props = row.items()
-
-      generated = row['hidden_column'] == 'YES'
-      if col_name == row['qualified_col_name']:
-        row['qualified_col_name']._generated = generated
-      col_name._generated = generated
-      fqn = OracleFQN(name.schema, name.obj, col_name)
-
+      (_, table_name), (_, col_name), *props, (_, constraints) = row.items()
       props = dict(props)
+
+      generated = props['hidden_column'] == 'YES'
+      if col_name == props['qualified_col_name']:
+        props['qualified_col_name']._generated = generated
+      col_name._generated = generated
+      column_name = OracleFQN(name.schema, table_name, col_name)
+
       if props['data_type_owner']:
         props['user_type'] = into_database.find(
           OracleFQN(props['data_type_owner'], props['data_type']), Type)
         del props['data_type_owner']
+      else:
+        # Remove quotes that may be on built-in types
+        props['data_type'] = props['data_type'].strip('"')
 
-      constraints = Constraint.from_db(OracleFQN(name.schema, name.obj,
-                                                 props['qualified_col_name']),
-                                       into_database)
+      constraints = [
+        into_database.find(OracleFQN(name,schema, table_name,
+                                     cons['constraint_name']),
+                           Constraint)
+        for cons in constraints]
 
-      return class_(fqn, constraints=constraints, database=into_database,
-                    create_location=(db.location), **props)
+      return class_(column_name, constraints=constraints,
+                    database=into_database, create_location=(db.location,),
+                    **props)
 
-    if not rs:
-      into_database.log.warn("Columns not found for {}".format(name))
-    return [construct(row) for row in rs]
+    return {construct(row) for row in rs}
 
 class VirtualColumn (HasExpressionWithDataDefault, Column):
   namespace = Column

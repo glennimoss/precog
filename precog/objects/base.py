@@ -27,13 +27,7 @@ class OracleObject (HasLog):
 
     if not reinit:
       super().__init__()
-      if create_location:
-        self.create_location = []
-        self.create_location.append('in "{}"'.format(create_location[0]))
-        if len(create_location) > 1:
-          self.create_location.append('line {}'.format(create_location[1]))
-      else:
-        self.create_location = ('unknown',)
+      self.create_location = create_location
       self.deferred = deferred
       self.database = database
       self.props = InsensitiveDict(props)
@@ -55,9 +49,23 @@ class OracleObject (HasLog):
         #self.name,
         #', '.join("{}={!r}".format(k, v) for k, v in props.items()))
 
-
   def __str__ (self):
     return self.sql()
+
+  @property
+  def create_location (self):
+    if not self._create_location:
+      return ['unknown']
+    return self._create_location
+
+  @create_location.setter
+  def create_location (self, value):
+    self._create_location = value
+    if value:
+      self._create_location = []
+      self._create_location.append('in "{}"'.format(value[0]))
+      if len(value) > 1:
+        self._create_location.append('line {}'.format(value[1]))
 
   def __eq__ (self, other):
     if not isinstance(other, type(self)):
@@ -171,6 +179,9 @@ class OracleObject (HasLog):
       elif other.name.generated:
         self.name._generated = True
 
+      if not self._create_location:
+        self._create_location = other.create_location
+
       for k, v in other.props.items():
         if k in self.props and self.props[k] is UnsetProperty:
           del self.props[k]
@@ -180,10 +191,6 @@ class OracleObject (HasLog):
           self.props[k] = v
 
       self.deferred = False
-
-  @property
-  def subobjects (self):
-    return set()
 
   def diff (self, other, recreate=True):
     """
@@ -215,26 +222,16 @@ class OracleObject (HasLog):
     if self.log.isEnabledFor(logging.DEBUG):
       for prop in prop_diff:
         self.log.debug("{} ['{}']: expected {!r}, found {!r}".format(
-          self.pretty_name, prop, repr(self.props[prop]),
-          repr(other.props[prop])))
+          self.pretty_name, prop, self.props[prop], other.props[prop]))
 
     return prop_diff
 
   def diff_subobjects (self, other, get_objects, label=lambda x: x.name,
                        rename=True):
-    start_time = time.time()
-    self.log.debug("Diffing definition {} to live {}".format(self.pretty_name,
-      other.pretty_name))
     diffs = []
 
     target_objs = get_objects(self)
     current_objs = get_objects(other)
-    try:
-      self.log.info("len(target_objs) = {}, len(current_objs) = {}".format(
-        len(target_objs), len(current_objs)))
-    except TypeError:
-      import pdb
-      pdb.set_trace()
 
     if not isinstance(target_objs, dict):
       target_objs = {label(obj): obj for obj in target_objs}
@@ -244,8 +241,8 @@ class OracleObject (HasLog):
     target_obj_names = set(target_objs)
     current_obj_names = set(current_objs)
 
-    self.log.debug("target_obj_names = {}".format(target_obj_names))
-    self.log.debug("current_obj_names = {}".format(current_obj_names))
+    #self.log.debug("target_obj_names = {}".format(target_obj_names))
+    #self.log.debug("current_obj_names = {}".format(current_obj_names))
 
     addobjs = target_obj_names - current_obj_names
     dropobjs = current_obj_names - target_obj_names
@@ -260,6 +257,8 @@ class OracleObject (HasLog):
         for drop_name in dropobjs:
           drop_obj = current_objs[drop_name]
           if add_obj == drop_obj:
+            import pdb
+            pdb.set_trace()
             modify_diffs.append(add_obj.rename(drop_obj))
             not_add.add(add_name)
             dropobjs.remove(drop_name)
@@ -272,15 +271,15 @@ class OracleObject (HasLog):
                    (current_objs and
                     type(next(iter(current_objs.values()))).pretty_type) or
                    'Object')
-    self.log.debug("  Adding {} {}s: {}".format(len(addobjs), pretty_type,
-      ", ".join(target_objs[obj].pretty_name for obj in addobjs)))
-    self.log.debug("  Dropping {} {}s: {}".format(len(dropobjs), pretty_type,
-      ", ".join(current_objs[obj].pretty_name for obj in dropobjs)))
 
     if addobjs:
+      self.log.debug("  Adding {} {}s: {}".format(len(addobjs), pretty_type,
+        ", ".join(target_objs[obj].pretty_name for obj in addobjs)))
       diffs.extend(
           other.add_subobjects(target_objs[addobj] for addobj in addobjs))
     if dropobjs:
+      self.log.debug("  Dropping {} {}s: {}".format(len(dropobjs), pretty_type,
+        ", ".join(current_objs[obj].pretty_name for obj in dropobjs)))
       diffs.extend(
           other.drop_subobjects(current_objs[dropobj] for dropobj in dropobjs))
 
@@ -288,13 +287,11 @@ class OracleObject (HasLog):
         for target_obj in target_objs.values()
           if target_obj.name in current_objs
         for diff in target_obj.diff(current_objs[target_obj.name]))
-    self.log.debug("  {} modifications for {}s".format(
-      len(modify_diffs), pretty_type))
+    if modify_diffs:
+      self.log.debug("  {} modifications for {}s".format(
+        len(modify_diffs), pretty_type))
     diffs.extend(modify_diffs)
 
-    end_time = time.time()
-    self.log.info("--> {} obj/s".format(len(current_objs)/(end_time -
-                                                           start_time)))
     return diffs
 
   def add_subobjects (self, subobjects):
@@ -374,6 +371,6 @@ class OracleObject (HasLog):
                                lambda ref: ref.integrity == integrity)
 
   @classmethod
-  def from_db (class_, name, into_database):
+  def from_db (class_, name=None, into_database=None):
     raise UnimplementedFeatureError(
       "Unimplemented from_db for {}".format(class_.__name__))

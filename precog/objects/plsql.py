@@ -3,7 +3,7 @@ from precog.diff import Diff, PlsqlDiff, Reference
 from precog.errors import PlsqlSyntaxError, PrecogError
 from precog.objects._assert import *
 from precog.objects._misc import *
-from precog.objects.base import OracleObject
+from precog.objects.base import OracleObject, OracleFQN
 from precog.objects.has.prop import HasProp
 from precog.util import HasLog
 
@@ -53,9 +53,9 @@ class PlsqlCode (OracleObject):
 
   def errors (self):
     rs= db.query(""" SELECT line
-                           , position
-                           , text
-                           , attribute
+                          , position
+                          , text
+                          , attribute
                       FROM dba_errors
                       WHERE owner = :o
                         AND name = :n
@@ -73,18 +73,26 @@ class PlsqlCode (OracleObject):
 
   @classmethod
   def from_db (class_, name, into_database):
-    rs = db.query(""" SELECT text
+    rs = db.query(""" SELECT name
+                           , type
+                           , LISTAGG(text, '') WITHIN GROUP (ORDER BY line)
+                             AS text
                       FROM dba_source
                       WHERE owner = :o
-                        AND name = :n
-                        AND type = :t
-                      ORDER BY line
-                  """, o=name.schema, n=name.obj, t=class_.type)
-    if not rs:
-      into_database.log.warn("PL/SQL source not found for {}".format(name))
-      return None
-    return class_(name, source=''.join(row['text'] for row in rs),
-        database=into_database, create_location=(db.location))
+                        AND (:n IS NULL
+                           OR (name = :n AND type = :t))
+                      GROUP BY name, type
+                  """, o=name.schema, n=name.obj, t=class_.type,
+                  oracle_names=['name'])
+
+    plsql = set()
+    for row in rs:
+      plsql_name = OracleFQN(name.schema, row['name'])
+      plsql.add(_type_to_class(row['type'], plsql_name)(
+        plsql_name, source="".join(row['text']), database=into_database,
+        create_location=(db.location,)))
+
+    return plsql
 
 class PlsqlHeader (PlsqlCode):
   pass
@@ -93,13 +101,12 @@ class PlsqlBody (HasProp('header', dependency=Reference.AUTODROP,
                          assert_type=PlsqlHeader),
                  PlsqlCode):
 
-  @classmethod
-  def from_db (class_, name, into_database):
-    body = super().from_db(name, into_database)
-    header_class = _type_to_class(class_.type.split()[0], name)
-    body.header = into_database.find(body.name, header_class)
+  def __init__ (self, name, **props):
+    super().__init__(name, **props)
 
-    return body
+    if not self.header:
+      header_class = _type_to_class(class_.type.split()[0], self.name)
+      self.header = self.database.find(self.name, header_class)
 
 class Function (PlsqlCode):
   pass

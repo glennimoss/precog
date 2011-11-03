@@ -25,16 +25,18 @@ class Synonym (HasProp('for_object', dependency=Reference.SOFT,
 
   @classmethod
   def from_db (class_, name, into_database):
-    rs = db.query(""" SELECT table_owner
+    rs = db.query(""" SELECT synonym_name
+                           , table_owner
                            , table_name
                       FROM dba_synonyms
                       WHERE owner = :o
-                        AND synonym_name = :n
-                  """, o=name.schema, n=name.obj)
-    if not rs:
-      into_database.log.warn("Synonym not found for {}".format(name))
-      return None
-    rs = rs[0]
-    return class_(name, for_object=into_database.find(
-      OracleFQN(rs['table_owner'], rs['table_name']), OracleObject),
-      database=into_database, create_location=(db.location))
+                        AND (:n IS NULL OR synonym_name = :n)
+                  """, o=name.schema, n=name.obj,
+                  oracle_names=['synonym_name', 'table_owner', 'table_name'])
+
+    return {class_(OracleFQN(name.schema, row['synonym_name']),
+                   for_object=into_database.find(OracleFQN(row['table_owner'],
+                                                           row['table_name']),
+                                                 OracleObject),
+                   database=into_database, create_location=(db.location,))
+            for row in rs}

@@ -98,7 +98,20 @@ def _execute(*args, **kvargs):
   try:
     cursor.execute(*args, **kvargs)
   except cx_Oracle.DatabaseError as e:
-    raise OracleError("{}SQL: {}".format(e, args[0])) from e
+    offset = e.args[0].offset
+    lines = args[0].split('\n')
+    pos = 0
+    for lineno in range(len(lines)):
+      linelen = len(lines[lineno]) + 1
+      if pos + linelen > offset:
+        break
+      pos += linelen
+    offset -= pos
+
+    lines.insert(lineno + 1, "{}^".format(' '*offset))
+    sql = "\n".join(lines)
+
+    raise OracleError("{}SQL:\n{}".format(e, sql)) from e
   return cursor
 
 class all_strings (object):

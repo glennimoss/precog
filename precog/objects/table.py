@@ -1,3 +1,5 @@
+import itertools
+
 from precog import db
 from precog.diff import Commit, Diff
 from precog.identifier import *
@@ -135,10 +137,6 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
   def __repr__ (self):
     return super().__repr__(data=self.data)
 
-  @property
-  def subobjects (self):
-    return self.constraints.union(self.columns)
-
   def add_data (self, columns, values):
     self.data.append(Data(self, columns, values))
 
@@ -211,7 +209,8 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
 
   @classmethod
   def from_db (class_, name, into_database):
-    rs = db.query(""" SELECT table_type
+    rs = db.query(""" SELECT table_name
+                           , table_type
                            , CASE WHEN table_type_owner = 'PUBLIC'
                                     OR table_type_owner LIKE '%SYS' THEN NULL
                                   ELSE table_type_owner
@@ -219,38 +218,66 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
                            , tablespace_name
                            , iot_type
                            , nested
-                      FROM dba_all_tables
+                           , CURSOR(
+                               SELECT column_name
+                               FROM dba_tab_cols dtc
+                               WHERE dtc.owner = dat.owner
+                                 AND dtc.table_name = dat.table_name
+                               ORDER BY dtc.internal_column_id
+                             ) AS columns
+                           , CURSOR(
+                               SELECT constraint_name
+                               FROM dba_cons_columns dcc
+                               WHERE dcc.owner = dat.owner
+                                 AND dcc.table_name = dat.table_name
+                               GROUP BY constraint_name
+                               HAVING COUNT(*) > 1
+                             ) AS constraints
+                      FROM dba_all_tables dat
                       WHERE owner = :o
-                        AND table_name = :t
+                        AND (:t IS NULL OR table_name = :t)
                   """, o=name.schema, t=name.obj,
-                  oracle_names=['tablespace_name'])
-    if not rs:
-      into_database.log.warn("Table not found for {}".format(name))
-      return None
-    props = rs[0]
-    if props['iot_type'] is not None:
-      # TODO: currently ignoring index-organized tables
-      into_database.log.info(
-        "Table {} is an index-organized table. Skipping...".format(name))
-      return SkippedObject
-    if props['nested'] == 'YES':
-      # TODO: assuming that nested tables are managed by their parent tables
-      into_database.log.info(
-        "Table {} is a nested table. Skipping...".format(name))
-      return SkippedObject
-    del props['iot_type']
-    del props['nested']
-    if props['table_type_owner']:
-      props['user_type'] = into_database.find(
-        OracleFQN(props['table_type_owner'], props['table_type']), Type)
-      del props['table_type_owner']
-    elif not props['table_type']:
-      props['columns'] = Column.from_db(name, into_database)
+                  oracle_names=['table_name', 'column_name', 'tablespace_name'])
 
-    props['constraints'] = Constraint.from_db(name, into_database)
+    tables = set()
+    for row in rs:
+      props = {'tablespace_name': row['tablespace_name'],
+               'table_type': row['table_type']}
+      table_name = OracleFQN(name.schema, row['table_name'])
+      if row['iot_type'] is not None:
+        # TODO: currently ignoring index-organized tables
+        into_database.log.info(
+          "Table {} is an index-organized table. Skipping...".format(
+            table_name))
+        if name.obj:
+          return SkippedObject
+        continue
+      if row['nested'] == 'YES':
+        # TODO: assuming that nested tables are managed by their parent tables
+        into_database.log.info(
+          "Table {} is a nested table. Skipping...".format(name))
+        if name.obj:
+          return SkippedObject
+        continue
+      if row['table_type_owner']:
+        props['user_type'] = into_database.find(
+          OracleFQN(row['table_type_owner'], row['table_type']), Type)
 
-    return class_(name, database=into_database, create_location=(db.location),
-                  **props)
+      props['columns'] = [into_database.find(OracleFQN(table_name.schema,
+                                                       table_name.obj,
+                                                       col['column_name']),
+                                             Column)
+                          for col in row['columns']]
+
+      props['constraints'] = [
+        into_database.find(OracleFQN(table_name.schema,
+                                     cons['constraint_name']),
+                           Constraint)
+        for cons in row['constraints']]
+
+      tables.add(class_(name, database=into_database,
+                        create_location=(db.location,), **props))
+    return tables
 
 class ObjectTable (HasUserType, HasProp('table_type', assert_type=str), Table):
   namespace = Table

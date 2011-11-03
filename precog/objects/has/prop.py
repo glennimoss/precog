@@ -56,14 +56,14 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
 
     def _diff_props (self, other):
       prop_diff = super()._diff_props(other)
-      self.log.debug("{}['{}']: comparing {!r} to {!r}".format(
-        self.pretty_name, prop_name, repr(getattr(self, prop_name)),
-        repr(getattr(other, prop_name))))
+      #self.log.debug("{}['{}']: comparing {!r} to {!r}".format(
+        #self.pretty_name, prop_name, repr(getattr(self, prop_name)),
+        #repr(getattr(other, prop_name))))
       if not equal(self, other):
         prop_diff[prop_name] = getattr(self, prop_name)
         self.log.debug("{}['{}']: expected {!r}, found {!r}".format(
-          self.pretty_name, prop_name, repr(getattr(self, prop_name)),
-          repr(getattr(other, prop_name))))
+          self.pretty_name, prop_name, getattr(self, prop_name),
+          getattr(other, prop_name)))
       return prop_diff
 
     def satisfy (self, other):
