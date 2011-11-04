@@ -72,27 +72,21 @@ class PlsqlCode (OracleObject):
       raise PlsqlSyntaxError(self, errors)
 
   @classmethod
-  def from_db (class_, name, into_database):
+  def from_db (class_, schema, into_database):
     rs = db.query(""" SELECT name
                            , type
                            , LISTAGG(text, '') WITHIN GROUP (ORDER BY line)
                              AS text
                       FROM dba_source
                       WHERE owner = :o
-                        AND (:n IS NULL
-                           OR (name = :n AND type = :t))
                       GROUP BY name, type
-                  """, o=name.schema, n=name.obj, t=class_.type,
-                  oracle_names=['name'])
+                  """, o=schema, oracle_names=['name'])
 
-    plsql = set()
     for row in rs:
-      plsql_name = OracleFQN(name.schema, row['name'])
-      plsql.add(_type_to_class(row['type'], plsql_name)(
+      plsql_name = OracleFQN(schema, row['name'])
+      yield _type_to_class(row['type'], plsql_name)(
         plsql_name, source="".join(row['text']), database=into_database,
-        create_location=(db.location,)))
-
-    return plsql
+        create_location=(db.location,))
 
 class PlsqlHeader (PlsqlCode):
   pass

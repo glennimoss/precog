@@ -98,7 +98,7 @@ class Schema (OracleObject):
         raise SchemaConflict(obj, self.shared_namespace[name])
       else:
         # Force this schema name
-        obj.name = OracleFQN(self.name.schema, obj.name.obj, obj.name.part)
+        obj.name = name
         obj.database = self.database
         namespace[name] = obj
         if obj_type in self.share_namespace:
@@ -159,8 +159,7 @@ class Schema (OracleObject):
       return self.objects[find_type][name]
 
     if deferred:
-      obj = obj_type(name, deferred=True)
-      self.add(obj)
+      obj = self.add(obj_type(name, deferred=True))
       self.deferred[(name, find_type)] = obj
       return obj
 
@@ -229,31 +228,55 @@ class Schema (OracleObject):
 
     schema.log.info("Fetching schema {}...".format(owner))
 
-    #rs = db.query(""" SELECT object_name
-                           #, object_type
-                           #, status
-                           #, generated
-                      #FROM dba_objects
-                      #WHERE owner = :o
-                        #AND subobject_name IS NULL
-                        #AND object_type IN ( 'FUNCTION'
-                                           #, 'INDEX'
-                                           #, 'PACKAGE'
-                                           #, 'PACKAGE BODY'
-                                           #, 'PROCEDURE'
-                                           #, 'SEQUENCE'
-                                           #, 'SYNONYM'
-                                           #, 'TABLE'
-                                           #, 'TYPE'
-                                        #-- , 'VIEW'
-                                           #)
-                  #""", o=owner, oracle_names=['object_name'])
+    rs = db.query(""" SELECT SUM(num) as total_objects FROM (
+                        SELECT COUNT(*) as num
+                          --   object_name
+                          -- , NULL AS part_name
+                          -- , object_type
+                          -- , status
+                          -- , generated
+                        FROM dba_objects
+                        WHERE owner = :o
+                          AND subobject_name IS NULL
+                          AND object_type IN ( 'FUNCTION'
+                                             , 'INDEX'
+                                             , 'PACKAGE'
+                                             , 'PACKAGE BODY'
+                                             , 'PROCEDURE'
+                                             , 'SEQUENCE'
+                                             , 'SYNONYM'
+                                             , 'TABLE'
+                                             , 'TYPE'
+                                          -- , 'VIEW'
+                                             )
+                        UNION
+                        SELECT COUNT(*)
+                          --   table_name
+                          -- , column_name
+                          -- , 'COLUMN'
+                          -- , 'VALID'
+                          -- , 'N'
+                        FROM dba_tab_cols
+                        WHERE owner = :o
+                        UNION
+                        SELECT COUNT(*)
+                          --   constraint_name
+                          -- , NULL
+                          -- , 'CONSTRAINT'
+                          -- , 'VALID'
+                          -- , DECODE(generated, 'GENERATED NAME', 'Y', 'N')
+                        FROM dba_constraints
+                        WHERE owner = :o
+                      )
+                  """, o=owner, oracle_names=['object_name'])
 
     #objects = {}
     #for obj in rs:
       #object_name = OracleFQN(owner,
-              #OracleIdentifier(obj['object_name'],
-                               #generated=(obj['generated'] == 'Y')))
+                              #OracleIdentifier(obj['object_name'],
+                                               #generated=(
+                                                 #obj['generated'] == 'Y')),
+                              #obj['part_name'])
 
       #try:
         #class_ = globals()[_type_to_class_name(obj['object_type'])]
@@ -264,8 +287,8 @@ class Schema (OracleObject):
         #schema.log.warn("{} [{}]: unexpected type".format(
           #obj['object_type'], obj['object_name']))
 
-    #count = 0
-    #total_objects = len(objects)
+    count = 0
+    total_objects = rs[0]['total_objects']
     #def add (obj):
       #obj.props['status'] = objects[type(obj)].get(obj.name)
       #return schema.add(obj)
@@ -276,8 +299,21 @@ class Schema (OracleObject):
                      Sequence,
                      Synonym,
                      Table):
-      all_objs = {schema.add(obj) for obj in obj_type.from_db(schema.name,
-                                                              schema.database)}
+      #schema.log.info("Fetching all {}s".format(obj_type.pretty_type))
+      #all_objs = {add(obj) for obj in obj_type.from_db(schema.name,
+                                                              #schema.database)}
+      for obj in obj_type.from_db(schema.name.schema, schema.database):
+        schema.add(obj)
+        count += 1
+        old_terminator = schema.log.root.handlers[0].terminator
+        schema.log.root.handlers[0].terminator = '\r'
+        schema.log.info(
+          "Fetched {:03.0%} of schema {}. Currently fetching {} objects..."
+          .format(count/total_objects, owner, obj_type.pretty_type))
+        schema.log.root.handlers[0].terminator = old_terminator
+    schema.log.info("Fetched 100% of schema {}.".format(owner))
+
+
       #count += len(all_objs)
       # Maybe we got fewer objects than expected. Keep the total on track so
       # that the percentage is correct.

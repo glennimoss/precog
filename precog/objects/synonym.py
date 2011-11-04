@@ -24,19 +24,17 @@ class Synonym (HasProp('for_object', dependency=Reference.SOFT,
     return self.create()
 
   @classmethod
-  def from_db (class_, name, into_database):
+  def from_db (class_, schema, into_database):
     rs = db.query(""" SELECT synonym_name
                            , table_owner
                            , table_name
                       FROM dba_synonyms
                       WHERE owner = :o
-                        AND (:n IS NULL OR synonym_name = :n)
-                  """, o=name.schema, n=name.obj,
-                  oracle_names=['synonym_name', 'table_owner', 'table_name'])
-
-    return {class_(OracleFQN(name.schema, row['synonym_name']),
+                  """, o=schema, oracle_names=['synonym_name', 'table_owner',
+                                               'table_name'])
+    for row in rs:
+      yield class_(OracleFQN(schema, row['synonym_name']),
                    for_object=into_database.find(OracleFQN(row['table_owner'],
                                                            row['table_name']),
                                                  OracleObject),
                    database=into_database, create_location=(db.location,))
-            for row in rs}

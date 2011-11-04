@@ -181,15 +181,14 @@ class OracleObject (HasLog):
       if not self._create_location:
         self._create_location = other.create_location
 
-      for k, v in other.props.items():
-        if k in self.props and self.props[k] is UnsetProperty:
-          del self.props[k]
-          # TODO: ACK! this is craziness
-          del other.props[k]
-        else:
-          self.props[k] = v
+      self.props.update(other.props)
+
+      self._satisfy(other)
 
       self.deferred = False
+
+  def _satisfy (self, other):
+    pass
 
   def diff (self, other, recreate=True):
     """
@@ -220,7 +219,7 @@ class OracleObject (HasLog):
 
     if self.log.isEnabledFor(logging.DEBUG):
       for prop in prop_diff:
-        self.log.debug("{} ['{}']: expected {!r}, found {!r}".format(
+        self.log.info("{} ['{}']: expected {!r}, found {!r}".format(
           self.pretty_name, prop, self.props[prop], other.props[prop]))
 
     return prop_diff
@@ -256,8 +255,6 @@ class OracleObject (HasLog):
         for drop_name in dropobjs:
           drop_obj = current_objs[drop_name]
           if add_obj == drop_obj:
-            import pdb
-            pdb.set_trace()
             modify_diffs.append(add_obj.rename(drop_obj))
             not_add.add(add_name)
             dropobjs.remove(drop_name)

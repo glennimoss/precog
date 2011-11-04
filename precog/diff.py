@@ -102,18 +102,14 @@ class Diff (object):
 
   @property
   def dependencies (self):
-    try:
-      other_deps = set()
-      if self.produces:
-        other_deps = {dep for product in self.produces
-                      for dep in product.dependencies}
-      elif self.dropping:
-        other_deps = self.dropping.dependencies
+    other_deps = set()
+    if self.produces:
+      other_deps = {dep for product in self.produces
+                    for dep in product.dependencies}
+    elif self.dropping:
+      other_deps = self.dropping.dependencies
 
-      return (self._dependencies | other_deps) - self.produces
-    except AttributeError as exp:
-      import pdb
-      pdb.set_trace()
+    return (self._dependencies | other_deps) - self.produces
 
   def add_dependencies (self, others):
     try:

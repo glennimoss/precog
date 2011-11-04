@@ -1,4 +1,4 @@
-import logging
+import logging, math
 
 from precog.identifier import OracleIdentifier, name_from_oracle
 from precog.util import InsensitiveDict
@@ -13,7 +13,7 @@ except ImportError as e:
   class DummyModule (object):
     class DummyConnection (object):
       class DummyCursor (list):
-        def execute (self, *args, **kvargs):
+        def execute (self, *args, **kwargs):
           return []
 
         rowcount = 0
@@ -41,6 +41,7 @@ except ImportError as e:
 
 _connection = None
 _numbers_as_strings = False
+_max_cursors = 300
 user = None
 location = None
 
@@ -57,53 +58,70 @@ def connect (connect_string):
   execute('ALTER SESSION SET RECYCLEBIN=OFF')
   # TODO: pass this in as a command-line parameter
   #execute("ALTER SESSION SET PLSQL_WARNINGS='ENABLE:ALL'")
+  _max_cursors = query(""" SELECT value
+                           FROM v$parameter
+                           WHERE name = 'open_cursors'
+                       """)[0]['value']
 
-def _rowfactory (row, cursor_desc, oracle_names=[]):
-  row = InsensitiveDict(zip((column[0] for column in cursor_desc), row))
-  for column in cursor_desc:
-    if column[1] == cx_Oracle.CURSOR:
-      subcursor = row[column[0]]
-      subcursor_desc = subcursor.description
-      row[column[0]] = [_rowfactory(subrow, subcursor_desc, oracle_names)
-          for subrow in subcursor]
-      # TODO: I really don't like not closing the subcursor here, but it seems
-      # to cause a segfault eventually if it is.
-      #subcursor.close()
-  for column_name in oracle_names:
-    if column_name in row:
-      row[column_name] = name_from_oracle(row[column_name])
-  return row
+def _fetchall (cursor, args=[], kwargs={}, oracle_names=[]):
+  cursor_desc = cursor.description
+  cursor.arraysize = 1000
+  cursors_in_query = sum(1 for c in cursor_desc if c[1] == cx_Oracle.CURSOR)
+  if cursors_in_query:
+    # WARNING: if subcursors have subcursors, there won't be enough left and
+    # they'll error out. Not sure the best way to handle that case, so I won't.
+    cursor.arraysize = math.floor((_max_cursors - 1)/cursors_in_query/2)
+
+  column_names = [column[0] for column in cursor_desc]
+  def rowfactory (*row):
+    row = InsensitiveDict(zip(column_names, row))
+    for column in cursor_desc:
+      if column[1] == cx_Oracle.CURSOR:
+        subcursor = row[column[0]]
+        row[column[0]] = _fetchall(subcursor)
+
+    for column_name in oracle_names:
+      if column_name in row:
+        row[column_name] = name_from_oracle(row[column_name])
+    return row
+  cursor.rowfactory = rowfactory
+
+  if cursor.statement:
+    cursor.execute(None, *args, **kwargs)
+  return cursor.fetchall()
 
 def _unquote (d):
   for k in d:
     if isinstance(d[k], OracleIdentifier):
       d[k] = d[k].strip('"')
 
-def query (*args, oracle_names=[], **kvargs):
-  cursor = _execute(*args, **kvargs)
-  cursor_desc = cursor.description
-  rs = [_rowfactory(row, cursor_desc, oracle_names) for row in cursor]
+def query (sql, *args, oracle_names=[], **kwargs):
+  cursor = _execute(sql, *args, parse_only=True, **kwargs)
+  rs = _fetchall(cursor, args, kwargs, oracle_names)
   cursor.close()
   return rs
 
-def execute (*args, **kvargs):
-  cursor = _execute(*args, **kvargs)
+def execute (*args, **kwargs):
+  cursor = _execute(*args, **kwargs)
   rc = cursor.rowcount
   cursor.close()
   return rc
 
-def _execute(*args, **kvargs):
+def _execute(sql, *args, parse_only=False, **kwargs):
   if not _connection:
     raise OracleError('Not connected')
 
-  _unquote(kvargs)
+  _unquote(kwargs)
   cursor = _connection.cursor()
   cursor.numbersAsStrings = _numbers_as_strings
   try:
-    cursor.execute(*args, **kvargs)
+    if parse_only:
+      cursor.parse(sql.encode())
+    else:
+      cursor.execute(sql, *args, **kwargs)
   except cx_Oracle.DatabaseError as e:
     offset = e.args[0].offset
-    lines = args[0].split('\n')
+    lines = sql.split('\n')
     pos = 0
     for lineno in range(len(lines)):
       linelen = len(lines[lineno]) + 1

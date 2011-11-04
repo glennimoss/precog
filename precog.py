@@ -128,5 +128,5 @@ try:
 
 except PrecogError as e:
   print(e, file=sys.stderr)
-  if args.verbose and len(args.verbose) > 1:
+  if True:# and args.verbose and len(args.verbose) > 1:
     raise

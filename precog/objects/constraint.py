@@ -59,7 +59,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
       return super().diff(other)
 
   @classmethod
-  def from_db (class_, name, into_database):
+  def from_db (class_, schema, into_database):
     rs = db.query(""" SELECT constraint_name
                            , constraint_type
                            , status
@@ -86,22 +86,20 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                            , index_name
                       FROM dba_constraints dc
                       WHERE owner = :o
-                        AND (:n IS NULL OR constraint_name = :n)
-                  """, o=name.schema, n=name.obj,
-                  oracle_names=['constraint_name', 'r_owner',
-                                'r_constraint_name', 'index_owner',
-                                'index_name', 'table_name', 'column_name'])
+                  """, o=schema, oracle_names=['constraint_name', 'r_owner',
+                                               'r_constraint_name',
+                                               'index_owner', 'index_name',
+                                               'table_name', 'column_name'])
 
-    constraints = set()
     for row in rs:
-      constraint_name = OracleFQN(name.schema,
+      constraint_name = OracleFQN(schema,
             OracleIdentifier(row['constraint_name'], trust_me=True,
                              generated=(row['generated'] == 'GENERATED NAME')))
       type = row['constraint_type']
       constraint_class = None
       props = {}
       from precog.objects.column import Column
-      columns = [into_database.find(OracleFQN(name.schema,
+      columns = [into_database.find(OracleFQN(schema,
                                               col['table_name'],
                                               col['column_name']),
                                     Column)
@@ -109,8 +107,9 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
       if not columns:
         # I don't think there should be constraints without columns...
         # but there seems to be...
-        into_database.log.warn(
-          "Constraint {} has no columns. Constraint skipped.".format(name))
+        into_database.log.debug(
+          "Constraint {} has no columns. Constraint skipped."
+          .format(constraint_name))
         continue
 
       if type == 'C':
@@ -134,12 +133,10 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
         raise UnimplementedFeatureError(
           "Constraint {} has unsupported type {}".format(constraint_name, type))
 
-      constraints.add(constraint_class(constraint_name,
-                                       is_enabled=(row['status'] == 'ENABLED'),
-                                       database=into_database, columns=columns,
-                                       create_location=(db.location,), **props))
-
-    return constraints
+      yield constraint_class(constraint_name,
+                             is_enabled=(row['status'] == 'ENABLED'),
+                             database=into_database, columns=columns,
+                             create_location=(db.location,), **props)
 
 class NullConstraint (Constraint):
 
@@ -236,7 +233,7 @@ class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
     return diff
 
 _HasFkConstraint = HasProp('fk_constraint', dependency=Reference.HARD,
-                           assert_type=UniqueConstraint)
+                           assert_type=Constraint)
 class ForeignKeyConstraint (_HasFkConstraint, HasProp('delete_rule'),
                             Constraint):
   namespace = Constraint

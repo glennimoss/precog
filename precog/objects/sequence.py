@@ -49,7 +49,7 @@ class Sequence (OracleObject):
     return diffs
 
   @classmethod
-  def from_db (class_, name, into_database):
+  def from_db (class_, schema, into_database):
     rs = db.query(""" SELECT sequence_name
                            , min_value
                            , max_value
@@ -59,11 +59,9 @@ class Sequence (OracleObject):
                            , cache_size
                       FROM dba_sequences
                       WHERE sequence_owner = :o
-                        AND (:n IS NULL OR sequence_name = :n)
-                  """, o=name.schema, n=name.obj,
-                  oracle_names=['sequence_name', 'table_owner', 'table_name'])
-
-    return {class_(OracleFQN(name.schema, row.pop('sequence_name')),
+                  """, o=schema, oracle_names=['sequence_name', 'table_owner',
+                                               'table_name'])
+    for row in rs:
+      yield class_(OracleFQN(schema, row.pop('sequence_name')),
                    database=into_database, create_location=(db.location,),
                   **row)
-            for row in rs}

@@ -34,11 +34,9 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     # Sometimes columns are marked as virtual columns, but because they
     # represent object columns, they're also virtual.
     # We don't consider these VirtualColumns
-    # Or maybe none of that is true... :P
-    #if ('virtual_column' in props and 'YES' == props['virtual_column'] and
-        #(('expression' in props and props['expression']) or
-        #('data_default' in props and props['data_default']))):
-    if 'virtual_column' in props and 'YES' == props['virtual_column']:
+    if ('virtual_column' in props and 'YES' == props['virtual_column'] and
+        (('expression' in props and props['expression']) or
+        ('data_default' in props and props['data_default']))):
       class_ = VirtualColumn
     return super().__new__(class_, *args, **props)
 
@@ -290,7 +288,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     return diffs
 
   @classmethod
-  def from_db (class_, name, into_database):
+  def from_db (class_, schema, into_database):
     rs = db.query(""" SELECT table_name
                            , column_name
                            , qualified_col_name
@@ -320,14 +318,11 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                              ) AS constraints
                       FROM dba_tab_cols dtc
                       WHERE owner = :o
-                        AND (:t IS NULL OR table_name = :t)
-                        AND (:c IS NULL OR column_name = :c)
-                  """, o=name.schema, t=name.obj, c=name.part,
-                  oracle_names=['column_name', 'qualified_col_name',
-                                'constraint_name', 'data_type_owner',
-                                'data_type'])
-
-    def construct (row):
+                  """, o=schema, oracle_names=['table_name', 'column_name',
+                                               'qualified_col_name',
+                                               'constraint_name',
+                                               'data_type_owner', 'data_type'])
+    for row in rs:
       (_, table_name), (_, col_name), *props, (_, constraints) = row.items()
       props = dict(props)
 
@@ -335,7 +330,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
       if col_name == props['qualified_col_name']:
         props['qualified_col_name']._generated = generated
       col_name._generated = generated
-      column_name = OracleFQN(name.schema, table_name, col_name)
+      column_name = OracleFQN(schema, table_name, col_name)
 
       if props['data_type_owner']:
         props['user_type'] = into_database.find(
@@ -346,15 +341,14 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
         props['data_type'] = props['data_type'].strip('"')
 
       constraints = {
-        into_database.find(OracleFQN(name.schema, cons['constraint_name']),
+        into_database.find(OracleFQN(schema, cons['constraint_name']),
                            Constraint)
         for cons in constraints}
 
-      return class_(column_name, constraints=constraints,
+      yield class_(column_name, constraints=constraints,
                     database=into_database, create_location=(db.location,),
                     **props)
 
-    return {construct(row) for row in rs}
 
 class VirtualColumn (HasExpressionWithDataDefault, Column):
   namespace = Column

@@ -208,7 +208,7 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
     return set(self.columns) | self.constraints
 
   @classmethod
-  def from_db (class_, name, into_database):
+  def from_db (class_, schema, into_database):
     rs = db.query(""" SELECT table_name
                            , table_type
                            , CASE WHEN table_type_owner = 'PUBLIC'
@@ -235,29 +235,23 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
                              ) AS constraints
                       FROM dba_all_tables dat
                       WHERE owner = :o
-                        AND (:t IS NULL OR table_name = :t)
-                  """, o=name.schema, t=name.obj,
-                  oracle_names=['table_name', 'column_name', 'tablespace_name'])
+                  """, o=schema, oracle_names=['table_name', 'column_name',
+                                               'tablespace_name'])
 
-    tables = set()
     for row in rs:
       props = {'tablespace_name': row['tablespace_name'],
                'table_type': row['table_type']}
-      table_name = OracleFQN(name.schema, row['table_name'])
+      table_name = OracleFQN(schema, row['table_name'])
       if row['iot_type'] is not None:
         # TODO: currently ignoring index-organized tables
-        into_database.log.info(
+        into_database.log.debug(
           "Table {} is an index-organized table. Skipping...".format(
             table_name))
-        if name.obj:
-          return SkippedObject
         continue
       if row['nested'] == 'YES':
         # TODO: assuming that nested tables are managed by their parent tables
-        into_database.log.info(
-          "Table {} is a nested table. Skipping...".format(name))
-        if name.obj:
-          return SkippedObject
+        into_database.log.debug(
+          "Table {} is a nested table. Skipping...".format(table_name))
         continue
       if row['table_type_owner']:
         props['user_type'] = into_database.find(
@@ -275,9 +269,8 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
                            Constraint)
         for cons in row['constraints']}
 
-      tables.add(class_(table_name, database=into_database,
-                        create_location=(db.location,), **props))
-    return tables
+      yield class_(table_name, database=into_database,
+                        create_location=(db.location,), **props)
 
 class ObjectTable (HasUserType, HasProp('table_type', assert_type=str), Table):
   namespace = Table

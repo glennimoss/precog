@@ -69,8 +69,6 @@ class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
       parts.append(')')
       parts.extend(self.index_properties_sql())
     except Exception as e:
-      import pdb
-      pdb.set_trace()
       self.log.error(
         "Index {} has columns {} had the problem {}".format(self.pretty_name,
                                                             self.columns, e))
@@ -102,7 +100,7 @@ class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
       return super().diff(other)
 
   @classmethod
-  def from_db (class_, name, into_database):
+  def from_db (class_, schema, into_database):
     rs = db.query(""" SELECT index_name
                            , index_type
                            , uniqueness
@@ -118,31 +116,24 @@ class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
                              ) AS columns
                       FROM dba_indexes di
                       WHERE owner = :o
-                        AND (:n IS NULL OR index_name = :n)
-                  """, o=name.schema, n=name.obj,
-                  oracle_names=['tablespace_name', 'table_owner', 'table_name',
-                    'column_name'])
+                  """, o=schema, oracle_names=['tablespace_name', 'table_owner',
+                                               'table_name', 'column_name'])
 
-    indexes = set()
     for row in rs:
-      index_name = OracleFQN(name.schema,
+      index_name = OracleFQN(schema,
             OracleIdentifier(row['index_name'], trust_me=True,
                              generated=(row['generated'] == 'Y')))
       index_type = row['index_type']
       if index_type == 'IOT - TOP':
-        into_database.log.info(
+        into_database.log.debug(
           "Index {} is for an index-organized table. Skipping..."
           .format(index_name))
-        if name.obj:
-          return SkippedObject
         continue
 
       if index_type.find('NORMAL') == -1:
-        into_database.log.info(
+        into_database.log.debug(
           "Index {} is an unsupported type {}. Skipping...".format(index_name,
                                                                   index_type))
-        if name.obj:
-          return SkippedObject
         continue
         #raise UnimplementedFeatureError(
           #"Index {} has unsupported type {}".format(index_name, index_type))
@@ -154,16 +145,11 @@ class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
                  for col in row['columns']]
       # An index without columns is hardly an index at all!
       if not columns:
-        into_database.log.warn(
-          "Index {} has no columns. Index skipped.".format(name))
-        if name.obj:
-          return SkippedObject
+        into_database.log.debug(
+          "Index {} has no columns. Index skipped.".format(index_name))
         continue
 
-      indexes.add(class_(index_name, columns=columns,
-                         index_type=index_type,
-                         uniqueness=row['uniqueness'],
-                         tablespace_name=row['tablespace_name'],
-                         database=into_database,
-                         create_location=(db.location,)))
-    return indexes
+      yield class_(index_name, columns=columns, index_type=index_type,
+                   uniqueness=row['uniqueness'],
+                   tablespace_name=row['tablespace_name'],
+                   database=into_database, create_location=(db.location,))

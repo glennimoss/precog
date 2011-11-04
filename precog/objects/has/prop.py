@@ -61,15 +61,14 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
         #repr(getattr(other, prop_name))))
       if not equal(self, other):
         prop_diff[prop_name] = getattr(self, prop_name)
-        self.log.debug("{}['{}']: expected {!r}, found {!r}".format(
+        self.log.info("{}['{}']: expected {!r}, found {!r}".format(
           self.pretty_name, prop_name, getattr(self, prop_name),
           getattr(other, prop_name)))
       return prop_diff
 
-    def satisfy (self, other):
-      if self.deferred:
-        super().satisfy(other)
-        setattr(self, prop_name, getattr(other, prop_name))
+    def _satisfy (self, other):
+      super()._satisfy(other)
+      setattr(self, prop_name, getattr(other, prop_name))
 
   def eq (self, other):
     return getattr(self, prop_name) == getattr(other, prop_name)
