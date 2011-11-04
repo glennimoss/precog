@@ -58,14 +58,17 @@ def connect (connect_string):
   # TODO: pass this in as a command-line parameter
   #execute("ALTER SESSION SET PLSQL_WARNINGS='ENABLE:ALL'")
 
-def _rowfactory (row, cursor, oracle_names=[]):
-  row = InsensitiveDict(zip((column[0] for column in cursor.description), row))
-  for column in cursor.description:
+def _rowfactory (row, cursor_desc, oracle_names=[]):
+  row = InsensitiveDict(zip((column[0] for column in cursor_desc), row))
+  for column in cursor_desc:
     if column[1] == cx_Oracle.CURSOR:
       subcursor = row[column[0]]
-      row[column[0]] = [_rowfactory(subrow, subcursor, oracle_names)
+      subcursor_desc = subcursor.description
+      row[column[0]] = [_rowfactory(subrow, subcursor_desc, oracle_names)
           for subrow in subcursor]
-      subcursor.close()
+      # TODO: I really don't like not closing the subcursor here, but it seems
+      # to cause a segfault eventually if it is.
+      #subcursor.close()
   for column_name in oracle_names:
     if column_name in row:
       row[column_name] = name_from_oracle(row[column_name])
@@ -78,7 +81,8 @@ def _unquote (d):
 
 def query (*args, oracle_names=[], **kvargs):
   cursor = _execute(*args, **kvargs)
-  rs = [_rowfactory(row, cursor, oracle_names) for row in cursor]
+  cursor_desc = cursor.description
+  rs = [_rowfactory(row, cursor_desc, oracle_names) for row in cursor]
   cursor.close()
   return rs
 

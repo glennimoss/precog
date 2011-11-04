@@ -229,59 +229,65 @@ class Schema (OracleObject):
 
     schema.log.info("Fetching schema {}...".format(owner))
 
-    rs = db.query(""" SELECT object_name
-                           , object_type
-                           , status
-                           , generated
-                      FROM dba_objects
-                      WHERE owner = :o
-                        AND subobject_name IS NULL
-                        AND object_type IN ( 'FUNCTION'
-                                           , 'INDEX'
-                                           , 'PACKAGE'
-                                           , 'PACKAGE BODY'
-                                           , 'PROCEDURE'
-                                           , 'SEQUENCE'
-                                           , 'SYNONYM'
-                                           , 'TABLE'
-                                           , 'TYPE'
-                                        -- , 'VIEW'
-                                           )
-                  """, o=owner, oracle_names=['object_name'])
+    #rs = db.query(""" SELECT object_name
+                           #, object_type
+                           #, status
+                           #, generated
+                      #FROM dba_objects
+                      #WHERE owner = :o
+                        #AND subobject_name IS NULL
+                        #AND object_type IN ( 'FUNCTION'
+                                           #, 'INDEX'
+                                           #, 'PACKAGE'
+                                           #, 'PACKAGE BODY'
+                                           #, 'PROCEDURE'
+                                           #, 'SEQUENCE'
+                                           #, 'SYNONYM'
+                                           #, 'TABLE'
+                                           #, 'TYPE'
+                                        #-- , 'VIEW'
+                                           #)
+                  #""", o=owner, oracle_names=['object_name'])
 
-    objects = {}
-    for obj in rs:
-      object_name = OracleFQN(owner,
-              OracleIdentifier(obj['object_name'],
-                               generated=(obj['generated'] == 'Y')))
+    #objects = {}
+    #for obj in rs:
+      #object_name = OracleFQN(owner,
+              #OracleIdentifier(obj['object_name'],
+                               #generated=(obj['generated'] == 'Y')))
 
-      try:
-        class_ = globals()[_type_to_class_name(obj['object_type'])]
-        if class_ not in objects:
-          objects[class_] = {}
-        objects[class_][object_name] = obj['status']
-      except KeyError:
-        schema.log.warn("{} [{}]: unexpected type".format(
-          obj['object_type'], obj['object_name']))
+      #try:
+        #class_ = globals()[_type_to_class_name(obj['object_type'])]
+        #if class_ not in objects:
+          #objects[class_] = {}
+        #objects[class_][object_name] = obj['status']
+      #except KeyError:
+        #schema.log.warn("{} [{}]: unexpected type".format(
+          #obj['object_type'], obj['object_name']))
 
-    count = 0
-    total_objects = len(objects)
-    def add (obj):
-      obj.props['status'] = objects[type(obj)].get(obj.name)
-      return schema.add(obj)
-    for obj_type in objects:
-      all_objs = {add(obj) for obj in obj_type.from_db(schema.name,
-                                                       schema.database)}
-      count += len(all_objs)
+    #count = 0
+    #total_objects = len(objects)
+    #def add (obj):
+      #obj.props['status'] = objects[type(obj)].get(obj.name)
+      #return schema.add(obj)
+    for obj_type in (Column,
+                     Constraint,
+                     Index,
+                     PlsqlCode,
+                     Sequence,
+                     Synonym,
+                     Table):
+      all_objs = {schema.add(obj) for obj in obj_type.from_db(schema.name,
+                                                              schema.database)}
+      #count += len(all_objs)
       # Maybe we got fewer objects than expected. Keep the total on track so
       # that the percentage is correct.
-      total_objects -= len(objects[obj_type]) - len(all_objs)
-      progress = math.floor(count/total_objects*100)
-      old_terminator = schema.log.root.handlers[0].terminator
-      schema.log.root.handlers[0].terminator = '\r'
-      schema.log.info("Fetched {}% of schema {}".format(progress, owner))
-      schema.log.root.handlers[0].terminator = old_terminator
-    schema.log.info('')
+      #total_objects -= len(objects[obj_type]) - len(all_objs)
+      #progress = math.floor(count/total_objects*100)
+      #old_terminator = schema.log.root.handlers[0].terminator
+      #schema.log.root.handlers[0].terminator = '\r'
+      #schema.log.info("Fetched {}% of schema {}".format(progress, owner))
+      #schema.log.root.handlers[0].terminator = old_terminator
+    #schema.log.info('')
 
     # old....
     #for obj in rs:
@@ -318,7 +324,7 @@ class Schema (OracleObject):
 
     #schema.log.info('')
 
-    #schema.log.info("Fetching schema {} complete".format(owner))
+    schema.log.info("Fetching schema {} complete".format(owner))
     return schema
 
 class Database (HasLog):

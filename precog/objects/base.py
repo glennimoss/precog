@@ -62,8 +62,7 @@ class OracleObject (HasLog):
   def create_location (self, value):
     self._create_location = value
     if value:
-      self._create_location = []
-      self._create_location.append('in "{}"'.format(value[0]))
+      self._create_location = ['in "{}"'.format(value[0])]
       if len(value) > 1:
         self._create_location.append('line {}'.format(value[1]))
 

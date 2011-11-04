@@ -345,11 +345,10 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
         # Remove quotes that may be on built-in types
         props['data_type'] = props['data_type'].strip('"')
 
-      constraints = [
-        into_database.find(OracleFQN(name,schema, table_name,
-                                     cons['constraint_name']),
+      constraints = {
+        into_database.find(OracleFQN(name.schema, cons['constraint_name']),
                            Constraint)
-        for cons in constraints]
+        for cons in constraints}
 
       return class_(column_name, constraints=constraints,
                     database=into_database, create_location=(db.location,),

@@ -267,15 +267,6 @@ scope { props; table_name }
 table_item
   : col=col_spec { $create_table::props['columns'].append($col.column) }
   | cons=out_of_line_constraint {
-      constraint = $cons.constraint
-      if isinstance(constraint, UniqueConstraint) and constraint.is_pk:
-        #// PKs are unconditionally not null, so let's not create
-        #// unnecessary not null constraints
-        for col in constraint.columns:
-          if col.deferred:
-            col.props['nullable'] = UnsetProperty
-          elif 'nullable' in col.props:
-            del col.props['nullable']
       $create_table::props['constraints'].add($cons.constraint)
     }
   ;

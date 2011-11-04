@@ -269,13 +269,13 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
                                              Column)
                           for col in row['columns']]
 
-      props['constraints'] = [
+      props['constraints'] = {
         into_database.find(OracleFQN(table_name.schema,
                                      cons['constraint_name']),
                            Constraint)
-        for cons in row['constraints']]
+        for cons in row['constraints']}
 
-      tables.add(class_(name, database=into_database,
+      tables.add(class_(table_name, database=into_database,
                         create_location=(db.location,), **props))
     return tables
 

@@ -138,8 +138,14 @@ class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
         continue
 
       if index_type.find('NORMAL') == -1:
-        raise UnimplementedFeatureError(
-          "Index {} has unsupported type {}".format(index_name, index_type))
+        into_database.log.info(
+          "Index {} is an unsupported type {}. Skipping...".format(index_name,
+                                                                  index_type))
+        if name.obj:
+          return SkippedObject
+        continue
+        #raise UnimplementedFeatureError(
+          #"Index {} has unsupported type {}".format(index_name, index_type))
 
       from precog.objects.column import Column
       columns = [into_database.find(OracleFQN(col['table_owner'],
