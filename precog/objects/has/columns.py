@@ -6,7 +6,8 @@ class HasColumns (HasProp('columns', dependency=Reference.AUTODROP,
                           assert_collection=list)):
 
   def _eq_columns (self, other):
-    return set(self.columns) == set(other.columns)
+    names = lambda cols: {c.name for c in cols}
+    return names(self.columns) == names(other.columns)
 
 
 _OwnsColumns = HasProp('columns', assert_collection=list)

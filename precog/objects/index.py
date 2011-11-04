@@ -21,17 +21,17 @@ class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
       self.props['index_type'] = "FUNCTION-BASED {}".format(
         self.props['index_type'].split()[-1])
 
-  def _eq_columns (self, other):
-    for col in self.columns:
-      col._ignore_name = True
-    for col in other.columns:
-      col._ignore_name = True
-    ret = self.columns == other.columns
-    for col in self.columns:
-      col._ignore_name = False
-    for col in other.columns:
-      col._ignore_name = False
-    return ret
+  #def _eq_columns (self, other):
+    #for col in self.columns:
+      #col._ignore_name = True
+    #for col in other.columns:
+      #col._ignore_name = True
+    #ret = self.columns == other.columns
+    #for col in self.columns:
+      #col._ignore_name = False
+    #for col in other.columns:
+      #col._ignore_name = False
+    #return ret
 
   def _extra_deps (self):
     return {col for col in self.columns if col.hidden}

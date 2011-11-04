@@ -173,10 +173,10 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     prop_diff = self._diff_props(other)
     if prop_diff:
       teardown = False
-      if (self.database.find(lambda o: o.table.name == self.table.name and
-                            self in o.columns, Constraint) or
-          self.database.find(lambda o: self in o.columns, Index)):
-        teardown = True
+      #if (self.database.find(lambda o: o.table.name == self.table.name and
+                            #self in o.columns, Constraint) or
+          #self.database.find(lambda o: self in o.columns, Index)):
+        #teardown = True
       recreate = False
       copypasta = False
       data_type_change = False
@@ -256,7 +256,6 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
             data_type_change = True
           else:
             data_default_change = True
-
         elif 'expression' == prop:
           data_type_change = True
 
@@ -269,7 +268,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
         modify_clauses.append(
           "DEFAULT {}".format(self.data_default or 'NULL'))
 
-      if nullable is not None:
+      if nullable is not None and not self._is_pk:
         if not nullable:
           modify_clauses.append('NOT')
         modify_clauses.append('NULL')
