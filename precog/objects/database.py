@@ -304,14 +304,14 @@ class Schema (OracleObject):
                                                               #schema.database)}
       for obj in obj_type.from_db(schema.name.schema, schema.database):
         old_terminator = schema.log.root.handlers[0].terminator
-        schema.log.root.handlers[0].terminator = '\r'
+        schema.log.root.handlers[0].terminator = '\x1b[0K\r'
         schema.log.info(
           "Fetched {:03.0%} of schema {}. Currently fetching {} objects..."
           .format(count/total_objects, owner, obj_type.pretty_type))
         schema.log.root.handlers[0].terminator = old_terminator
         schema.add(obj)
         count += 1
-    schema.log.info("Fetched 100% of schema {}.".format(owner))
+    schema.log.info("Fetched 100% of schema {}.\x1b[0K".format(owner))
 
 
       #count += len(all_objs)
