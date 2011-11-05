@@ -153,7 +153,8 @@ class CheckConstraint (HasExpression, Constraint):
     return ['CHECK (', self.expression.text, ')']
 
 _HasIndex = HasProp('index')
-class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
+class UniqueConstraint (HasProp('index_ownership'),
+                        HasProp('is_pk', assert_type=bool), _HasIndex,
                         Constraint):
   namespace = Constraint
 
@@ -161,8 +162,7 @@ class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
   SHORT_INDEX_CREATE = object()
   IMPLICIT_INDEX_CREATE = object()
 
-  def __init__ (self, name, index_ownership=None, **props):
-    self.index_ownership = index_ownership
+  def __init__ (self, name, **props):
     super().__init__(name, **props)
 
   @_HasIndex.index.setter
