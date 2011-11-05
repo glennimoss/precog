@@ -32,7 +32,7 @@ class PlsqlCode (OracleObject):
     diffs = super().diff(other)
 
     if not diffs:
-      errors = other.errors()
+      errors = other.errors(False)
       if errors:
         diffs.extend(self.rebuild())
 
@@ -51,7 +51,7 @@ class PlsqlCode (OracleObject):
 
     return [PlsqlDiff(" ".join(parts), produces=self, terminator=';')]
 
-  def errors (self):
+  def errors (self, throw=True):
     rs= db.query(""" SELECT line
                           , position
                           , text
@@ -68,7 +68,7 @@ class PlsqlCode (OracleObject):
     if warnings:
       self.log.warn(PlsqlSyntaxError(warnings))
 
-    if errors:
+    if errors and throw:
       raise PlsqlSyntaxError(self, errors)
 
   @classmethod
