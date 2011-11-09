@@ -130,6 +130,9 @@ class ComparableCommonTree (CommonTree):
              self.token.text.lower() == other.token.text.lower())) and
             self.children == other.children)
 
+  def __ne__ (self, other):
+    return not self == other
+
   def pretty_print (self):
     def print_node (node):
       if not node.children:
@@ -157,6 +160,9 @@ class ValueNode (ComparableCommonTree):
 
   def __eq__ (self, other):
     return isinstance(other, ValueNode) and self.value == other.value
+
+  def __ne__ (self, other):
+    return not self == other
 
   def isNil (self):
     return False

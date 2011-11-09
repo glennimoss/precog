@@ -89,7 +89,7 @@ class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
     return [Diff("ALTER INDEX {} REBUILD".format(self.name.lower()),
                  produces=self)]
 
-  def diff (self, other):
+  def diff (self, other, **kwargs):
     prop_diffs = self._diff_props(other)
     if len(prop_diffs) == 1 and 'tablespace_name' in prop_diffs:
       return [Diff("ALTER INDEX {} REBUILD TABLESPACE {}"
@@ -97,7 +97,7 @@ class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
                            self.props['tablespace_name'].lower()),
                    produces=self)]
     else:
-      return super().diff(other)
+      return super().diff(other, **kwargs)
 
   @classmethod
   def from_db (class_, schema, into_database):

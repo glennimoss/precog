@@ -118,8 +118,11 @@ class DataConflict (ObjectError):
 class DuplicateIndexConflict (SchemaConflict):
 
   def __str__ (self):
-    return "{} duplicates {}".format(self.obj.pretty_name,
-                                     self.other.pretty_name)
+    return "{} on columns {} duplicates {} on columns {}".format(
+      self.obj.pretty_name, ", ".join(col.pretty_name
+                                      for col in self.obj.columns),
+      self.other.pretty_name, ", ".join(col.pretty_name
+                                        for col in self.other.columns))
 
 class OracleNameError (PrecogError):
   pass

@@ -31,17 +31,20 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
 
     __hash__ = OracleObject.__hash__
 
-    def __eq__ (self, other):
-      if not super().__eq__(other):
-        return False
+    #def __eq__ (self, other):
+      #if not super().__eq__(other):
+        #return False
 
-      ret = equal(self, other)
-      #if not ret:
-        #self.log.debug(
-          #"{} == {} failed for self.{} = {!r}, other.{} = {!r}".format(
-            #self.pretty_name, other.pretty_name, prop_name,
-            #getattr(self, prop_name), prop_name, getattr(other, prop_name)))
-      return ret
+      #ret = equal(self, other)
+      ##if not ret:
+        ##self.log.debug(
+          ##"{} == {} failed for self.{} = {!r}, other.{} = {!r}".format(
+            ##self.pretty_name, other.pretty_name, prop_name,
+            ##getattr(self, prop_name), prop_name, getattr(other, prop_name)))
+      #return ret
+
+    def __ne__ (self, other):
+      return not self == other
 
     def __repr__ (self, **other_props):
       prop_value = getattr(self, prop_name)
@@ -56,14 +59,11 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
 
     def _diff_props (self, other):
       prop_diff = super()._diff_props(other)
-      #self.log.debug("{}['{}']: comparing {!r} to {!r}".format(
-        #self.pretty_name, prop_name, repr(getattr(self, prop_name)),
-        #repr(getattr(other, prop_name))))
       if not equal(self, other):
         prop_diff[prop_name] = getattr(self, prop_name)
-        self.log.info("{}['{}']: expected {!r}, found {!r}".format(
-          self.pretty_name, prop_name, getattr(self, prop_name),
-          getattr(other, prop_name)))
+        #self.log.debug("{}['{}']: expected {!r}, found {!r}".format(
+          #self.pretty_name, prop_name, getattr(self, prop_name),
+          #getattr(other, prop_name)))
       return prop_diff
 
     def _satisfy (self, other):

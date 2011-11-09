@@ -6,7 +6,7 @@ from precog.diff import order_diffs
 from precog.identifier import *
 from precog.objects import *
 from precog.objects._misc import *
-from precog.util import HasLog
+from precog.util import HasLog, progress_log
 
 class Schema (OracleObject):
 
@@ -98,7 +98,7 @@ class Schema (OracleObject):
         raise SchemaConflict(obj, self.shared_namespace[name])
       else:
         # Force this schema name
-        obj.name = name
+        obj.name = obj.name.with_(schema=self.name.schema)
         obj.database = self.database
         namespace[name] = obj
         if obj_type in self.share_namespace:
@@ -287,78 +287,49 @@ class Schema (OracleObject):
         #schema.log.warn("{} [{}]: unexpected type".format(
           #obj['object_type'], obj['object_name']))
 
-    count = 0
+    def root_type (obj):
+      t = type(obj)
+      if hasattr(t, 'namespace'):
+        t = t.namespace
+      return t
+
     total_objects = rs[0]['total_objects']
+    #count = 0
     #def add (obj):
       #obj.props['status'] = objects[type(obj)].get(obj.name)
       #return schema.add(obj)
-    for obj_type in (Column,
-                     Constraint,
-                     Index,
-                     PlsqlCode,
-                     Sequence,
-                     Synonym,
-                     Table):
-      #schema.log.info("Fetching all {}s".format(obj_type.pretty_type))
-      #all_objs = {add(obj) for obj in obj_type.from_db(schema.name,
-                                                              #schema.database)}
-      for obj in obj_type.from_db(schema.name.schema, schema.database):
-        old_terminator = schema.log.root.handlers[0].terminator
-        schema.log.root.handlers[0].terminator = '\x1b[0K\r'
-        schema.log.info(
-          "Fetched {:03.0%} of schema {}. Currently fetching {} objects..."
-          .format(count/total_objects, owner, obj_type.pretty_type))
-        schema.log.root.handlers[0].terminator = old_terminator
-        schema.add(obj)
-        count += 1
-    schema.log.info("Fetched 100% of schema {}.\x1b[0K".format(owner))
+    #for obj_type in (Column,
+                     #Constraint,
+                     #Index,
+                     #PlsqlCode,
+                     #Sequence,
+                     #Synonym,
+                     #Table):
+      #for obj in obj_type.from_db(schema.name.schema, schema.database):
+        #old_terminator = schema.log.root.handlers[0].terminator
+        #schema.log.root.handlers[0].terminator = '\x1b[0K\r'
+        #schema.log.info(
+          #"Fetched {:03.0%} of schema {}. Currently fetching {} objects..."
+          #.format(count/total_objects, owner, obj_type.pretty_type))
+        #schema.log.root.handlers[0].terminator = old_terminator
+        #schema.add(obj)
+        #count += 1
+    for obj in progress_log(
+      (obj for obj_type in (Column,
+                            Constraint,
+                            Index,
+                            PlsqlCode,
+                            Sequence,
+                            Synonym,
+                            Table)
+       for obj in obj_type.from_db(schema.name.schema, schema.database)),
+      schema.log,
+      lambda o: "Fetched {{}} of schema {}.".format(owner) +
+      (" Currently fetching {} objects...".format(root_type(o).pretty_type)
+       if o else ''), count=total_objects):
+      schema.add(obj)
 
-
-      #count += len(all_objs)
-      # Maybe we got fewer objects than expected. Keep the total on track so
-      # that the percentage is correct.
-      #total_objects -= len(objects[obj_type]) - len(all_objs)
-      #progress = math.floor(count/total_objects*100)
-      #old_terminator = schema.log.root.handlers[0].terminator
-      #schema.log.root.handlers[0].terminator = '\r'
-      #schema.log.info("Fetched {}% of schema {}".format(progress, owner))
-      #schema.log.root.handlers[0].terminator = old_terminator
-    #schema.log.info('')
-
-    # old....
-    #for obj in rs:
-      #object_name = OracleFQN(owner,
-              #OracleIdentifier(obj['object_name'],
-                               #generated=(obj['generated'] == 'Y')))
-      #schema.log.debug(
-          #"Fetching {} {}".format(obj['object_type'], object_name))
-
-      #try:
-        #class_ = globals()[_type_to_class_name(obj['object_type'])]
-        #db_obj = class_.from_db(object_name, schema.database)
-        #if db_obj is SkippedObject:
-          #continue
-
-        #if db_obj:
-          #db_obj.props['status'] = obj['status']
-          #schema.add(db_obj)
-        #else:
-          #schema.log.warn("Unable to load {} {}.{}".format(obj['object_type'],
-                                                           #owner,
-                                                           #obj['object_name']))
-      #except KeyError:
-        #schema.log.warn("{} [{}]: unexpected type".format(
-          #obj['object_type'], obj['object_name']))
-      #count += 1
-      #progress = math.floor(count/len(rs)*100)
-      #if progress > prev_progress:
-        #old = schema.log.root.handlers[0].terminator
-        #schema.log.root.handlers[0].terminator = '\r'
-        #schema.log.info("Fetched {}% of schema {}".format(progress, owner))
-        #schema.log.root.handlers[0].terminator = old
-        #prev_progress = progress
-
-    #schema.log.info('')
+    #schema.log.info("Fetched 100% of schema {}.\x1b[0K".format(owner))
 
     schema.log.info("Fetching schema {} complete".format(owner))
     return schema

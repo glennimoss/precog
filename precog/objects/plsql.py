@@ -28,8 +28,8 @@ class PlsqlCode (OracleObject):
   def create (self):
     return [PlsqlDiff(self.sql(), produces=self, priority=Diff.CREATE)]
 
-  def diff (self, other):
-    diffs = super().diff(other)
+  def diff (self, other, **kwargs):
+    diffs = super().diff(other, **kwargs)
 
     if not diffs:
       errors = other.errors(False)

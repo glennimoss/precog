@@ -6,7 +6,9 @@ class HasColumns (HasProp('columns', dependency=Reference.AUTODROP,
                           assert_collection=list)):
 
   def _eq_columns (self, other):
-    names = lambda cols: {c.name for c in cols}
+    from precog.objects.column import VirtualColumn
+    names = lambda cols: {c if isinstance(c, VirtualColumn) else c.name
+                          for c in cols}
     return names(self.columns) == names(other.columns)
 
 
@@ -20,6 +22,14 @@ class OwnsColumns (_OwnsColumns):
 
   def _diff_props (self, other):
     return super(_OwnsColumns, self)._diff_props(other)
+
+  def diff (self, other, **kwargs):
+    diffs = super().diff(other, **kwargs)
+    diffs.extend(self.diff_subobjects(other,
+                                      lambda o: [column for column in o.columns
+                                                 if not column.hidden],
+                                      rename=False))
+    return diffs
 
 class HasTableFromColumns (object):
 

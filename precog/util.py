@@ -147,3 +147,25 @@ class classproperty (object):
 
   def __get__ (self, obj, class_):
     return self.getter(class_)
+
+def progress_log (iter, log, message, level=logging.INFO, start=0, count=None,
+                  complete=True):
+  if count is None:
+    count = len(iter)
+
+  if callable(message):
+    make_message = lambda o: message(o)
+  else:
+    make_message = lambda o: message
+
+  c = start
+  for obj in iter:
+    old_terminator = log.root.handlers[0].terminator
+    log.root.handlers[0].terminator = '\x1b[0K\r'
+    log.log(level, make_message(obj).format("{:03.0%}".format(c/count)))
+    log.root.handlers[0].terminator = old_terminator
+    yield obj
+    c += 1
+
+  if complete:
+    log.log(level, make_message(None).format('100%'))

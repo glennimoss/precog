@@ -30,6 +30,9 @@ class Data (HasColumns, OracleObject):
 
     return self.table.name == other.table.name and self._comp() == other._comp()
 
+  def __ne__ (self, other):
+    return not self == other
+
   def __hash__ (self):
     return hash((self.table.name, self._comp()))
 
@@ -57,7 +60,7 @@ class Data (HasColumns, OracleObject):
         " = ".join((col, val)) if val is not None else "{} IS NULL".format(col)
         for col, val in self.values().items())))
 
-  def diff (self, other):
+  def diff (self, other, **kwargs):
     return []
 
   @staticmethod
@@ -86,8 +89,22 @@ class Data (HasColumns, OracleObject):
 
 _HasData_ = HasProp('data', assert_collection=list, assert_type=Data)
 class _HasData (_HasData_):
+
   def _diff_props (self, other):
     return super(_HasData_, self)._diff_props(other)
+
+  def diff (self, other, **kwargs):
+    diffs = super().diff(other, **kwargs)
+
+    if self.data:
+      Data.from_db(other)
+
+    inserts = self.diff_subobjects(other, lambda o: o.data, lambda o: o._comp())
+    if inserts:
+      diffs.extend(inserts)
+      diffs.append(Commit(inserts))
+
+    return diffs
 
 class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
 
@@ -173,8 +190,8 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
                         priority=Diff.CREATE))
     return diffs
 
-  def diff (self, other):
-    diffs = super().diff(other, False)
+  def diff (self, other, **kwargs):
+    diffs = super().diff(other, recreate=False, **kwargs)
 
     prop_diffs = self._diff_props(other)
     if len(prop_diffs) == 1 and 'tablespace_name' in prop_diffs:
@@ -187,20 +204,6 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
                                                          obj.table == other,
                                                        Index)
                    for diff in idx.rebuild())
-
-    diffs.extend(self.diff_subobjects(other,
-                                      lambda o: [column for column in o.columns
-                                                 if not column.hidden],
-                                      rename=False))
-    diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
-
-    if self.data:
-      Data.from_db(other)
-
-    inserts = self.diff_subobjects(other, lambda o: o.data, lambda o: o._comp())
-    if inserts:
-      diffs.extend(inserts)
-      diffs.append(Commit(inserts))
 
     return diffs
 

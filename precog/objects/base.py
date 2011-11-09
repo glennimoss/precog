@@ -80,12 +80,15 @@ class OracleObject (HasLog):
           #self.pretty_name, other.pretty_name, self.name, other.name))
       return False
 
-    common_props = self.props.keys() & other.props.keys()
-    for prop_name in common_props:
-      if self.props[prop_name] != other.props[prop_name]:
-        return False
+    return not bool(self._diff_props(other))
+    #common_props = self.props.keys() & other.props.keys()
+    #for prop_name in common_props:
+      #if self.props[prop_name] != other.props[prop_name]:
+        #return False
+    #return True
 
-    return True
+  def __ne__ (self, other):
+    return not self == other
 
   def __hash__ (self):
     return hash((type(self), self.name))
@@ -176,7 +179,16 @@ class OracleObject (HasLog):
       if self.name.generated and not other.name.generated:
         self.name = other.name
       elif other.name.generated:
-        self.name._generated = True
+        schema = self.name.schema
+        if schema and other.name.schema and other.name.schema.generated:
+          schema = OracleIdentifier(schema, trust_me=True, generated=True)
+        obj = self.name.obj
+        if obj and other.name.obj and other.name.obj.generated:
+          obj = OracleIdentifier(obj, trust_me=True, generated=True)
+        part = self.name.part
+        if part and other.name.part and other.name.part.generated:
+          part = OracleIdentifier(part, trust_me=True, generated=True)
+        self.name = OracleFQN(schema, obj, part)
 
       if not self._create_location:
         self._create_location = other.create_location
@@ -215,12 +227,13 @@ class OracleObject (HasLog):
   def _diff_props (self, other):
     prop_diff = InsensitiveDict((prop, expected)
                                 for prop, expected in self.props.items()
-                                if expected != other.props[prop])
+                                if (prop in other.props and
+                                    expected != other.props[prop]))
 
-    if self.log.isEnabledFor(logging.DEBUG):
-      for prop in prop_diff:
-        self.log.info("{} ['{}']: expected {!r}, found {!r}".format(
-          self.pretty_name, prop, self.props[prop], other.props[prop]))
+    #if self.log.isEnabledFor(logging.DEBUG):
+      #for prop in prop_diff:
+        #self.log.info("{} ['{}']: expected {!r}, found {!r}".format(
+          #self.pretty_name, prop, self.props[prop], other.props[prop]))
 
     return prop_diff
 
@@ -262,11 +275,14 @@ class OracleObject (HasLog):
         add_obj._ignore_name = False
       addobjs.difference_update(not_add)
 
-    pretty_type = ((target_objs and
-                    type(next(iter(target_objs.values()))).pretty_type) or
+    obj_type = ((target_objs and
+                    type(next(iter(target_objs.values())))) or
                    (current_objs and
-                    type(next(iter(current_objs.values()))).pretty_type) or
-                   'Object')
+                    type(next(iter(current_objs.values())))) or
+                   OracleObject)
+    if hasattr(obj_type, 'namespace'):
+      obj_type = obj_type.namespace
+    pretty_type = obj_type.pretty_type
 
     if addobjs:
       self.log.debug("  Adding {} {}s: {}".format(len(addobjs), pretty_type,

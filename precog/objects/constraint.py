@@ -34,7 +34,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
     try:
       return [Diff("ALTER TABLE {} ADD {}"
                    .format(self.table.name.lower(), self.sql()),
-                   produces=self, priority=Diff.CREATE)]
+                   produces=self.sql_produces, priority=Diff.CREATE)]
     except Exception as e:
       self.log.error("{} had this problem: {}".format(self.pretty_name, e))
 
@@ -48,7 +48,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                 .format(other.table.name.lower(), other.name.obj.lower(),
                         self.name.obj.lower()), produces=self)
 
-  def diff (self, other):
+  def diff (self, other, **kwargs):
     prop_diffs = self._diff_props(other)
     if len(prop_diffs) == 1 and 'is_enabled' in prop_diffs:
       return [Diff("ALTER TABLE {} MODIFY CONSTRAINT {} {}"
@@ -56,7 +56,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                            'ENABLE' if self.is_enabled else 'DISABLE'),
                    produces=self)]
     else:
-      return super().diff(other)
+      return super().diff(other, **kwargs)
 
   @classmethod
   def from_db (class_, schema, into_database):
@@ -217,12 +217,12 @@ class UniqueConstraint (HasProp('index_ownership'),
       return {self, self.index}
     return {self}
 
-  def diff (self, other):
+  def diff (self, other, **kwargs):
     if self.index_ownership is not None and other.index_ownership is None:
       # The DB doesn't have a way to query index ownership, so we'll adopt the
       # definition's setting
       other.index_ownership = self.index_ownership
-    return super().diff(other)
+    return super().diff(other, **kwargs)
 
   def _drop (self):
     diff = super()._drop()

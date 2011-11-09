@@ -38,8 +38,8 @@ class Sequence (OracleObject):
 
     return ' '.join(parts)
 
-  def diff (self, other):
-    diffs = super().diff(other, False)
+  def diff (self, other, **kwargs):
+    diffs = super().diff(other, recreate=False, **kwargs)
 
     prop_diff = self._diff_props(other)
     if prop_diff:

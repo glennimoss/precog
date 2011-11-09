@@ -93,6 +93,9 @@ class Diff (object):
   def __eq__ (self, other):
     return self.sql == other.sql
 
+  def __ne__ (self, other):
+    return not self.sql == other.sql
+
   def __hash__ (self):
     return hash(tuple(self.sql))
 
@@ -193,12 +196,20 @@ def order_diffs (diffs):
   applicable_diffs = set()
   for diff in diffs:
     if diff.dropping:
-      log.debug("Dropping {}".format(diff.pretty_name))
+      if diff.dropping.name == 'PRECOG.RUS_QUEUE':
+        import pdb
+        pdb.set_trace()
+      #log.debug("Dropping {}".format(diff.pretty_name))
       autodroppers = (diff.dropping.dependencies_with(Reference.AUTODROP) &
                       dropping.keys())
-      log.debug("    Autodroppers {}".format([a.pretty_name for a in
-                                              autodroppers]))
+      #log.debug("    Autodroppers {}".format([a.pretty_name for a in
+                                              #autodroppers]))
       if autodroppers:
+        log.debug("Filtering {}: (Depends on {}) autodropped when dropping {}."
+                  .format(diff.pretty_name,
+                          diff.dropping.dependencies_with(Reference.AUTODROP),
+                          [a.pretty_name for a in autodroppers]))
+
         for d in autodroppers:
           # Swap dependencies
           diff.add_dependencies(dropping[d])

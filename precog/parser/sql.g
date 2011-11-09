@@ -278,7 +278,7 @@ scope tab_col_ref;
   $tab_col_ref::columns = []
   $tab_col_ref::table = $create_table::table_name
   props = InsensitiveDict()
-  props['constraints'] = set()
+  constraints = set()
   props['nullable'] = 'Y'
   create_location = (self.getSourceName(), self.input.LT(1).line)
 }
@@ -302,9 +302,10 @@ scope tab_col_ref;
     ( NOT? NULL { $col_spec::column_.props['nullable'] = 'N' if $NOT else 'Y' }
     | ic=inline_constraint {
         if $ic.cons:
-          props['constraints'].add($ic.cons)
+          constraints.add($ic.cons)
       }
     )*
+    { $col_spec::column_.constraints = constraints }
   ;
 
 data_type[sized] returns [props]

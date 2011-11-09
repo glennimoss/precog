@@ -70,23 +70,18 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     if value:
       self.props['data_type'] = value.name.lower()
 
-  @HasConstraints.constraints.setter
-  def constraints (self, value):
-    if value:
-      not_null = set()
-      for cons in value:
-        if (isinstance(cons, CheckConstraint) and
-            cons.name.generated and
-            self.props['nullable'] == 'N' and
-            cons.expression.text == "{} IS NOT NULL"
+  @HasConstraints.constraints.getter
+  def constraints (self):
+    constraints = set()
+    for cons in self._constraints:
+      if not (isinstance(cons, CheckConstraint) and
+              cons.name.generated and
+              self.props['nullable'] == 'N' and
+              cons.expression.text == "{} IS NOT NULL"
               .format(self.name.part.force_quoted())):
-          # Get rid of the system generated constraint for NOT NULL
-          not_null.add(cons)
-        else:
-          cons.columns = [self]
-      value.difference_update(not_null)
-
-    HasConstraints.constraints.__set__(self, value)
+        # Add any except system generated constraint for NOT NULL
+        constraints.add(cons)
+    return constraints
 
   @property
   def qualified_name (self):
@@ -97,7 +92,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
   @property
   def _is_pk (self):
     for ref in self._referenced_by:
-      if isinstance(ref, UniqueConstraint) and ref.is_pk:
+      if isinstance(ref.from_, UniqueConstraint) and ref.from_.is_pk:
         return True
     return False
 
@@ -167,8 +162,14 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                         self.name.part.lower()),
                 produces=self)
 
-  def diff (self, other):
-    diffs = super().diff(other, False)
+  def _diff_props (self, other):
+    prop_diff = super()._diff_props(other)
+    if self._is_pk and 'nullable' in prop_diff:
+      del prop_diff['nullable']
+    return prop_diff
+
+  def diff (self, other, **kwargs):
+    diffs = super().diff(other, recreate=False, **kwargs)
 
     prop_diff = self._diff_props(other)
     if prop_diff:
@@ -239,9 +240,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
             other.pretty_name, prop, other_prop, expected))
           data_type_change = True
         elif 'nullable' == prop:
-          if expected == 'N':
-            nullable = False
-          nullable = True
+          nullable = expected == 'Y'
         elif 'virtual_column' == prop:
           self.log.warn("{} is changing virtual_column from {} to {}".format(
             other.pretty_name, other_prop, expected))
@@ -281,8 +280,6 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                                   self._sql(full_def=False),
                                   " ".join(modify_clauses)),
                                   produces=self))
-
-    diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
 
     return diffs
 

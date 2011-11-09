@@ -93,6 +93,9 @@ class OracleIdentifier (str):
         return False
     return super().__eq__(other)
 
+  def __ne__ (self, other):
+    return not self == other
+
   @property
   def generated (self):
     return self._generated
@@ -151,6 +154,9 @@ class OracleFQN (OracleIdentifier):
               self.part == other.part)
 
     return super().__eq__(other)
+
+  def __ne__ (self, other):
+    return not self == other
 
   @property
   def schema (self):

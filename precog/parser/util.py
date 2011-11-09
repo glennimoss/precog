@@ -189,6 +189,9 @@ class Expression (object):
       return self.tree == other.tree
     return str(self) == str(other)
 
+  def __ne__ (self, other):
+    return not self == other
+
   def __str__ (self):
     return self.text
 
