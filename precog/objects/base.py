@@ -252,9 +252,6 @@ class OracleObject (HasLog):
     target_obj_names = set(target_objs)
     current_obj_names = set(current_objs)
 
-    #self.log.debug("target_obj_names = {}".format(target_obj_names))
-    #self.log.debug("current_obj_names = {}".format(current_obj_names))
-
     addobjs = target_obj_names - current_obj_names
     dropobjs = current_obj_names - target_obj_names
 

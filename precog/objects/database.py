@@ -211,8 +211,22 @@ class Schema (OracleObject):
     diffs = []
 
     types = (set(self.objects) | set(other.objects)) - {Column, Constraint}
+    #progress = progress_log(
+      #(self.diff_subobjects(other, lambda o: o.objects.get(t, []),
+                            #rename=(t not in {Sequence, Synonym}))
+       #for t in types), self.log,
+      #"Compared {{}} of schema {}.".format(self.name.schema),
+      #count=sum(len(self.objects.get(t, [])) for t in types))
+    #typegen = (t for t in types)
+    #try:
+      #subdiffs = next(progress)
+      #while True:
+        #diffs.extend(subdiffs)
+        #subdiffs = progress.send(len(self.objects.get(next(typegen), [])))
+    #except StopIteration:
+      #pass
+
     for t in types:
-      self.log.info("Comparing {}s".format(t.pretty_type))
       rename = t not in {Sequence, Synonym}
       diffs.extend(self.diff_subobjects(other, lambda o: o.objects.get(t, []),
                                         rename=rename))

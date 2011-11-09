@@ -3,7 +3,7 @@ import logging, pprint, inspect, itertools
 from antlr3.ext import NamedConstant
 from precog import db
 from precog.errors import PrecogError
-from precog.util import HasLog
+from precog.util import HasLog, progress_log
 
 class Reference (object):
   SOFT = 'SOFT'
@@ -179,12 +179,8 @@ class DuplicateCreationError (PrecogError):
 def order_diffs (diffs):
   log = logging.getLogger('precog.diff.order_diffs')
 
-  log.info('Ordering statements...')
-
-  log.info('merging diffs...')
-
   merged_diffs = {}
-  for diff in diffs:
+  for diff in progress_log(diffs, log, "Merging {} complete."):
     sql = tuple(diff.sql)
     if sql in merged_diffs:
       merged_diffs[sql].add_dependencies(diff._dependencies)
@@ -192,25 +188,24 @@ def order_diffs (diffs):
       merged_diffs[sql] = diff
   diffs = merged_diffs.values()
 
-
-  log.info('filtering autodrops...')
-
   # filter diffs to remove object drops that are autodropped by other diffs
   applicable_diffs = set(diffs)
-  dropping = {diff.dropping: diff for diff in diffs if diff.dropping}
+  dropping = {diff.dropping: diff
+              for diff in progress_log(diffs, log,
+                                       "Gathering DROPs {} complete.")
+              if diff.dropping}
   applicable_diffs = set()
-  for diff in diffs:
+  for diff in progress_log(diffs, log, "Filtering DROPs {} complete."):
     if diff.dropping:
-      #log.debug("Dropping {}".format(diff.pretty_name))
-      autodroppers = (diff.dropping.dependencies_with(Reference.AUTODROP) &
-                      dropping.keys())
-      #log.debug("    Autodroppers {}".format([a.pretty_name for a in
-                                              #autodroppers]))
+      autodroppers = [obj for obj in diff.dropping.dependencies_with(
+        Reference.AUTODROP) if obj in dropping]
       if autodroppers:
-        log.debug("Filtering {}: (Depends on {}) autodropped when dropping {}."
-                  .format(diff.pretty_name,
-                          diff.dropping.dependencies_with(Reference.AUTODROP),
-                          [a.pretty_name for a in autodroppers]))
+        if log.isEnabledFor(logging.DEBUG):
+          log.debug(
+            "Filtering {}: (Depends on {}) autodropped when dropping {}."
+            .format(diff.pretty_name,
+                    diff.dropping.dependencies_with(Reference.AUTODROP),
+                    [a.pretty_name for a in autodroppers]))
 
         for d in autodroppers:
           # Swap dependencies
@@ -222,23 +217,24 @@ def order_diffs (diffs):
         continue
     applicable_diffs.add(diff)
 
-  log.info('filtering creates...')
-
   # Filter diffs to remove duplicate creates when a more encompassing statement
   # is creating the same thing as an individual one.
   creates = {}
   unnecessary_creates = set()
-  for diff in applicable_diffs:
+  for diff in progress_log(applicable_diffs, log,
+                           "Filtering CREATEs {} complete."):
     if diff.priority == Diff.CREATE and diff.produces:
       for product in diff.produces:
         if product in creates:
           other_diff = creates[product]
           if other_diff.produces.issuperset(diff.produces):
-            log.debug("Filtering {}, covered by {}".format(diff, other_diff))
+            if log.isEnabledFor(logging.DEBUG):
+              log.debug("Filtering {}, covered by {}".format(diff, other_diff))
             unnecessary_creates.add(diff)
             break;
           elif other_diff.produces.issubset(diff.produces):
-            log.debug("Filtering {}, covered by {}".format(other_diff, diff))
+            if log.isEnabledFor(logging.DEBUG):
+              log.debug("Filtering {}, covered by {}".format(other_diff, diff))
             unnecessary_creates.add(other_diff)
           else:
             raise DuplicateCreationError(diff, other_diff)
@@ -246,20 +242,22 @@ def order_diffs (diffs):
   applicable_diffs.difference_update(unnecessary_creates)
 
 
-  #log.debug("All diffs:\n{}".format(pprint.pformat(
-    #{diff.pretty_name: {'sql': diff.sql,
-                        #'dependencies':
-                          #{dep.pretty_name for dep in diff._dependencies},
-                        #'produces': {product.pretty_name
-                                     #for product in diff.produces},
-                        #'dropping': diff.dropping and diff.dropping.pretty_name,
-                        #'autodrop chain': diff.dropping and
-                          #{dep.pretty_name
-                              #for dep in diff.dropping
-                                #.dependencies_with(Reference.AUTODROP)},
-                        #'created': diff.created
-                       #}
-    #for diff in diffs})))
+  #if log.isEnabledFor(logging.DEBUG):
+    #log.debug("All diffs:\n{}".format(pprint.pformat(
+      #{diff.pretty_name: {'sql': diff.sql,
+                          #'dependencies':
+                            #{dep.pretty_name for dep in diff._dependencies},
+                          #'produces': {product.pretty_name
+                                       #for product in diff.produces},
+                          #'dropping': diff.dropping and
+                            #diff.dropping.pretty_name,
+                          #'autodrop chain': diff.dropping and
+                            #{dep.pretty_name
+                                #for dep in diff.dropping
+                                  #.dependencies_with(Reference.AUTODROP)},
+                          #'created': diff.created
+                         #}
+      #for diff in diffs})))
 
   sort_by = (lambda x: x.priority + (10 if isinstance(x, PlsqlDiff) else 0)
              if isinstance(x, Diff) else 0)
@@ -277,22 +275,19 @@ def order_diffs (diffs):
     except TypeError:
       edges[from_].add(to)
 
-  log.info('building edge list...')
-
-  for diff in diffs:
+  for diff in progress_log(diffs, log, "Edge list {} complete."):
     add_edge(diff, diff.dependencies)
     for product in diff.produces:
       add_edge(product, diff)
 
   for k,v in edges.items():
     edges[k] = sorted(v, key=sort_by)
-  log.debug("Edge list:\n{}".format(_edge_list(edges)))
+  if log.isEnabledFor(logging.DEBUG):
+    log.debug("Edge list:\n{}".format(_edge_list(edges)))
 
   # list of sorted diffs
   L = []
   visited = set()
-
-  log.info('walking dep tree...')
 
   indent = ''
   def visit (node, this_visit=()):
@@ -309,11 +304,12 @@ def order_diffs (diffs):
 
       # A diff may have been filtered out of diffs but remains for
       applicable = isinstance(node, Diff) and node in applicable_diffs
-      if applicable:
-        debugstr = "{}Can I apply {}?"
-      else:
-        debugstr = "{}Visiting {}"
-      log.debug(debugstr.format(indent, node.pretty_name))
+      if log.isEnabledFor(logging.DEBUG):
+        if applicable:
+          debugstr = "{}Can I apply {}?"
+        else:
+          debugstr = "{}Visiting {}"
+        log.debug(debugstr.format(indent, node.pretty_name))
 
       if node in edges:
         for dependent in edges[node]:
@@ -322,12 +318,11 @@ def order_diffs (diffs):
           indent = indent[:-2]
 
       if applicable:
-        log.debug("{}Apply {}".format(indent, node.pretty_name))
+        if log.isEnabledFor(logging.DEBUG):
+          log.debug("{}Apply {}".format(indent, node.pretty_name))
         L.append(node)
 
-  for node in S:
+  for node in progress_log(S, log, "Ordering {} complete."):
     visit(node)
-
-  log.info('Finished ordering statements')
 
   return L
