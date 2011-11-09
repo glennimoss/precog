@@ -168,4 +168,4 @@ def progress_log (iter, log, message, level=logging.INFO, start=0, count=None,
     c += 1
 
   if complete:
-    log.log(level, make_message(None).format('100%'))
+    log.log(level, "{}\x1b[0K".format(make_message(None).format('100%')))

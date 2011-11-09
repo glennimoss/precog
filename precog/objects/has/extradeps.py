@@ -14,7 +14,8 @@ class HasExtraDeps (object):
 
   def dependencies_with (self, integrity):
     deps = super().dependencies_with(integrity)
+    extra_deps = self._extra_deps()
     return (deps |
-            {subdep for dep in self._extra_deps()
+            {subdep for dep in extra_deps
              for subdep in dep.dependencies_with(integrity)
-             if subdep is not self})
+             if subdep not in (extra_deps | {self})})

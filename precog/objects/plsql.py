@@ -73,20 +73,25 @@ class PlsqlCode (OracleObject):
 
   @classmethod
   def from_db (class_, schema, into_database):
-    rs = db.query(""" SELECT name
-                           , type
-                           , LISTAGG(text, '') WITHIN GROUP (ORDER BY line)
-                             AS text
-                      FROM dba_source
-                      WHERE owner = :o
-                      GROUP BY name, type
-                  """, o=schema, oracle_names=['name'])
+    rs = db.query(""" SELECT do.object_name
+                           , do.object_type
+                           , do.status
+                           , LISTAGG(ds.text, '')
+                              WITHIN GROUP (ORDER BY ds.line) AS text
+                      FROM dba_objects do
+                         , dba_source ds
+                      WHERE do.owner = :o
+                        AND do.owner = ds.owner
+                        AND do.object_name = ds.name
+                        AND do.object_type = ds.type
+                      GROUP BY do.object_name, do.object_type, do.status
+                  """, o=schema, oracle_names=['object_name'])
 
     for row in rs:
-      plsql_name = OracleFQN(schema, row['name'])
-      yield _type_to_class(row['type'], plsql_name)(
+      plsql_name = OracleFQN(schema, row['object_name'])
+      yield _type_to_class(row['object_type'], plsql_name)(
         plsql_name, source="".join(row['text']), database=into_database,
-        create_location=(db.location,))
+        create_location=(db.location,), status=row['status'])
 
 class PlsqlHeader (PlsqlCode):
   pass

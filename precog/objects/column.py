@@ -9,6 +9,7 @@ from precog.objects.constraint import (Constraint, CheckConstraint,
 from precog.objects.has.constraints import HasConstraints
 from precog.objects.has.expression import (HasDataDefault,
                                            HasExpressionWithDataDefault)
+from precog.objects.has.extradeps import HasExtraDeps
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType
 from precog.objects.index import Index
@@ -27,8 +28,9 @@ class _HasTable (HasProp('table', dependency=Reference.AUTODROP)):
             (self.table and other.table and
              self.table.name == other.table.name))
 
-class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
-              HasProp('qualified_col_name', assert_type=str), OracleObject):
+class Column (HasExtraDeps, HasConstraints, HasDataDefault, _HasTable,
+              HasUserType, HasProp('qualified_col_name', assert_type=str),
+              OracleObject):
 
   def __new__ (class_, *args, **props):
     # Sometimes columns are marked as virtual columns, but because they
@@ -88,6 +90,9 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     if self.qualified_col_name:
       return OracleFQN(self.name.schema, self.name.obj, self.qualified_col_name)
     return self.name
+
+  def _extra_deps (self):
+    return {cons for cons in self.constraints}
 
   @property
   def _is_pk (self):

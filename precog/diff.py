@@ -105,6 +105,10 @@ class Diff (object):
 
   @property
   def dependencies (self):
+    #if self.dropping and self.dropping.name in ('PRECOG.TARGUS_ADDRESS',
+                                                #'PRECOG.TARGUS_STD_ADDRESS'):
+      #import pdb
+      #pdb.set_trace()
     other_deps = set()
     if self.produces:
       other_deps = {dep for product in self.produces
@@ -124,11 +128,12 @@ class Diff (object):
   def pretty_name (self):
     pretty_deps = [dep.pretty_name for dep in self.dependencies
         if not isinstance(dep, Diff)]
-    return "Diff {} [{}] {}".format(self.priority,
-        ", ".join(product.pretty_name for product in self.produces)
-        if self.produces
-        else self.sql if self.priority == Diff.DROP else ", ".join(pretty_deps),
-        id(self))
+    return "Diff {} {} {}".format(self.priority,
+                                  self.sql if self.priority == Diff.DROP
+                                  else ", ".join(product.pretty_name
+                                                 for product in self.produces)
+                                  if self.produces else ", ".join(pretty_deps),
+                                  id(self))
 
 class PlsqlDiff (Diff):
 
@@ -196,9 +201,6 @@ def order_diffs (diffs):
   applicable_diffs = set()
   for diff in diffs:
     if diff.dropping:
-      if diff.dropping.name == 'PRECOG.RUS_QUEUE':
-        import pdb
-        pdb.set_trace()
       #log.debug("Dropping {}".format(diff.pretty_name))
       autodroppers = (diff.dropping.dependencies_with(Reference.AUTODROP) &
                       dropping.keys())
@@ -212,8 +214,11 @@ def order_diffs (diffs):
 
         for d in autodroppers:
           # Swap dependencies
-          diff.add_dependencies(dropping[d])
-          dropping[d]._dependencies.discard(diff)
+          #diff.add_dependencies(dropping[d])
+          #dropping[d]._dependencies.discard(diff)
+
+          # The other diff "produces" this diff
+          dropping[d].produces.add(diff)
         continue
     applicable_diffs.add(diff)
 
