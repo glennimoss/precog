@@ -313,8 +313,17 @@ class OracleObject (HasLog):
     old_dep = None
     if hasattr(self, prop_name):
       old_dep = getattr(self, prop_name)
+      old_integrity = None
+      if old_dep:
+        _old_dep = old_dep
+        if isinstance(_old_dep,OracleObject):
+          _old_dep = [_old_dep]
+        for dep in self._dependencies:
+          if dep.to in _old_dep:
+            old_integrity = dep.integrity
+            break
 
-    if old_dep != other:
+    if old_dep != other or old_integrity != integrity:
       if old_dep:
         self._drop_dependency(old_dep)
       if other:

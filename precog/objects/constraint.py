@@ -11,6 +11,12 @@ from precog.objects.index import Index
 class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                   HasColumns, OracleObject):
 
+  @HasColumns.columns.setter
+  def columns (self, value):
+    HasColumns.columns.__set__(self, value)
+    if len(value) > 1:
+      self._depends_on(value, '_columns', Reference.HARD)
+
   def _sql (self, fq=False, inline=False):
     parts = ['CONSTRAINT']
     name = self.name if fq else self.name.obj
