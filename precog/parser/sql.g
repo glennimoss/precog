@@ -58,6 +58,9 @@ scope tab_col_ref { alias_map; table; columns }
     ret = self._aloneOnLine()
     self.input.drop(NL_CHANNEL)
     return ret
+
+  def get_location (self):
+    return (self.getSourceName(), self.input.LT(1).line)
 }
 @lexer::main {
   NamedConstant.name(locals())
@@ -84,13 +87,14 @@ scope g;
   $included_files = $sqlplus_file::included_files_
 }
     : ( {
-          create_location = (self.getSourceName(), self.input.LT(1).line)
+          create_location = self.get_location()
         }
         ( stmt=sql_stmt
         | stmt=plsql_stmt
         ) {
-            $stmt.obj.create_location = create_location
-            $g::database.add($stmt.obj)
+            if $stmt.obj:
+              $stmt.obj.create_location = create_location
+              $g::database.add($stmt.obj)
           }
         | (~( CREATE | INSERT ))=> sqlplus_stmt
       )* EOF
@@ -146,7 +150,7 @@ sql_stmt returns [obj]
     | stmt_=create_index { $obj = $stmt_.obj }
     | stmt_=create_sequence { $obj = $stmt_.obj }
     | stmt_=create_synonym { $obj = $stmt_.obj }
-    | stmt_=insert_statement { $obj = $stmt_.obj }
+    | insert_statement
     ) SEMI
   ;
 
@@ -280,7 +284,7 @@ scope tab_col_ref;
   props = InsensitiveDict()
   constraints = set()
   props['nullable'] = 'Y'
-  create_location = (self.getSourceName(), self.input.LT(1).line)
+  create_location = self.get_location()
 }
 @after {
   $column = $col_spec::column_
@@ -451,7 +455,7 @@ scope tab_col_ref;
   cons_class = None
   props = InsensitiveDict()
   index = None
-  create_location = (self.getSourceName(), self.input.LT(1).line)
+  create_location = self.get_location()
 }
 @after {
   if cons_class:
@@ -522,7 +526,7 @@ scope tab_col_ref;
   cons_class = Constraint
   index_props = InsensitiveDict()
   index = None
-  create_location = (self.getSourceName(), self.input.LT(1).line)
+  create_location = self.get_location()
 }
 @after {
   $constraint = $g::database.add(cons_class($constraint_name.id,
@@ -574,7 +578,7 @@ column_ref
 
       $tab_col_ref::columns.append($g::database.find(fqn, Column))
     }
-  | { create_location = (self.getSourceName(), self.input.LT(1).line) }
+  | { create_location = self.get_location() }
     virt=expression {
     $tab_col_ref::columns.append($g::database.add(
       VirtualColumn($tab_col_ref::table.with_(part=GeneratedId()),
@@ -587,6 +591,7 @@ using_index [constraint_name] returns [props]
 @init {
   $props = InsensitiveDict()
   index_props = InsensitiveDict()
+  create_location = self.get_location()
 }
 @after {
   if not $props['index']:
@@ -595,7 +600,7 @@ using_index [constraint_name] returns [props]
             create_location=create_location, **index_props))
 }
   : kUSING INDEX
-    { create_location = (self.getSourceName(), self.input.LT(1).line) }
+    { create_location = self.get_location() }
     ( index_name=identifier {
         $props['index'] = $g::database.find($index_name.ident, Index)
         $props['index_ownership'] = None
@@ -618,7 +623,7 @@ scope tab_col_ref;
   $tab_col_ref::columns = []
   props = InsensitiveDict()
   props['index_type'] = 'NORMAL'
-  create_location = (self.getSourceName(), self.input.LT(1).line)
+  create_location = self.get_location()
 }
 @after {
   table = $g::database.find($tab_col_ref::table, Table)
@@ -712,7 +717,7 @@ create_synonym returns [obj]
                      database=$g::database)
     }
   ;
-insert_statement returns [obj]
+insert_statement
 scope { expressions; }
 scope tab_col_ref;
 @init {
