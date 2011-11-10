@@ -104,7 +104,7 @@ class PlsqlBody (HasProp('header', dependency=Reference.AUTODROP,
     super().__init__(name, **props)
 
     if not self.header:
-      header_class = _type_to_class(class_.type.split()[0], self.name)
+      header_class = _type_to_class(type(self).type.split()[0], self.name)
       self.header = self.database.find(self.name, header_class)
 
 class Function (PlsqlCode):
