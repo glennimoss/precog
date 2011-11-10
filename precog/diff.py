@@ -126,13 +126,10 @@ class Diff (object):
 
   @property
   def pretty_name (self):
-    pretty_deps = [dep.pretty_name for dep in self.dependencies
-        if not isinstance(dep, Diff)]
     return "Diff {} {} {}".format(self.priority,
-                                  self.sql if self.priority == Diff.DROP
+                                  self.sql if self.priority != Diff.CREATE
                                   else ", ".join(product.pretty_name
-                                                 for product in self.produces)
-                                  if self.produces else ", ".join(pretty_deps),
+                                                 for product in self.produces),
                                   id(self))
 
 class PlsqlDiff (Diff):
