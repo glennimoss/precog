@@ -226,7 +226,8 @@ class Schema (OracleObject):
     #except StopIteration:
       #pass
 
-    for t in types:
+    for t in progress_log(types, self.log, "Compared {{}} of schema {}."
+                          .format(self.name.schema)):
       rename = t not in {Sequence, Synonym}
       diffs.extend(self.diff_subobjects(other, lambda o: o.objects.get(t, []),
                                         rename=rename))
