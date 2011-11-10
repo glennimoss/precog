@@ -24,9 +24,6 @@ class HasConstraints (_parent):
 
     return mycons == othercons
 
-  def _diff_props (self, other):
-    return super(_parent, self)._diff_props(other)
-
   def diff (self, other, **kwargs):
     diffs = super().diff(other, **kwargs)
     diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))

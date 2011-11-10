@@ -90,9 +90,6 @@ class Data (HasColumns, OracleObject):
 _HasData_ = HasProp('data', assert_collection=list, assert_type=Data)
 class _HasData (_HasData_):
 
-  def _diff_props (self, other):
-    return super(_HasData_, self)._diff_props(other)
-
   def diff (self, other, **kwargs):
     diffs = super().diff(other, **kwargs)
 
@@ -195,6 +192,11 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
     diffs = super().diff(other, recreate=False, **kwargs)
 
     prop_diffs = self._diff_props(other)
+    # Remove subobject entries
+    for prop in ('columns', 'constraints', 'data'):
+      if prop in prop_diffs:
+        del prop_diffs[prop]
+
     if len(prop_diffs) == 1 and 'tablespace_name' in prop_diffs:
       diffs.append(Diff("ALTER TABLE {} MOVE TABLESPACE {}"
                         .format(other.name.lower(),

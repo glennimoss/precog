@@ -11,7 +11,6 @@ class HasColumns (HasProp('columns', dependency=Reference.AUTODROP,
                           for c in cols}
     return names(self.columns) == names(other.columns)
 
-
 _OwnsColumns = HasProp('columns', assert_collection=list)
 class OwnsColumns (_OwnsColumns):
 
@@ -19,9 +18,6 @@ class OwnsColumns (_OwnsColumns):
     mycols = {col for col in self.columns if not col.hidden}
     othercols = {col for col in other.columns if not col.hidden}
     return mycols == othercols
-
-  def _diff_props (self, other):
-    return super(_OwnsColumns, self)._diff_props(other)
 
   def diff (self, other, **kwargs):
     diffs = super().diff(other, **kwargs)

@@ -177,6 +177,9 @@ class Column (HasExtraDeps, HasConstraints, HasDataDefault, _HasTable,
     diffs = super().diff(other, recreate=False, **kwargs)
 
     prop_diff = self._diff_props(other)
+    if 'constraints' in prop_diff:
+      del prop_diff['constraints']
+
     if prop_diff:
       teardown = False
       #if (self.database.find(lambda o: o.table.name == self.table.name and
