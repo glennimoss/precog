@@ -186,7 +186,8 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
 
     if self.data:
       diffs.append(Diff([datum.sql() for datum in self.data] + ['COMMIT'],
-                        produces={datum.sql_produces for datum in self.data},
+                        produces={obj for datum in self.data
+                                  for obj in datum.sql_produces},
                         priority=Diff.CREATE))
     return diffs
 
