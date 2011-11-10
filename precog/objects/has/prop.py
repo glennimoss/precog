@@ -31,18 +31,6 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
 
     __hash__ = OracleObject.__hash__
 
-    #def __eq__ (self, other):
-      #if not super().__eq__(other):
-        #return False
-
-      #ret = equal(self, other)
-      ##if not ret:
-        ##self.log.debug(
-          ##"{} == {} failed for self.{} = {!r}, other.{} = {!r}".format(
-            ##self.pretty_name, other.pretty_name, prop_name,
-            ##getattr(self, prop_name), prop_name, getattr(other, prop_name)))
-      #return ret
-
     def __ne__ (self, other):
       return not self == other
 
