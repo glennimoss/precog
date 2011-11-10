@@ -223,13 +223,6 @@ class UniqueConstraint (HasProp('index_ownership'),
       return {self, self.index}
     return {self}
 
-  def diff (self, other, **kwargs):
-    if self.index_ownership is not None and other.index_ownership is None:
-      # The DB doesn't have a way to query index ownership, so we'll adopt the
-      # definition's setting
-      other.index_ownership = self.index_ownership
-    return super().diff(other, **kwargs)
-
   def _drop (self):
     diff = super()._drop()
     if self.index_ownership:
