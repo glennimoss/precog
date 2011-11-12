@@ -127,7 +127,7 @@ class DuplicateIndexConflict (SchemaConflict):
 class OracleNameError (PrecogError):
   pass
 
-class ReservedNameError (PrecogError):
+class ReservedNameError (OracleNameError):
   pass
 
 class UnsatisfiedDependencyError (PrecogError):

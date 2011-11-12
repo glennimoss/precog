@@ -96,7 +96,8 @@ scope g;
               $stmt.obj.create_location = create_location
               $g::database.add($stmt.obj)
           }
-        | (~( CREATE | INSERT ))=> sqlplus_stmt
+        | directive_stmt
+        | (~( CREATE | INSERT | DIRECTIVE ))=> sqlplus_stmt
       )* EOF
     ;
 
@@ -183,11 +184,15 @@ finally {
   self.input.drop(NL_CHANNEL)
 }
 
-/*
-show_errors
-    : kSHOW kERRORS SEMI?
-    ;
-    */
+directive_stmt
+  : { self.input.add(NL_CHANNEL) }
+    DIRECTIVE kIGNORE i=identifier NL {
+      $g::database.ignore($i.ident)
+    }
+  ;
+finally {
+  self.input.drop(NL_CHANNEL)
+}
 
 identifier returns [ident]
   : first=ID ( DOT second=ID ( DOT third=ID )? )?
@@ -651,11 +656,11 @@ scope { props_ }
 @after {
   $props = $index_attributes::props_
 }
-  // Remember, we had to do this because there is a bug when using more than one
-  // keyword ID token at the same level within a subrule where the first one is
-  // always chosen by lookahead, and so all other alternatives cause an error.
-  // By breaking out the subrule to its own rule, the code is generated
-  // correctly, without the bug.
+  // NOTE: Remember, we had to do this because there is a bug when using more
+  // than one keyword ID token at the same level within a subrule where the
+  // first one is always chosen by lookahead, and so all other alternatives
+  // cause an error. By breaking out the subrule to its own rule, the code is
+  // generated correctly, without the bug.
   : index_attribute+
   ;
 
@@ -1359,6 +1364,7 @@ kFALSE : {self.input.LT(1).text.lower() == 'false'}? ID;
 kFOREIGN : {self.input.LT(1).text.lower() == 'foreign'}? ID;
 kFUNCTION : {self.input.LT(1).text.lower() == 'function'}? ID;
 kGENERATED : {self.input.LT(1).text.lower() == 'generated'}? ID;
+kIGNORE : {self.input.LT(1).text.lower() == 'ignore'}? ID;
 kINSERTING : {self.input.LT(1).text.lower() == 'inserting'}? ID;
 kINTERVAL : {self.input.LT(1).text.lower() == 'interval'}? ID;
 kISOPEN : {self.input.LT(1).text.lower() == 'isopen'}? ID;
@@ -1679,13 +1685,18 @@ fragment
 DOUBLEQUOTED_STRING
 	:	'"' ( ~('"') )* '"'
 	;
-NL : '\r'? '\n' { $channel = NL_CHANNEL } ;
+
+DIRECTIVE
+	:	'--@'
+	;
+
+NL : '\r'? '\n' { $channel=NL_CHANNEL } ;
 SPACE	:	(' '|'\t') { $channel=HIDDEN } ;
 SL_COMMENT
-	:	'--' ~('\n'|'\r')* {$channel=HIDDEN;}
+	:	{ self.input.LT(3) != '@' }?=> '--' ~('\n'|'\r')* { $channel=HIDDEN }
 	;
 ML_COMMENT
-	:	'/*' ( options {greedy=false;} : . )* '*/' {$channel=HIDDEN;}
+	:	'/*' ( options {greedy=false;} : . )* '*/' { $channel=HIDDEN }
 	;
 TERMINATOR
   : { self.aloneOnLine() }? SLASH

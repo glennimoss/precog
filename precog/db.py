@@ -46,7 +46,7 @@ user = None
 location = None
 
 def connect (connect_string):
-  global _connection, user
+  global _connection, _max_cursors, user, location
   if _connection:
     _connection.close()
 
@@ -58,10 +58,10 @@ def connect (connect_string):
   execute('ALTER SESSION SET RECYCLEBIN=OFF')
   # TODO: pass this in as a command-line parameter
   #execute("ALTER SESSION SET PLSQL_WARNINGS='ENABLE:ALL'")
-  _max_cursors = query(""" SELECT value
-                           FROM v$parameter
-                           WHERE name = 'open_cursors'
-                       """)[0]['value']
+  _max_cursors = int(query(""" SELECT value
+                               FROM v$parameter
+                               WHERE name = 'open_cursors'
+                           """)[0]['value'])
 
 def _fetchall (cursor, args=[], kwargs={}, oracle_names=[]):
   cursor_desc = cursor.description
@@ -78,7 +78,7 @@ def _fetchall (cursor, args=[], kwargs={}, oracle_names=[]):
     for column in cursor_desc:
       if column[1] == cx_Oracle.CURSOR:
         subcursor = row[column[0]]
-        row[column[0]] = _fetchall(subcursor)
+        row[column[0]] = _fetchall(subcursor, oracle_names=oracle_names)
 
     for column_name in oracle_names:
       if column_name in row:

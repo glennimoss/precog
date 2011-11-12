@@ -76,22 +76,31 @@ class PlsqlCode (OracleObject):
     rs = db.query(""" SELECT do.object_name
                            , do.object_type
                            , do.status
-                           , LISTAGG(ds.text, '')
-                              WITHIN GROUP (ORDER BY ds.line) AS text
+                           , CURSOR(SELECT ds.text
+                                    FROM dba_source ds
+                                    WHERE ds.owner = do.owner
+                                      AND ds.name = do.object_name
+                                      AND ds.type = do.object_type
+                                    ORDER BY ds.line
+                             ) AS text
                       FROM dba_objects do
-                         , dba_source ds
                       WHERE do.owner = :o
-                        AND do.owner = ds.owner
-                        AND do.object_name = ds.name
-                        AND do.object_type = ds.type
-                      GROUP BY do.object_name, do.object_type, do.status
+                        AND object_type IN ( 'FUNCTION'
+                                           , 'PACKAGE'
+                                           , 'PACKAGE BODY'
+                                           , 'PROCEDURE'
+                                           , 'TRIGGER'
+                                           , 'TYPE'
+                                           , 'TYPE BODY'
+                                           )
                   """, o=schema, oracle_names=['object_name'])
 
     for row in rs:
       plsql_name = OracleFQN(schema, row['object_name'])
       yield _type_to_class(row['object_type'], plsql_name)(
-        plsql_name, source="".join(row['text']), database=into_database,
-        create_location=(db.location,), status=row['status'])
+        plsql_name, source="".join(line['text'] for line in row['text']),
+        database=into_database, create_location=(db.location,),
+        status=row['status'])
 
 class PlsqlHeader (PlsqlCode):
   pass

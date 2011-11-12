@@ -160,12 +160,17 @@ def progress_log (iter, log, message, level=logging.INFO, start=0, count=None,
 
   if count: # avoid divide by zero
     c = start
-    for obj in iter:
+    obj = None
+    while True:
       old_terminator = log.root.handlers[0].terminator
       log.root.handlers[0].terminator = '\x1b[0K\r'
       log.log(level, make_message(obj).format("{:03.0%}".format(c/count)))
       log.root.handlers[0].terminator = old_terminator
-      step = yield obj
+      try:
+        obj = next(iter)
+        step = yield obj
+      except StopIteration:
+        break
       if step is None:
         step = 1
       c += step

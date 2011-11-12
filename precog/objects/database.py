@@ -70,6 +70,9 @@ class Schema (OracleObject):
     else:
       name = name.with_(schema=self.name.schema)
 
+    if name in self.database.ignores:
+      return obj
+
     self.log.debug(
         "Adding {}{} as {}".format('deferred ' if obj.deferred else '',
           obj.pretty_name, name))
@@ -93,20 +96,31 @@ class Schema (OracleObject):
       obj = deferred
     else:
       if name in namespace:
-        raise SchemaConflict(obj, namespace[name])
-      elif obj_type in self.share_namespace and name in self.shared_namespace:
+        if (alternate_name and obj_type is Column and
+            abs(namespace[name].internal_column_id -
+                obj.internal_column_id) == 1):
+          # Two columns right next to each other sharing the same
+          # qualified_col_name seem to be related somehow and the lower
+          # internal_column_id seems more like the "real" column. Further
+          # research here is necessary...
+          if namespace[name].internal_column_id < obj.internal_column_id:
+            # This one isn't better (i.e. lower) than the one already here, so
+            # let's quit now.
+            return obj
+        else:
+          raise SchemaConflict(obj, namespace[name])
+
+      if obj_type in self.share_namespace and name in self.shared_namespace:
         raise SchemaConflict(obj, self.shared_namespace[name])
-      else:
-        # Force this schema name
-        obj.name = obj.name.with_(schema=self.name.schema)
-        obj.database = self.database
-        namespace[name] = obj
-        if obj_type in self.share_namespace:
-          self.shared_namespace[name] = obj
+
+      # Force this schema name
+      obj.name = obj.name.with_(schema=self.name.schema)
+      obj.database = self.database
+      namespace[name] = obj
+      if obj_type in self.share_namespace:
+        self.shared_namespace[name] = obj
 
     if not alternate_name:
-      #obj.subobjects = [self.add(subobj) for subobj in obj.subobjects]
-
       # Special case for object columns. We want to look them up by true name or
       # their qualified name
       if isinstance(obj, Column) and obj.name != obj.qualified_name:
@@ -261,7 +275,9 @@ class Schema (OracleObject):
                                              , 'SEQUENCE'
                                              , 'SYNONYM'
                                              , 'TABLE'
+                                             , 'TRIGGER'
                                              , 'TYPE'
+                                             , 'TYPE BODY'
                                           -- , 'VIEW'
                                              )
                         UNION
@@ -309,6 +325,7 @@ class Schema (OracleObject):
       return t
 
     total_objects = rs[0]['total_objects']
+    schema.log.info("Schema {} has {} objects.".format(owner, total_objects))
     #count = 0
     #def add (obj):
       #obj.props['status'] = objects[type(obj)].get(obj.name)
@@ -361,6 +378,13 @@ class Database (HasLog):
     self.parser = None
     self.schemas = {}
     self.add(Schema(default_schema, database=self))
+    self.ignores = set()
+
+  def ignore (self, obj_name):
+    if not obj_name.schema:
+      obj_name = obj_name.with_(schema=self.default_schema)
+
+    self.ignores.add(obj_name)
 
   def add (self, obj):
     if not obj:
@@ -463,6 +487,7 @@ class Database (HasLog):
     db.connect(connection_string)
 
     oracle_database = Database()
+    oracle_database.ignores = self.ignores
 
     diffs = []
     for schema_name in self.schemas:

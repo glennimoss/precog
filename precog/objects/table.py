@@ -103,7 +103,8 @@ class _HasData (_HasData_):
 
     return diffs
 
-class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
+#class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
+class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
 
   def __new__ (class_, *args, **props):
     if 'table_type' in props and props['table_type']:
@@ -210,8 +211,8 @@ class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
 
     return diffs
 
-  def _extra_deps (self):
-    return set(self.columns) | self.constraints
+  #def _extra_deps (self):
+    #return set(self.columns) | self.constraints
 
   @classmethod
   def from_db (class_, schema, into_database):

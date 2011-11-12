@@ -28,7 +28,8 @@ class _HasTable (HasProp('table', dependency=Reference.AUTODROP)):
             (self.table and other.table and
              self.table.name == other.table.name))
 
-class Column (HasExtraDeps, HasConstraints, HasDataDefault, _HasTable,
+#class Column (HasExtraDeps, HasConstraints, HasDataDefault, _HasTable,
+class Column (HasConstraints, HasDataDefault, _HasTable,
               HasUserType, HasProp('qualified_col_name', assert_type=str),
               OracleObject):
 
@@ -91,8 +92,8 @@ class Column (HasExtraDeps, HasConstraints, HasDataDefault, _HasTable,
       return OracleFQN(self.name.schema, self.name.obj, self.qualified_col_name)
     return self.name
 
-  def _extra_deps (self):
-    return {cons for cons in self.constraints}
+  #def _extra_deps (self):
+    #return {cons for cons in self.constraints}
 
   @property
   def _is_pk (self):
@@ -174,6 +175,9 @@ class Column (HasExtraDeps, HasConstraints, HasDataDefault, _HasTable,
     return prop_diff
 
   def diff (self, other, **kwargs):
+    #if self.name == 'GIM.ADMIN_VERTICAL.NAME':
+      #import pdb
+      #pdb.set_trace()
     diffs = super().diff(other, recreate=False, **kwargs)
 
     prop_diff = self._diff_props(other)
@@ -196,12 +200,14 @@ class Column (HasExtraDeps, HasConstraints, HasDataDefault, _HasTable,
       max_data_precision = None
       max_data_scale = None
       other_data_type = other.props['data_type']
-      if _is_string_type(other_data_type):
+      if (('data_type' in prop_diff or 'data_length' in prop_diff) and
+          _is_string_type(other_data_type)):
         rs = db.query("""SELECT MAX(LENGTH({})) AS max_data_length
                          FROM {}
                          """.format(other.name.part, other.table.name))
         max_data_length = rs[0]['max_data_length']
-      elif _is_number_type(other_data_type):
+      elif (('data_precision' in prop_diff or 'data_scale' in prop_diff) and
+            _is_number_type(other_data_type)):
         rs = db.query("""SELECT MAX(LENGTH(TRUNC(ABS({0}))))
                                   AS max_data_precision
                               , MAX(LENGTH(ABS({0} - TRUNC({0}))) - 1)

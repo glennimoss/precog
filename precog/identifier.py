@@ -221,6 +221,6 @@ def name_from_oracle (name):
 
   try:
     return OracleIdentifier('"{}"'.format(name))
-  except ReservedNameError:
-    # built-in types
+  except OracleNameError:
+    # It came from oracle... it SHOULD be good :P
     return OracleIdentifier(name, True)
