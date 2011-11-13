@@ -70,9 +70,6 @@ class Schema (OracleObject):
     else:
       name = name.with_(schema=self.name.schema)
 
-    if name in self.database.ignores:
-      return obj
-
     self.log.debug(
         "Adding {}{} as {}".format('deferred ' if obj.deferred else '',
           obj.pretty_name, name))
@@ -223,29 +220,16 @@ class Schema (OracleObject):
 
   def diff (self, other):
     diffs = []
-
     types = (set(self.objects) | set(other.objects)) - {Column, Constraint}
-    #progress = progress_log(
-      #(self.diff_subobjects(other, lambda o: o.objects.get(t, []),
-                            #rename=(t not in {Sequence, Synonym}))
-       #for t in types), self.log,
-      #"Compared {{}} of schema {}.".format(self.name.schema),
-      #count=sum(len(self.objects.get(t, [])) for t in types))
-    #typegen = (t for t in types)
-    #try:
-      #subdiffs = next(progress)
-      #while True:
-        #diffs.extend(subdiffs)
-        #subdiffs = progress.send(len(self.objects.get(next(typegen), [])))
-    #except StopIteration:
-      #pass
-
     for t in progress_log(types, self.log, "Compared {{}} of schema {}."
                           .format(self.name.schema)):
       rename = t not in {Sequence, Synonym}
-      diffs.extend(self.diff_subobjects(other, lambda o: o.objects.get(t, []),
+      diffs.extend(self.diff_subobjects(other,
+                                        lambda o: {name: obj for name, obj in
+                                                   o.objects.get(t, {}).items()
+                                                   if name not in
+                                                     self.database.ignores},
                                         rename=rename))
-
     return diffs
 
   @classmethod

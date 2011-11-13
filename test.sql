@@ -55,3 +55,5 @@ END pack;
 /
 
 create sequence the_seq increment by 2;
+
+--@ignore super_secret_table
