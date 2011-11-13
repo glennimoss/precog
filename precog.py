@@ -2,6 +2,7 @@ import argparse, logging, os, re, sys
 
 from precog.objects.database import Database
 from precog.errors import PrecogError, OracleError, UnappliedDependencyError
+from precog.util import progress_print
 
 #Always print help
 class HelpyArgparser(argparse.ArgumentParser):
@@ -101,7 +102,7 @@ try:
       errored_objs = set()
       if 'y' == doit.lower():
         print("Applying {} changes...".format(changes), file=sys.stderr)
-        for diff in diffs:
+        for diff in progress_print(diffs, "Applied {} of changes."):
           try:
             if diff.dependencies & errored_objs:
               raise UnappliedDependencyError(

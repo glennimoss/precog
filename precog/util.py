@@ -1,5 +1,5 @@
 from collections import OrderedDict
-import logging
+import logging, sys
 
 class InsensitiveDict (OrderedDict):
 
@@ -148,10 +148,9 @@ class classproperty (object):
   def __get__ (self, obj, class_):
     return self.getter(class_)
 
-def progress_log (iter, log, message, level=logging.INFO, start=0, count=None,
-                  complete=True):
+def _progress (coll, output, message, start, count, complete):
   if count is None:
-    count = len(iter)
+    count = len(coll)
 
   if callable(message):
     make_message = lambda o: message(o)
@@ -159,15 +158,13 @@ def progress_log (iter, log, message, level=logging.INFO, start=0, count=None,
     make_message = lambda o: message
 
   if count: # avoid divide by zero
+    itr = iter(coll)
     c = start
     obj = None
     while True:
-      old_terminator = log.root.handlers[0].terminator
-      log.root.handlers[0].terminator = '\x1b[0K\r'
-      log.log(level, make_message(obj).format("{:03.0%}".format(c/count)))
-      log.root.handlers[0].terminator = old_terminator
+      output(make_message(obj).format("{:03.0%}".format(c/count)), '\x1b[0K\r')
       try:
-        obj = next(iter)
+        obj = next(itr)
         step = yield obj
       except StopIteration:
         break
@@ -176,4 +173,21 @@ def progress_log (iter, log, message, level=logging.INFO, start=0, count=None,
       c += step
 
   if complete:
-    log.log(level, "{}\x1b[0K".format(make_message(None).format('100%')))
+    output(make_message(None).format('100%'), '\x1b[0K\n')
+
+def progress_log (coll, log, message, level=logging.INFO, start=0, count=None,
+                  complete=True):
+  def output (msg, term):
+    old_terminator = log.root.handlers[0].terminator
+    log.root.handlers[0].terminator = term
+    log.log(level, msg)
+    log.root.handlers[0].terminator = old_terminator
+
+  return _progress(coll, output, message, start, count, complete)
+
+def progress_print (coll, message, stream=sys.stderr, start=0, count=None,
+                    complete=True):
+  def output (msg, term):
+    print(msg, end=term, file=stream)
+
+  return _progress(coll, output, message, start, count, complete)

@@ -326,42 +326,22 @@ class Schema (OracleObject):
 
     total_objects = rs[0]['total_objects']
     schema.log.info("Schema {} has {} objects.".format(owner, total_objects))
-    #count = 0
-    #def add (obj):
-      #obj.props['status'] = objects[type(obj)].get(obj.name)
-      #return schema.add(obj)
-    #for obj_type in (Column,
-                     #Constraint,
-                     #Index,
-                     #PlsqlCode,
-                     #Sequence,
-                     #Synonym,
-                     #Table):
-      #for obj in obj_type.from_db(schema.name.schema, schema.database):
-        #old_terminator = schema.log.root.handlers[0].terminator
-        #schema.log.root.handlers[0].terminator = '\x1b[0K\r'
-        #schema.log.info(
-          #"Fetched {:03.0%} of schema {}. Currently fetching {} objects..."
-          #.format(count/total_objects, owner, obj_type.pretty_type))
-        #schema.log.root.handlers[0].terminator = old_terminator
-        #schema.add(obj)
-        #count += 1
-    for obj in progress_log(
-      (obj for obj_type in (Column,
-                            Constraint,
-                            Index,
-                            PlsqlCode,
-                            Sequence,
-                            Synonym,
-                            Table)
-       for obj in obj_type.from_db(schema.name.schema, schema.database)),
-      schema.log,
-      lambda o: "Fetched {{}} of schema {}.".format(owner) +
-      (" Currently fetching {} objects...".format(root_type(o).pretty_type)
-       if o else ''), count=total_objects):
-      schema.add(obj)
+    def progress_message (o):
+      return "Fetched {{}} of schema {}.{}".format(owner,
+        " Currently fetching {} objects...".format(root_type(o).pretty_type)
+        if o else '')
 
-    #schema.log.info("Fetched 100% of schema {}.\x1b[0K".format(owner))
+    for obj in progress_log((obj for obj_type in (Column,
+                                                  Constraint,
+                                                  Index,
+                                                  PlsqlCode,
+                                                  Sequence,
+                                                  Synonym,
+                                                  Table)
+                             for obj in obj_type.from_db(schema.name.schema,
+                                                         schema.database)),
+                            schema.log, progress_message, count=total_objects):
+      schema.add(obj)
 
     schema.log.info("Fetching schema {} complete".format(owner))
     return schema
