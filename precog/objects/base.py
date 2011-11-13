@@ -81,11 +81,6 @@ class OracleObject (HasLog):
       return False
 
     return not bool(self._diff_props(other))
-    #common_props = self.props.keys() & other.props.keys()
-    #for prop_name in common_props:
-      #if self.props[prop_name] != other.props[prop_name]:
-        #return False
-    #return True
 
   def __ne__ (self, other):
     return not self == other
@@ -230,10 +225,10 @@ class OracleObject (HasLog):
                                 if (prop in other.props and
                                     expected != other.props[prop]))
 
-    #if self.log.isEnabledFor(logging.DEBUG):
-      #for prop in prop_diff:
-        #self.log.info("{} ['{}']: expected {!r}, found {!r}".format(
-          #self.pretty_name, prop, self.props[prop], other.props[prop]))
+    if self.log.isEnabledFor(logging.DEBUG):
+      for prop in prop_diff:
+        self.log.debug("{} ['{}']: expected {!r}, found {!r}".format(
+          self.pretty_name, prop, self.props[prop], other.props[prop]))
 
     return prop_diff
 
@@ -353,7 +348,6 @@ class OracleObject (HasLog):
         remove_deps.add(dep)
         remove_refs = set()
         for ref in dep.to._referenced_by:
-          #TODO:? if ref.from_ == self:
           if ref.from_ is self:
             remove_refs.add(ref)
         dep.to._referenced_by.difference_update(remove_refs)

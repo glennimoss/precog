@@ -224,7 +224,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
               not (_is_char.match(other_prop) and
                    _is_nchar.match(expected))):
             copypasta = True
-        elif 'data_length' == prop:
+        elif prop in ('data_length', 'char_length'):
           data_type_change = True
           if max_data_length is not None and max_data_length > expected:
             raise DataConflict(self,
@@ -248,10 +248,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
                 "has scale too small for data found. (Min scale {})"
                                  .format(max_data_scale))
           data_type_change = True
-        elif prop in ('char_length', 'char_used'):
-          # TODO: How do you even trigger this?
-          self.log.fatal("{} had {} changed from {} to {}".format(
-            other.pretty_name, prop, other_prop, expected))
+        elif 'char_used' == prop:
           data_type_change = True
         elif 'nullable' == prop:
           nullable = expected == 'Y'
