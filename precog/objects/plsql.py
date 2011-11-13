@@ -66,10 +66,13 @@ class PlsqlCode (OracleObject):
     errors = [row for row in rs if row['attribute'] == 'ERROR']
 
     if warnings:
-      self.log.warn(PlsqlSyntaxError(warnings))
+      self.log.warn(PlsqlSyntaxError(self, warnings))
 
-    if errors and throw:
-      raise PlsqlSyntaxError(self, errors)
+    if errors:
+      e = PlsqlSyntaxError(self, errors)
+      if throw:
+        raise e
+      self.log.error(e)
 
   @classmethod
   def from_db (class_, schema, into_database):
