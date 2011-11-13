@@ -75,9 +75,9 @@ class Data (HasColumns, OracleObject):
   @classmethod
   def from_db (class_, table):
     if not table.data:
-      rs = db.query(""" SELECT *
-                        FROM {}
-                    """.format(table.name))
+      rs = db.query_all(""" SELECT *
+                            FROM {}
+                        """.format(table.name))
 
       if rs:
         columns = [table.database.find(
@@ -278,6 +278,7 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
 
       yield class_(table_name, database=into_database,
                         create_location=(db.location,), **props)
+    rs.close()
 
 class ObjectTable (HasUserType, HasProp('table_type', assert_type=str), Table):
   namespace = Table

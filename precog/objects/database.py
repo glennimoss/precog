@@ -257,66 +257,52 @@ class Schema (OracleObject):
 
     schema.log.info("Fetching schema {}...".format(owner))
 
-    rs = db.query(""" SELECT SUM(num) as total_objects FROM (
-                        SELECT COUNT(*) as num
-                          --   object_name
-                          -- , NULL AS part_name
-                          -- , object_type
-                          -- , status
-                          -- , generated
-                        FROM dba_objects
-                        WHERE owner = :o
-                          AND subobject_name IS NULL
-                          AND object_type IN ( 'FUNCTION'
-                                             , 'INDEX'
-                                             , 'PACKAGE'
-                                             , 'PACKAGE BODY'
-                                             , 'PROCEDURE'
-                                             , 'SEQUENCE'
-                                             , 'SYNONYM'
-                                             , 'TABLE'
-                                             , 'TRIGGER'
-                                             , 'TYPE'
-                                             , 'TYPE BODY'
-                                          -- , 'VIEW'
-                                             )
-                        UNION
-                        SELECT COUNT(*)
-                          --   table_name
-                          -- , column_name
-                          -- , 'COLUMN'
-                          -- , 'VALID'
-                          -- , 'N'
-                        FROM dba_tab_cols
-                        WHERE owner = :o
-                        UNION
-                        SELECT COUNT(*)
-                          --   constraint_name
-                          -- , NULL
-                          -- , 'CONSTRAINT'
-                          -- , 'VALID'
-                          -- , DECODE(generated, 'GENERATED NAME', 'Y', 'N')
-                        FROM dba_constraints
-                        WHERE owner = :o
-                      )
-                  """, o=owner, oracle_names=['object_name'])
+    total_objects = db.query_one("""
+          SELECT SUM(num) AS total_objects FROM (
+              SELECT COUNT(*) AS num
+                --   object_name
+                -- , NULL AS part_name
+                -- , object_type
+                -- , status
+                -- , generated
+              FROM dba_objects
+              WHERE owner = :o
+                AND subobject_name IS NULL
+                AND object_type IN ( 'FUNCTION'
+                                   , 'INDEX'
+                                   , 'PACKAGE'
+                                   , 'PACKAGE BODY'
+                                   , 'PROCEDURE'
+                                   , 'SEQUENCE'
+                                   , 'SYNONYM'
+                                   , 'TABLE'
+                                   , 'TRIGGER'
+                                   , 'TYPE'
+                                   , 'TYPE BODY'
+                                -- , 'VIEW'
+                                   )
+            UNION
+              SELECT COUNT(*)
+                --   table_name
+                -- , column_name
+                -- , 'COLUMN'
+                -- , 'VALID'
+                -- , 'N'
+              FROM dba_tab_cols
+              WHERE owner = :o
+            UNION
+              SELECT COUNT(*)
+                --   constraint_name
+                -- , NULL
+                -- , 'CONSTRAINT'
+                -- , 'VALID'
+                -- , DECODE(generated, 'GENERATED NAME', 'Y', 'N')
+              FROM dba_constraints
+              WHERE owner = :o
+          )
+      """, o=owner, oracle_names=['object_name'])['total_objects']
 
-    #objects = {}
-    #for obj in rs:
-      #object_name = OracleFQN(owner,
-                              #OracleIdentifier(obj['object_name'],
-                                               #generated=(
-                                                 #obj['generated'] == 'Y')),
-                              #obj['part_name'])
-
-      #try:
-        #class_ = globals()[_type_to_class_name(obj['object_type'])]
-        #if class_ not in objects:
-          #objects[class_] = {}
-        #objects[class_][object_name] = obj['status']
-      #except KeyError:
-        #schema.log.warn("{} [{}]: unexpected type".format(
-          #obj['object_type'], obj['object_name']))
+    schema.log.info("Schema {} has {} objects.".format(owner, total_objects))
 
     def root_type (obj):
       t = type(obj)
@@ -324,8 +310,6 @@ class Schema (OracleObject):
         t = t.namespace
       return t
 
-    total_objects = rs[0]['total_objects']
-    schema.log.info("Schema {} has {} objects.".format(owner, total_objects))
     def progress_message (o):
       return "Fetched {{}} of schema {}.{}".format(owner,
         " Currently fetching {} objects...".format(root_type(o).pretty_type)

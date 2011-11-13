@@ -143,6 +143,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                              is_enabled=(row['status'] == 'ENABLED'),
                              database=into_database, columns=columns,
                              create_location=(db.location,), **props)
+    rs.close()
 
 class NullConstraint (Constraint):
 

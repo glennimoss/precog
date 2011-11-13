@@ -38,3 +38,4 @@ class Synonym (HasProp('for_object', dependency=Reference.SOFT,
                                                            row['table_name']),
                                                  OracleObject),
                    database=into_database, create_location=(db.location,))
+    rs.close()

@@ -58,12 +58,12 @@ def connect (connect_string):
   execute('ALTER SESSION SET RECYCLEBIN=OFF')
   # TODO: pass this in as a command-line parameter
   #execute("ALTER SESSION SET PLSQL_WARNINGS='ENABLE:ALL'")
-  _max_cursors = int(query(""" SELECT value
-                               FROM v$parameter
-                               WHERE name = 'open_cursors'
-                           """)[0]['value'])
+  _max_cursors = int(query_one(""" SELECT value
+                                   FROM v$parameter
+                                   WHERE name = 'open_cursors'
+                               """)['value'])
 
-def _fetchall (cursor, args=[], kwargs={}, oracle_names=[]):
+def _init_cursor (cursor, args=[], kwargs={}, oracle_names=[]):
   cursor_desc = cursor.description
   cursor.arraysize = 1000
   cursors_in_query = sum(1 for c in cursor_desc if c[1] == cx_Oracle.CURSOR)
@@ -78,7 +78,8 @@ def _fetchall (cursor, args=[], kwargs={}, oracle_names=[]):
     for column in cursor_desc:
       if column[1] == cx_Oracle.CURSOR:
         subcursor = row[column[0]]
-        row[column[0]] = _fetchall(subcursor, oracle_names=oracle_names)
+        _init_cursor(subcursor, oracle_names=oracle_names)
+        row[column[0]] = subcursor.fetchall()
 
     for column_name in oracle_names:
       if column_name in row:
@@ -88,7 +89,6 @@ def _fetchall (cursor, args=[], kwargs={}, oracle_names=[]):
 
   if cursor.statement:
     cursor.execute(None, *args, **kwargs)
-  return cursor.fetchall()
 
 def _unquote (d):
   for k in d:
@@ -97,9 +97,20 @@ def _unquote (d):
 
 def query (sql, *args, oracle_names=[], **kwargs):
   cursor = _execute(sql, *args, parse_only=True, **kwargs)
-  rs = _fetchall(cursor, args, kwargs, oracle_names)
+  _init_cursor(cursor, args, kwargs, oracle_names)
+  return cursor
+
+def query_all (*args, **kwargs):
+  cursor = query(*args, **kwargs)
+  rs = cursor.fetchall()
   cursor.close()
   return rs
+
+def query_one (*args, **kwargs):
+  cursor = query(*args, **kwargs)
+  row = cursor.fetchone()
+  cursor.close()
+  return row
 
 def execute (*args, **kwargs):
   cursor = _execute(*args, **kwargs)

@@ -65,3 +65,4 @@ class Sequence (OracleObject):
       yield class_(OracleFQN(schema, row.pop('sequence_name')),
                    database=into_database, create_location=(db.location,),
                   **row)
+    rs.close()

@@ -52,16 +52,16 @@ class PlsqlCode (OracleObject):
     return [PlsqlDiff(" ".join(parts), produces=self, terminator=';')]
 
   def errors (self, throw=True):
-    rs= db.query(""" SELECT line
-                          , position
-                          , text
-                          , attribute
-                      FROM dba_errors
-                      WHERE owner = :o
-                        AND name = :n
-                        AND type = :t
-                      ORDER BY sequence
-                  """, o=self.name.schema, n=self.name.obj, t=self.type)
+    rs = db.query_all(""" SELECT line
+                               , position
+                               , text
+                               , attribute
+                          FROM dba_errors
+                          WHERE owner = :o
+                            AND name = :n
+                            AND type = :t
+                          ORDER BY sequence
+                      """, o=self.name.schema, n=self.name.obj, t=self.type)
     warnings = [row for row in rs if row['attribute'] == 'WARNING']
     errors = [row for row in rs if row['attribute'] == 'ERROR']
 
@@ -101,6 +101,7 @@ class PlsqlCode (OracleObject):
         plsql_name, source="".join(line['text'] for line in row['text']),
         database=into_database, create_location=(db.location,),
         status=row['status'])
+    rs.close()
 
 class PlsqlHeader (PlsqlCode):
   pass

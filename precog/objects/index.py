@@ -157,3 +157,4 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
                    uniqueness=row['uniqueness'],
                    tablespace_name=row['tablespace_name'],
                    database=into_database, create_location=(db.location,))
+    rs.close()

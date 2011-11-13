@@ -202,20 +202,20 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
       other_data_type = other.props['data_type']
       if (('data_type' in prop_diff or 'data_length' in prop_diff) and
           _is_string_type(other_data_type)):
-        rs = db.query("""SELECT MAX(LENGTH({})) AS max_data_length
-                         FROM {}
-                         """.format(other.name.part, other.table.name))
-        max_data_length = rs[0]['max_data_length']
+        max_data_length = db.query_one(""" SELECT MAX(LENGTH({})) AS max
+                                           FROM {}
+                                       """.format(other.name.part,
+                                                  other.table.name))['max']
       elif (('data_precision' in prop_diff or 'data_scale' in prop_diff) and
             _is_number_type(other_data_type)):
-        rs = db.query("""SELECT MAX(LENGTH(TRUNC(ABS({0}))))
-                                  AS max_data_precision
-                              , MAX(LENGTH(ABS({0} - TRUNC({0}))) - 1)
-                                  AS max_data_scale
-                         FROM {1}
-                         """.format(other.name.part, other.table.name))
-        max_data_precision = rs[0]['max_data_precision']
-        max_data_scale = rs[0]['max_data_scale']
+        rs = db.query_one(""" SELECT MAX(LENGTH(TRUNC(ABS({0}))))
+                                       AS max_data_precision
+                                   , MAX(LENGTH(ABS({0} - TRUNC({0}))) - 1)
+                                       AS max_data_scale
+                              FROM {1}
+                          """.format(other.name.part, other.table.name))
+        max_data_precision = rs['max_data_precision']
+        max_data_scale = rs['max_data_scale']
       for prop, expected in prop_diff.items():
         other_prop = other.props[prop]
         if 'data_type' == prop:
@@ -358,6 +358,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
       yield class_(column_name, constraints=constraints,
                     database=into_database, create_location=(db.location,),
                     **props)
+    rs.close()
 
 
 class VirtualColumn (HasExpressionWithDataDefault, Column):
