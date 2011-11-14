@@ -411,7 +411,7 @@ class Database (HasLog):
   def validate (self):
     self.log.info('Validating referential integrity')
     unsatisfied = [obj for schema in self.schemas.values()
-        for obj in schema.deferred.values()]
+        for obj in schema.deferred.values() if obj.name not in self.ignores]
 
     if unsatisfied:
       raise UnsatisfiedDependencyError(unsatisfied)
