@@ -3,9 +3,7 @@ from precog.diff import Diff, Reference
 from precog.identifier import *
 from precog.objects.base import OracleObject, SkippedObject
 from precog.objects.has.columns import HasColumns, HasTableFromColumns
-from precog.objects.has.extradeps import HasExtraDeps
 
-#class Index (HasExtraDeps, HasTableFromColumns, HasColumns, OracleObject):
 class Index (HasTableFromColumns, HasColumns, OracleObject):
 
   def __init__ (self, name, unique=None, reverse=None, **props):
@@ -22,27 +20,9 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
       self.props['index_type'] = "FUNCTION-BASED {}".format(
         self.props['index_type'].split()[-1])
 
-  #def _eq_columns (self, other):
-    #for col in self.columns:
-      #col._ignore_name = True
-    #for col in other.columns:
-      #col._ignore_name = True
-    #ret = self.columns == other.columns
-    #for col in self.columns:
-      #col._ignore_name = False
-    #for col in other.columns:
-      #col._ignore_name = False
-    #return ret
-
-  #def _extra_deps (self):
-    #return {col for col in self.columns if col.hidden}
-
   def dependencies_with (self, integrity):
     deps = super().dependencies_with(integrity)
     if integrity == Reference.AUTODROP:
-      #deps |= {subdep for dep in self._extra_deps()
-               #if hasattr(dep, 'expression')
-               #for subdep in dep.expression.references if subdep != self}
       deps |= {subdep for dep in self.columns
                if hasattr(dep, 'expression')
                for subdep in dep.expression.references if subdep != self}

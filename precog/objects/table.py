@@ -9,7 +9,6 @@ from precog.objects.constraint import Constraint
 from precog.objects.index import Index
 from precog.objects.has.columns import HasColumns, OwnsColumns
 from precog.objects.has.constraints import HasConstraints
-from precog.objects.has.extradeps import HasExtraDeps
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType
 from precog.objects.plsql import Type
@@ -103,7 +102,6 @@ class _HasData (_HasData_):
 
     return diffs
 
-#class Table (HasExtraDeps, HasConstraints, _HasData, OwnsColumns, OracleObject):
 class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
 
   def __new__ (class_, *args, **props):
@@ -168,7 +166,6 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
   def _sub_sql (self):
     parts = [col.sql() for col in self.columns
              if col.props['hidden_column'] != 'YES']
-    #parts.extend(cons.sql() for cons in self.other_constraints)
     parts.extend(cons.sql() for cons in self.constraints)
     return "\n  ( {}\n  )".format("\n  , ".join(parts))
 
@@ -210,9 +207,6 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
                    for diff in idx.rebuild())
 
     return diffs
-
-  #def _extra_deps (self):
-    #return set(self.columns) | self.constraints
 
   @classmethod
   def from_db (class_, schema, into_database):
