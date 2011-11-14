@@ -196,15 +196,16 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
         del prop_diffs[prop]
 
     if len(prop_diffs) == 1 and 'tablespace_name' in prop_diffs:
-      diffs.append(Diff("ALTER TABLE {} MOVE TABLESPACE {}"
-                        .format(other.name.lower(),
-                                self.props['tablespace_name'].lower()),
-                        produces=self))
+      move_diff = Diff("ALTER TABLE {} MOVE TABLESPACE {}"
+                       .format(other.name.lower(),
+                               self.props['tablespace_name'].lower()),
+                       produces=self)
+      diffs.append(move_diff)
 
-      diffs.extend(diff for idx in other.database.find(lambda obj:
-                                                         obj.table == other,
-                                                       Index)
-                   for diff in idx.rebuild())
+      for idx in other.database.find(lambda obj: obj.table == other, Index):
+        for diff in idx.rebuild():
+          diff.add_dependencies(move_diff)
+          diffs.append(diff)
 
     return diffs
 
