@@ -68,16 +68,9 @@ class OracleObject (HasLog):
 
   def __eq__ (self, other):
     if not isinstance(other, type(self)):
-      #self.log.debug(
-        #"instanceof({}, type({})) failed for type(other) = {!r}, type(self) = "
-        #"{!r}".format(self and self.pretty_name, other and other.pretty_name,
-                      #type(other), type(self)))
       return False
 
     if not self._ignore_name and self.name != other.name:
-      #self.log.debug(
-        #"{} == {} failed for self.name = {!r}, other.name = {!r}".format(
-          #self.pretty_name, other.pretty_name, self.name, other.name))
       return False
 
     return not bool(self._diff_props(other))
@@ -224,10 +217,11 @@ class OracleObject (HasLog):
                                 if (prop in other.props and
                                     expected != other.props[prop]))
 
-    if self.log.isEnabledFor(logging.DEBUG):
+    if self.log.isEnabledFor(logging.DEBUG) and self.name == other.name:
       for prop in prop_diff:
-        self.log.debug("{} ['{}']: expected {!r}, found {!r}".format(
-          self.pretty_name, prop, self.props[prop], other.props[prop]))
+        self.log.debug("_diff_props({}, {})[{!r}] expected {!r}, found {!r}"
+                       .format(self.pretty_name, other.pretty_name, prop,
+                               self.props[prop], other.props[prop]))
 
     return prop_diff
 

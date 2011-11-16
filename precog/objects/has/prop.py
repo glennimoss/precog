@@ -1,3 +1,4 @@
+import logging
 from precog.objects._assert import *
 from precog.objects.base import OracleObject
 
@@ -48,8 +49,11 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
         expected = getattr(self, prop_name, None)
         other_prop = getattr(other, prop_name, None)
         prop_diff[prop_name] = (expected, other_prop)
-        self.log.debug("{}['{}']: expected {!r}, found {!r}".format(
-          self.pretty_name, prop_name, expected, other_prop))
+
+        if self.log.isEnabledFor(logging.DEBUG) and self.name == other.name:
+          self.log.debug("_diff_props({}, {})[{!r}] expected {!r}, found {!r}"
+                         .format(self.pretty_name, other.pretty_name, prop,
+                                 self.props[prop], other.props[prop]))
       return prop_diff
 
     def _satisfy (self, other):
