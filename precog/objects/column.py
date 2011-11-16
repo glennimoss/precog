@@ -317,11 +317,12 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
             modify_clauses.append('NOT')
           modify_clauses.append('NULL')
 
-        modify_diffs.append(Diff("ALTER TABLE {} MODIFY ( {} {} )"
-                                 .format(other.table.name.lower(),
-                                         self._sql(full_def=False),
-                                         " ".join(modify_clauses)),
-                                 produces=self))
+        if modify_clauses:
+          modify_diffs.append(Diff("ALTER TABLE {} MODIFY ( {} {} )"
+                                   .format(other.table.name.lower(),
+                                           self._sql(full_def=False),
+                                           " ".join(modify_clauses)),
+                                   produces=self))
 
       if modify_diffs:
         if before:
