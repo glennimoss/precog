@@ -2,7 +2,7 @@ import argparse, logging, os, re, sys
 
 from precog.objects.database import Database
 from precog.errors import PrecogError, OracleError, UnappliedDependencyError
-from precog.util import progress_print
+from precog.util import progress_print, pluralize
 
 #Always print help
 class HelpyArgparser(argparse.ArgumentParser):
@@ -88,37 +88,55 @@ try:
     diffs = database.diff_to_db(args.connect_string)
 
     if diffs:
-      #changes = len(filter(lambda diff: diff.priority != Diff.COMMIT, diffs))
-      changes = sum(1 for diff in diffs if diff.priority)
-      print("Found {} changes".format(changes), file=sys.stderr)
-      print("\n\n".join(str(diff) for diff in diffs))
+      retry = '.'
+      while True:
+        changes = sum(1 for diff in diffs if diff.priority)
+        change_str = pluralize(changes, 'change')
+        print("Found {}{}\n".format(change_str, retry),
+              file=sys.stderr)
+        print("\n\n".join(str(diff) for diff in diffs))
+        print()
 
-      if not (args.apply or args.no_apply):
-        doit = input("Apply {} changes? [yN] ".format(changes))
-      else:
-        doit = 'y' if args.apply else 'n'
+        if args.no_apply:
+          break
 
-      errors = 0
-      errored_objs = set()
-      if 'y' == doit.lower():
-        print("Applying {} changes...".format(changes), file=sys.stderr)
-        for diff in progress_print(diffs, "Applied {} of changes."):
-          try:
-            if diff.dependencies & errored_objs:
-              raise UnappliedDependencyError(
-                "Unable to apply change due to an error in a dependency\n"
-                "SQL: {}".format(diff.sql))
-            diff.apply()
-          except PrecogError as e:
-            print(e, file=sys.stderr)
-            errored_objs.add(diff)
-            if diff.produces:
-              errored_objs.update(diff.produces)
-            errors += 1
-        if errors:
-          print("\nUnable to apply {} changes".format(errors), file=sys.stderr)
-        print("Successfully applied {} changes".format(changes - errors),
-            file=sys.stderr)
+        if not args.apply:
+          doit = input("Apply {}? [yN] ".format(change_str))
+        else:
+          doit = 'y'
+
+        errors = 0
+        errored_objs = set()
+        unapplied_diffs = []
+        if 'y' == doit.lower():
+          print("Applying {}...".format(change_str), file=sys.stderr)
+          for diff in progress_print(diffs, "Applied {} of changes."):
+            try:
+              if diff.dependencies & errored_objs:
+                raise UnappliedDependencyError(
+                  "Unable to apply change due to an error in a dependency\n"
+                  "SQL: {}".format(diff.sql))
+              diff.apply()
+            except PrecogError as e:
+              print(e, file=sys.stderr)
+              errored_objs.add(diff)
+              unapplied_diffs.append(diff)
+              if diff.produces:
+                errored_objs.update(diff.produces)
+              errors += 1
+          if errors:
+            print("\nUnable to apply {}.".format(pluralize(errors, 'change')),
+                  file=sys.stderr)
+          successes = changes - errors
+          print("Successfully applied {}."
+                .format(pluralize(successes, 'change')), file=sys.stderr)
+        if not errors or not successes:
+          # We're done here
+          break
+        # Let's retry those that didn't work
+        diffs = unapplied_diffs
+        retry = ' that can be retried.'
+
     else:
       print("Oracle is up to date with {}".format(args.file.name),
           file=sys.stderr)
@@ -129,5 +147,5 @@ try:
 
 except PrecogError as e:
   print(e, file=sys.stderr)
-  if True:# and args.verbose and len(args.verbose) > 1:
+  if args.verbose and len(args.verbose) > 1:
     raise
