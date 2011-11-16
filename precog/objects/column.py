@@ -51,6 +51,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
     if not self.qualified_col_name:
       self.qualified_col_name = self.name.part
     self.internal_column_id = internal_column_id
+    self.props['virtual_column'] = 'NO'
 
   @property
   def hidden (self):
@@ -89,6 +90,14 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
     if self.qualified_col_name:
       return OracleFQN(self.name.schema, self.name.obj, self.qualified_col_name)
     return self.name
+
+  @property
+  def is_string (self):
+    return _is_string_type(self.props['data_type']) is not None
+
+  @property
+  def is_number (self):
+    return _is_number_type(self.props['data_type'])
 
   @property
   def _is_pk (self):
@@ -170,9 +179,6 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
     return prop_diff
 
   def diff (self, other, **kwargs):
-    #if self.name == 'GIM.ADMIN_VERTICAL.NAME':
-      #import pdb
-      #pdb.set_trace()
     diffs = super().diff(other, recreate=False, **kwargs)
 
     prop_diff = self._diff_props(other)
@@ -195,7 +201,9 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
       max_data_precision = None
       max_data_scale = None
       other_data_type = other.props['data_type']
-      if (('data_type' in prop_diff or 'data_length' in prop_diff) and
+      if (('data_type' in prop_diff or
+           'data_length' in prop_diff or
+           'char_length' in prop_diff) and
           _is_string_type(other_data_type)):
         max_data_length = db.query_one(""" SELECT MAX(LENGTH({})) AS max
                                            FROM {}
@@ -211,13 +219,11 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
                           """.format(other.name.part, other.table.name))
         max_data_precision = rs['max_data_precision']
         max_data_scale = rs['max_data_scale']
-      for prop, expected in prop_diff.items():
-        other_prop = other.props[prop]
+      for prop, (expected, other_prop) in prop_diff.items():
         if 'data_type' == prop:
           data_type_change = True
-          if (max_data_length and
-              not (_is_char.match(other_prop) and
-                   _is_nchar.match(expected))):
+          if not (_is_char.match(other_prop) and
+                  _is_nchar.match(expected)):
             copypasta = True
         elif prop in ('data_length', 'char_length'):
           data_type_change = True
@@ -233,30 +239,30 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
                 "has precision too small for data found. (Min precision {})"
                                  .format(max_data_precision))
 
-            if expected < other_prop:
+            if expected < (other_prop or 38):
               copypasta = True
         elif 'data_scale' == prop:
           if max_data_scale:
-            copypasta = True
             if max_data_scale > expected:
               raise DataConflict(self,
                 "has scale too small for data found. (Min scale {})"
                                  .format(max_data_scale))
+          copypasta = True
           data_type_change = True
         elif 'char_used' == prop:
           data_type_change = True
         elif 'nullable' == prop:
           nullable = expected == 'Y'
         elif 'virtual_column' == prop:
-          self.log.warn("{} is changing virtual_column from {} to {}".format(
-            other.pretty_name, other_prop, expected))
+          if expected == 'NO':
+            copypasta = True
           recreate = True
         elif 'hidden_column' == prop:
-          self.log.warn("{} is changing hidden_column from {} to {}".format(
-            other.pretty_name, other_prop, expected))
+          recreate = True
+        elif 'user_type' == prop:
           recreate = True
         elif ('data_default' == prop and
-              (expected or other_prop.upper() != 'NULL')):
+              (expected or (other_prop and other_prop.upper() != 'NULL'))):
           if isinstance(self, VirtualColumn):
             data_type_change = True
           else:
@@ -264,28 +270,70 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
         elif 'expression' == prop:
           data_type_change = True
 
-      modify_clauses = []
-      if data_type_change:
-        # Data type must always come directly after the name
-        modify_clauses.append(self._data_type_sql())
+      before = None
+      after = None
+      if copypasta:
+        has_data = db.query_one(""" SELECT COUNT({}) AS has_data
+                                    FROM {}
+                                """.format(other.name.part,
+                                           other.table.name))['has_data']
+        if has_data:
+          temp_col = GeneratedId()
+          before = Diff(["ALTER TABLE {} ADD ({}$$ {})"
+                         .format(other.table.name, temp_col,
+                                 # If the column is virtual, we want the temp
+                                 # column to be real, with whatever datatype
+                                 # it has
+                                 Column._data_type_sql(other)),
+                         "UPDATE {} SET {}$$ = {}{}"
+                         .format(other.table.name, temp_col, other.name.part,
+                                 ", {} = NULL".format(other.name.part)
+                                 if not isinstance(other, VirtualColumn)
+                                 else ''),
+                        'COMMIT'],
+                        other, priority=Diff.ALTER)
+          after = Diff(["UPDATE {} SET {} = {}$$"
+                        .format(self.table.name, self.name.part, temp_col),
+                        'COMMIT',
+                        "ALTER TABLE {} DROP ({}$$)"
+                        .format(self.table.name, temp_col)],
+                       self, priority=Diff.ALTER)
 
-      if data_default_change:
-        modify_clauses.append(
-          "DEFAULT {}".format(self.data_default or 'NULL'))
-
-      if nullable is not None and not self._is_pk:
-        if not nullable:
-          modify_clauses.append('NOT')
-        modify_clauses.append('NULL')
-
+      modify_diffs = []
       if recreate:
-        diffs.extend(self.recreate(other))
-      elif modify_clauses:
-        diffs.append(Diff("ALTER TABLE {} MODIFY ( {} {} )"
-                          .format(other.table.name.lower(),
-                                  self._sql(full_def=False),
-                                  " ".join(modify_clauses)),
-                                  produces=self))
+        modify_diffs.extend(self.recreate(other))
+      else:
+        modify_clauses = []
+        if data_type_change:
+          # Data type must always come directly after the name
+          modify_clauses.append(self._data_type_sql())
+
+        if data_default_change:
+          modify_clauses.append(
+            "DEFAULT {}".format(self.data_default or 'NULL'))
+
+        if nullable is not None and not self._is_pk:
+          if not nullable:
+            modify_clauses.append('NOT')
+          modify_clauses.append('NULL')
+
+        modify_diffs.append(Diff("ALTER TABLE {} MODIFY ( {} {} )"
+                                 .format(other.table.name.lower(),
+                                         self._sql(full_def=False),
+                                         " ".join(modify_clauses)),
+                                 produces=self))
+
+      if modify_diffs:
+        if before:
+          for diff in modify_diffs:
+            diff.add_dependencies(before)
+          diffs.append(before)
+
+        if after:
+          after.add_dependencies(modify_diffs)
+          diffs.append(after)
+
+        diffs.extend(modify_diffs)
 
     return diffs
 

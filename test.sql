@@ -11,11 +11,14 @@ create table foo
   , bar_id number CONSTRAINT foo_uk_bar_id UNIQUE
   , bar_whee date
   , moredata CLOB default sysdate
-  , id_len AS (length(to_char(foo_id)))
+  --, moredata as (18 + foo_id)
+  --, id_len AS (length(to_char(foo_id)))
+  , id_len number
   , id_len2 AS (length(to_char(foo_id)) - 2)
   , CONSTRAINT foo_sum CHECK (foo_id + id_len > to_number(bar_id))
   , CONSTRAINT foo_fk_bar FOREIGN KEY (bar_id, bar_whee)
     references bar (id, whee)
+  , obj test_type
 );
 
 @ test2.sql
@@ -54,6 +57,25 @@ CREATE OR REPLACE PACKAGE BODY pack AS
 END pack;
 /
 
-create sequence the_seq increment by 2;
+create sequence the_seq increment by 9;
 
---@ignore super_secret_table
+--create table coolbeans
+  --( n number
+  --, m varchar2(10)
+  --, CONSTRAINT coolbeans_pk PRIMARY KEY (n, m)
+--);
+
+--@ignore awesomesauce
+--@ignore awesomesauce_fk
+
+--@ignore schema kount1_pentaho
+--@ignore pfiles
+
+--create table awesomesauce
+  --( n number
+  --, m varchar2(10)
+  --, j clob
+  --, constraint awesomesauce_pk primary key (n, m)
+  --, CONSTRAINT awesomesauce_fk FOREIGN KEY (n, m) REFERENCES coolbeans (n, m)
+--);
+

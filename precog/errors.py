@@ -55,13 +55,16 @@ class PlsqlSyntaxError (OracleError):
           plsql_obj.sql().split('\n')[line-1], error_props['text'])))
     super().__init__("\n".join(parts))
 
+def _with_location (obj):
+  return ", ".join([obj.pretty_name] + obj.create_location)
+
 class ObjectError (PrecogError):
 
   def __init__ (self, obj):
     self.obj = obj
 
   def __str__ (self):
-    return self.obj.pretty_name
+    return _with_location(self.obj)
 
 class SchemaConflict (ObjectError):
 
@@ -70,11 +73,8 @@ class SchemaConflict (ObjectError):
     self.other = other
 
   def __str__ (self):
-    return "{}, {} is present in schema as {}".format(
-      super().__str__(), ", ".join(self.obj.create_location),
-      ", ".join([self.other.pretty_name] + self.other.create_location))
-
-      #self.other.sql(fq=True))
+    return "{}, is present in schema as {}".format(
+      super().__str__(), _with_location(self.other))
 
 class TypeConflict (ObjectError):
 
@@ -83,7 +83,7 @@ class TypeConflict (ObjectError):
     self.wrongtype = wrongtype
 
   def __str__ (self):
-    return super().__str__() + " exists as {}".format(self.wrongtype)
+    return super().__str__() + ", exists as {}".format(self.wrongtype)
 
 class DataTypeConflict (TypeConflict):
 
@@ -104,7 +104,7 @@ class TableConflict (ObjectError):
     self.tablename = tablename
 
   def __str__ (self):
-    return "{} does not belong to expected table [{}]".format(
+    return "{}, does not belong to expected table [{}]".format(
         super().__str__(), self.tablename)
 
 class DataConflict (ObjectError):
@@ -113,7 +113,7 @@ class DataConflict (ObjectError):
     self.msg = msg
 
   def __str__ (self):
-    return "{} {}".format(super().__str__(), self.msg)
+    return "{}, {}".format(super().__str__(), self.msg)
 
 class DuplicateIndexConflict (SchemaConflict):
 

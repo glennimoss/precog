@@ -141,7 +141,9 @@ plsql_object_def
       kPIPELINED?
     | // nothing
     )
-    ( IS | AS )
+    ( { $plsql_stmt::type != 'TRIGGER' }? ( IS | AS )
+    | { $plsql_stmt::type == 'TRIGGER' }? ( BEFORE | AFTER | INSTEAD | FOR)
+    )
     ( (~TERMINATOR)=> ~TERMINATOR )+
   ;
 
@@ -185,9 +187,16 @@ finally {
 }
 
 directive_stmt
+@init {
+  schema = False
+}
   : { self.input.add(NL_CHANNEL) }
-    DIRECTIVE kIGNORE i=identifier NL {
-      $g::database.ignore($i.ident)
+    DIRECTIVE kIGNORE (kSCHEMA { schema = True })? i=identifier NL {
+      name = $i.ident
+      if schema:
+        $g::database.ignore_schema(name.obj)
+      else:
+        $g::database.ignore(name)
     }
   ;
 finally {
@@ -596,6 +605,7 @@ using_index [constraint_name] returns [props]
 @init {
   $props = InsensitiveDict()
   index_props = InsensitiveDict()
+  index_props['index_type'] = 'NORMAL'
   create_location = self.get_location()
 }
 @after {
@@ -1390,6 +1400,7 @@ kREFERENCES : {self.input.LT(1).text.lower() == 'references'}? ID;
 kREPLACE : {self.input.LT(1).text.lower() == 'replace'}? ID;
 kRETURN : {self.input.LT(1).text.lower() == 'return'}? ID;
 kREVERSE : {self.input.LT(1).text.lower() == 'reverse'}? ID;
+kSCHEMA : {self.input.LT(1).text.lower() == 'schema'}? ID;
 kSECOND : {self.input.LT(1).text.lower() == 'second'}? ID;
 kSEQUENCE : {self.input.LT(1).text.lower() == 'sequence'}? ID;
 kTABLESPACE : {self.input.LT(1).text.lower() == 'tablespace'}? ID;
@@ -1421,16 +1432,21 @@ tINTEGER returns [val]
   : i=T_INTEGER { $val = int($i.text) }
   ;
 
+/*
+ * Not reserved but required to be tokens to relieve the parser's addled brain
+ */
+AFTER : 'after';
+BEFORE : 'before';
+INSTEAD : 'instead';
 
 /*
-    PL/SQL Reserved words
-*/
-
-//kWHEN	:	{self.input.LT(1).text.lower() == 'when'}? ID;
+ * PL/SQL Reserved words
+ */
+// None yet...
 
 /*
-    Keywords
-*/
+ * Keywords
+ */
 ACCESS : 'access';
 ADD : 'add';
 ALL : 'all';
@@ -1605,6 +1621,9 @@ AT_SIGN
 DOUBLE_AT_SIGN
 	:	'@@'
 	;
+CARET
+  : '^'
+  ;
 RPAREN
 	:	')'
 	;

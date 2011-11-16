@@ -177,11 +177,16 @@ def _progress (coll, output, message, start, count, complete):
 
 def progress_log (coll, log, message, level=logging.INFO, start=0, count=None,
                   complete=True):
-  def output (msg, term):
-    old_terminator = log.root.handlers[0].terminator
-    log.root.handlers[0].terminator = term
-    log.log(level, msg)
-    log.root.handlers[0].terminator = old_terminator
+  if log.isEnabledFor(logging.DEBUG):
+    # These progress messages are just extra noise at debug level
+    def output (msg, term):
+      pass
+  else:
+    def output (msg, term):
+      old_terminator = log.root.handlers[0].terminator
+      log.root.handlers[0].terminator = term
+      log.log(level, msg)
+      log.root.handlers[0].terminator = old_terminator
 
   return _progress(coll, output, message, start, count, complete)
 
@@ -191,3 +196,19 @@ def progress_print (coll, message, stream=sys.stderr, start=0, count=None,
     print(msg, end=term, file=stream)
 
   return _progress(coll, output, message, start, count, complete)
+
+def pluralize (count, word, with_count=True):
+  parts = []
+
+  if with_count:
+    parts.append("{} ".format(count))
+
+  parts.append(word)
+
+  if abs(count) != 1:
+    if word[-1] == 'x':
+      parts.append('es')
+    else:
+      parts.append('s')
+
+  return "".join(parts)

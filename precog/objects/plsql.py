@@ -1,3 +1,4 @@
+import re
 from precog import db
 from precog.diff import Diff, PlsqlDiff, Reference
 from precog.errors import PlsqlSyntaxError, PrecogError
@@ -23,7 +24,16 @@ class PlsqlCode (OracleObject):
     return class_(name, source=source, **props)
 
   def _sql (self, fq=True):
+    name = self.name
+    if not fq:
+      name = self.name.obj
+
     return "CREATE OR REPLACE {}".format(self.props['source'])
+    # TODO: forcing is probably dangerous if it's being used in an actual table.
+    #parts = re.split(r'\b(is|as)\b', self.props['source'], 1, re.I)
+    #parts.insert(1, 'FORCE ')
+    #parts.insert(0, 'CREATE OR REPLACE ')
+    #return "".join(parts)
 
   def create (self):
     return [PlsqlDiff(self.sql(), produces=self, priority=Diff.CREATE)]
@@ -107,7 +117,9 @@ class PlsqlCode (OracleObject):
     rs.close()
 
 class PlsqlHeader (PlsqlCode):
-  pass
+
+  def rebuild(self):
+    return super().rebuild(extra_parameters='SPECIFICATION')
 
 class PlsqlBody (HasProp('header', dependency=Reference.AUTODROP,
                          assert_type=PlsqlHeader),
@@ -127,9 +139,7 @@ class Procedure (PlsqlCode):
   pass
 
 class Package (PlsqlHeader):
-
-  def rebuild(self):
-    return super().rebuild(extra_parameters='SPECIFICATION')
+  pass
 
 class PackageBody (PlsqlBody):
 
@@ -140,9 +150,10 @@ class Trigger (PlsqlCode):
   pass
 
 class Type (PlsqlHeader):
+  pass
 
-  def rebuild(self):
-    return super().rebuild(extra_parameters='SPECIFICATION')
+  #def recreate (self, other):
+    #return super(PlsqlCode, self).recreate(other)
 
 class TypeBody (PlsqlBody):
 

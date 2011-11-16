@@ -13,24 +13,26 @@ class Sequence (OracleObject):
     if fq:
       name = self.name
 
-    if not props:
+    if props:
+      props = {prop: expected for prop, (expected, _) in props.items()}
+    else:
       props = self.props
 
     parts = ["{} SEQUENCE {}".format(operation, name.lower())]
-    if self.props['increment_by']:
-      parts.append("INCREMENT BY {}".format(self.props['increment_by']))
-    if self.props['maxvalue']:
-      parts.append("MAXVALUE {}".format(self.props['maxvalue']))
-    if self.props['minvalue']:
-      parts.append("MINVALUE {}".format(self.props['minvalue']))
-    if self.props['cycle_flag']:
+    if props['increment_by']:
+      parts.append("INCREMENT BY {}".format(props['increment_by']))
+    if props['maxvalue']:
+      parts.append("MAXVALUE {}".format(props['maxvalue']))
+    if props['minvalue']:
+      parts.append("MINVALUE {}".format(props['minvalue']))
+    if props['cycle_flag']:
       parts.append("{}CYCLE".format(
-        'NO' if self.props['cycle_flag'] == 'N' else ''))
-    if self.props['cache_size']:
-      parts.append("CACHE {}".format(self.props['cache_size']))
-    if self.props['order_flag']:
+        'NO' if props['cycle_flag'] == 'N' else ''))
+    if props['cache_size']:
+      parts.append("CACHE {}".format(props['cache_size']))
+    if props['order_flag']:
       parts.append("{}ORDER".format(
-        'NO' if self.props['order_flag'] == 'N' else ''))
+        'NO' if props['order_flag'] == 'N' else ''))
 
     if 'CREATE' == operation and self.start_with:
       # START WITH only applies on creation, and can't be validated after.

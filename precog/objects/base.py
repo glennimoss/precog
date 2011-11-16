@@ -142,11 +142,10 @@ class OracleObject (HasLog):
     Recreate this object from scratch. Usually means a drop and a create.
     """
     drop, *diffs = other.drop()
-    diffs.extend(diff
-        for ref in self._referenced_by
-          if ref.integrity in (Reference.AUTODROP, Reference.HARD)
-        for diff in ref.from_.create())
-    creates = self.create()
+    creates = [diff for ref in self._referenced_by
+                 if ref.integrity in (Reference.AUTODROP, Reference.HARD)
+               for diff in ref.from_.create()]
+    creates.extend(self.create())
     for diff in creates:
       diff.add_dependencies(drop)
     diffs.append(drop)
@@ -220,7 +219,7 @@ class OracleObject (HasLog):
     return []
 
   def _diff_props (self, other):
-    prop_diff = InsensitiveDict((prop, expected)
+    prop_diff = InsensitiveDict((prop, (expected, other.props[prop]))
                                 for prop, expected in self.props.items()
                                 if (prop in other.props and
                                     expected != other.props[prop]))
@@ -243,6 +242,12 @@ class OracleObject (HasLog):
       target_objs = {label(obj): obj for obj in target_objs}
     if not isinstance(current_objs, dict):
       current_objs = {label(obj): obj for obj in current_objs}
+
+    ignores = self.database.ignores() | other.database.ignores()
+    filter = lambda d: {name: obj for name, obj in d.items()
+                        if (type(obj), str(name)) not in ignores}
+    target_objs = filter(target_objs)
+    current_objs = filter(current_objs)
 
     target_obj_names = set(target_objs)
     current_obj_names = set(current_objs)
@@ -287,10 +292,14 @@ class OracleObject (HasLog):
       diffs.extend(
           other.drop_subobjects(current_objs[dropobj] for dropobj in dropobjs))
 
-    modify_diffs.extend(diff
-        for target_obj in target_objs.values()
-          if target_obj.name in current_objs
-        for diff in target_obj.diff(current_objs[target_obj.name]))
+    for target_obj in target_objs.values():
+      if target_obj.name in current_objs:
+        try:
+          obj_diffs = target_obj.diff(current_objs[target_obj.name])
+          modify_diffs.extend(obj_diffs)
+        except DataConflict as e:
+          self.log.warn(e)
+
     if modify_diffs:
       self.log.debug("  {} modifications for {}s".format(
         len(modify_diffs), pretty_type))

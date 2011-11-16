@@ -51,4 +51,5 @@ class HasExpressionWithDataDefault (HasExpression):
   data_default = data_default.setter(expression.__set__)
 
   def _eq_data_default (self, other):
-    return self.expression == other.expression
+    return (isinstance(other, HasExpression) and
+            self.expression == other.expression)

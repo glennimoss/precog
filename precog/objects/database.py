@@ -6,7 +6,7 @@ from precog.diff import order_diffs
 from precog.identifier import *
 from precog.objects import *
 from precog.objects._misc import *
-from precog.util import HasLog, progress_log
+from precog.util import HasLog, progress_log, pluralize
 
 class Schema (OracleObject):
 
@@ -160,7 +160,7 @@ class Schema (OracleObject):
     find_type = (obj_type.namespace if hasattr(obj_type, 'namespace')
                  else obj_type)
     # When you don't know what type you're looking up, it must be in the shared
-    # namespace to return a real object. Otherwise it wil be deferred.
+    # namespace to return a real object. Otherwise it will be deferred.
     if find_type is OracleObject and name in self.shared_namespace:
       return self.shared_namespace[name]
 
@@ -182,28 +182,33 @@ class Schema (OracleObject):
     if columns_set in self.deferred:
       return self.deferred[columns_set]
 
+    constraints = None
     if len(columns) == 1:
       constraints = columns[0].unique_constraints
     else:
       table_name = self.__make_fqn(columns[0].name.without_part())
-      table = self.find(table_name, Table)
-      constraints = table.unique_constraints
+      table = self.find(table_name, Table, deferred)
+      if table:
+        constraints = table.unique_constraints
+        if table.deferred:
+          table.columns = columns
 
     second_best = None
-    for cons in constraints:
-      cons_columns = [col.name for col in cons.columns]
-      if column_names == cons_columns:
-        # Exact match!
-        return cons
+    if constraints:
+      for cons in constraints:
+        cons_columns = [col.name for col in cons.columns]
+        if column_names == cons_columns:
+          # Exact match!
+          return cons
 
-      if not second_best:
-        column_set = set(column_names)
-        cons_set = set(cons_columns)
-        if column_set == cons_set:
-          second_best = cons
-          # we won't return here because we may have an exact match with a
-          # different constraint. Or maybe not... TODO: test if multiple
-          # constraints can have the same column set in different orders.
+        if not second_best:
+          column_set = set(column_names)
+          cons_set = set(cons_columns)
+          if column_set == cons_set:
+            second_best = cons
+            # we won't return here because we may have an exact match with a
+            # different constraint. Or maybe not... TODO: test if multiple
+            # constraints can have the same column set in different orders.
 
     if second_best:
       return second_best
@@ -224,11 +229,7 @@ class Schema (OracleObject):
     for t in progress_log(types, self.log, "Compared {{}} of schema {}."
                           .format(self.name.schema)):
       rename = t not in {Sequence, Synonym}
-      diffs.extend(self.diff_subobjects(other,
-                                        lambda o: {name: obj for name, obj in
-                                                   o.objects.get(t, {}).items()
-                                                   if name not in
-                                                     self.database.ignores},
+      diffs.extend(self.diff_subobjects(other, lambda o: o.objects.get(t, {}),
                                         rename=rename))
     return diffs
 
@@ -286,7 +287,8 @@ class Schema (OracleObject):
           )
       """, o=owner, oracle_names=['object_name'])['total_objects']
 
-    schema.log.info("Schema {} has {} objects.".format(owner, total_objects))
+    schema.log.info("Schema {} has {}.".format(owner, pluralize(total_objects,
+                                                                'object')))
 
     def root_type (obj):
       t = type(obj)
@@ -323,16 +325,33 @@ class Database (HasLog):
     self.default_schema = OracleIdentifier(default_schema)
     #self.log.debug("Creating with default schema {}".format(default_schema))
 
+    self._ignores = set()
+    self._ignore_schemas = set()
+
     self.parser = None
     self.schemas = {}
     self.add(Schema(default_schema, database=self))
-    self.ignores = set()
+
+  def ignore_schema (self, schema_name):
+    self._ignore_schemas.add(schema_name)
 
   def ignore (self, obj_name):
     if not obj_name.schema:
       obj_name = obj_name.with_(schema=self.default_schema)
 
-    self.ignores.add(obj_name)
+    self._ignores.add(obj_name)
+
+  def ignores (self):
+    ignores = set()
+    for obj_name in self._ignores:
+      obj = self.find(obj_name, deferred=False)
+      if obj:
+        ignores.add((type(obj), str(obj.name)))
+        ignores.update((type(ref), str(ref.name))
+                       for ref in obj
+                       ._build_dep_set(lambda self: self._referenced_by,
+                                       lambda ref: ref.from_))
+    return ignores
 
   def add (self, obj):
     if not obj:
@@ -410,8 +429,11 @@ class Database (HasLog):
 
   def validate (self):
     self.log.info('Validating referential integrity')
-    unsatisfied = [obj for schema in self.schemas.values()
-        for obj in schema.deferred.values() if obj.name not in self.ignores]
+    ignores = self.ignores()
+    unsatisfied = [obj for name, schema in self.schemas.items()
+                   if name not in self._ignore_schemas
+                   for obj in schema.deferred.values()
+                   if (type(obj), str(obj.name)) not in ignores]
 
     if unsatisfied:
       raise UnsatisfiedDependencyError(unsatisfied)
@@ -435,10 +457,13 @@ class Database (HasLog):
     db.connect(connection_string)
 
     oracle_database = Database()
-    oracle_database.ignores = self.ignores
+    oracle_database._ignores = self._ignores
+    oracle_database._ignore_schemas = self._ignore_schemas
 
+    schemas = {name: schema for name, schema in self.schemas.items()
+               if name not in self._ignore_schemas}
     diffs = []
-    for schema_name in self.schemas:
+    for schema_name in schemas:
       db_schema = Schema(schema_name, database=oracle_database)
       oracle_database.add(db_schema)
       Schema.from_db(db_schema)
@@ -452,7 +477,7 @@ class Database (HasLog):
 
     self.log.info('Comparing database definition to current database state')
 
-    for schema_name in self.schemas:
+    for schema_name in schemas:
       diffs.extend(self.schemas[schema_name].diff(
         oracle_database.schemas[schema_name]))
 

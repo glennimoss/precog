@@ -21,7 +21,10 @@ class Data (HasColumns, OracleObject):
       "__DATA_{}".format(len(table.data))), columns=columns, **props)
 
     self.table = table
-    self.expressions = expressions
+    self.expressions = []
+    for i, exp in enumerate(expressions):
+      exp = Data.numerify(exp, self.columns[i].is_number)
+      self.expressions.append(exp)
 
   def __eq__ (self, other):
     if not isinstance(other, type(self)):
@@ -37,39 +40,58 @@ class Data (HasColumns, OracleObject):
 
   def _comp (self):
     """ A tuple view for hashing, comparing, etc. """
-    return tuple(sorted((col, val) for col, val in self.values().items()
-                        if val is not None))
+    return tuple(sorted(tup for tup in self.values().items()
+                        if tup[1] is not None))
 
-  def values (self):
-    return InsensitiveDict(zip((col.name.part.lower()
-                                for col in self.columns),
-                               self.expressions))
+  def values (self, normalize=False):
+    vals = self.expressions
+    if normalize:
+      vals = [int(val) if isinstance(val, float) and val.is_integer() else val
+              for val in self.expressions]
+
+
+    return InsensitiveDict(zip((col.name.part.lower() for col in self.columns),
+                               vals))
 
   def _sql (self, fq=True):
     table_name = self.table.name
     if not fq:
       table_name = table_name.obj
-    values = self.values()
+    values = self.values(True)
     return "INSERT INTO {} ({}) VALUES ({})".format(self.table.name.lower(),
-      ", ".join(values.keys()), ", ".join(values.values()))
+      ", ".join(values.keys()), ", ".join(str(val) for val in values.values()))
 
   def _drop (self):
     return Diff("DELETE FROM {} WHERE {}".format(
       self.table.name.lower(), " AND ".join(
-        " = ".join((col, val)) if val is not None else "{} IS NULL".format(col)
-        for col, val in self.values().items())))
+        " = ".join((col, str(val)))
+        if val is not None else "{} IS NULL".format(col)
+        for col, val in self.values(True).items())))
 
   def diff (self, other, **kwargs):
     return []
 
   @staticmethod
-  def escape (string):
-    if isinstance(string, str):
-      return "'{}'".format(string.replace("'", "''"))
-    elif string is not None:
-      return str(string)
-    else:
-      return string
+  def numerify (value, col_is_number):
+    if isinstance(value, str):
+      if col_is_number or not (value.startswith("'") and value.endswith("'")):
+        val = value.strip("'")
+        try:
+          num = float(val)
+          if num.is_integer():
+            num = int(num)
+          if not col_is_number:
+            num = "'{}'".format(num)
+          return num
+        except ValueError:
+          pass
+    return value
+
+  @staticmethod
+  def escape (value, col_is_number):
+    if isinstance(value, str):
+      return "'{}'".format(value.replace("'", "''"))
+    return Data.numerify(value, col_is_number)
 
   @classmethod
   def from_db (class_, table):
@@ -84,7 +106,8 @@ class Data (HasColumns, OracleObject):
           for column_name in rs[0]]
 
         for row in rs:
-          table.add_data(columns, [Data.escape(col) for col in row.values()])
+          table.add_data(columns, [Data.escape(col, columns[i].is_number)
+                                   for i, col in enumerate(row.values())])
 
 _HasData_ = HasProp('data', assert_collection=list, assert_type=Data)
 class _HasData (_HasData_):

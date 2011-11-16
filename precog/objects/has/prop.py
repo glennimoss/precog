@@ -7,12 +7,9 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
   eq_prop = '_eq_' + prop_name
 
   def equal (self, other):
-    if not strict_none and (getattr(self, prop_name) is None or
-                            getattr(other, prop_name) is None):
+    if not strict_none and (getattr(self, prop_name, None) is None or
+                            getattr(other, prop_name, None) is None):
       return True
-
-    if not hasattr(other, prop_name):
-      return False
 
     return getattr(self, eq_prop)(other)
 
@@ -48,18 +45,19 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
     def _diff_props (self, other):
       prop_diff = super()._diff_props(other)
       if not equal(self, other):
-        prop_diff[prop_name] = getattr(self, prop_name)
+        expected = getattr(self, prop_name, None)
+        other_prop = getattr(other, prop_name, None)
+        prop_diff[prop_name] = (expected, other_prop)
         self.log.debug("{}['{}']: expected {!r}, found {!r}".format(
-          self.pretty_name, prop_name, getattr(self, prop_name),
-          getattr(other, prop_name)))
+          self.pretty_name, prop_name, expected, other_prop))
       return prop_diff
 
     def _satisfy (self, other):
       super()._satisfy(other)
-      setattr(self, prop_name, getattr(other, prop_name))
+      setattr(self, prop_name, getattr(other, prop_name, None))
 
   def eq (self, other):
-    return getattr(self, prop_name) == getattr(other, prop_name)
+    return getattr(self, prop_name, None) == getattr(other, prop_name, None)
   eq.__name__ = eq_prop
   setattr(HasProp, eq_prop, eq)
 

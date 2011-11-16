@@ -17,6 +17,10 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
     if len(value) > 1:
       self._depends_on(value, '_columns', Reference.HARD)
 
+  def _build_dep_set (self, get_objects, get_ref, test=lambda x: True):
+    self._depends_on(self.table, '_table', Reference.AUTODROP)
+    return super()._build_dep_set(get_objects, get_ref, test)
+
   def _sql (self, fq=False, inline=False):
     parts = ['CONSTRAINT']
     name = self.name if fq else self.name.obj
@@ -175,8 +179,12 @@ class UniqueConstraint (HasProp('index_ownership'),
   @_HasIndex.index.setter
   def index (self, value):
     _assert_type(value, Index)
-    self._depends_on(value, '_index', Reference.AUTODROP
-                     if self.index_ownership else Reference.HARD)
+    if self.index_ownership:
+      value._depends_on(self, '_unique_constraint', Reference.AUTODROP)
+    else:
+      self._depends_on(value, '_index', Reference.HARD)
+    #self._depends_on(value, '_index', Reference.AUTODROP
+                     #if self.index_ownership else Reference.HARD)
     if self.index and not self.index.columns:
       # If our index has no columns it was likely created as part of an inline
       # constraint, so once the constraint is told its columns, it should pass

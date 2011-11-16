@@ -69,6 +69,7 @@ class Diff (object):
     self.dropping = None
     if priority == Diff.DROP and dependencies:
       self.dropping = dependencies
+      dependencies = None
     self._dependencies = make(set, dependencies)
     self.produces = make(set, produces)
 
@@ -105,10 +106,6 @@ class Diff (object):
 
   @property
   def dependencies (self):
-    #if self.dropping and self.dropping.name in ('PRECOG.TARGUS_ADDRESS',
-                                                #'PRECOG.TARGUS_STD_ADDRESS'):
-      #import pdb
-      #pdb.set_trace()
     other_deps = set()
     if self.produces:
       other_deps = {dep for product in self.produces
@@ -205,10 +202,6 @@ def order_diffs (diffs):
                     [a.pretty_name for a in autodroppers]))
 
         for d in autodroppers:
-          # Swap dependencies
-          #diff.add_dependencies(dropping[d])
-          #dropping[d]._dependencies.discard(diff)
-
           # The other diff "produces" this diff
           dropping[d].produces.add(diff)
         continue
@@ -239,22 +232,22 @@ def order_diffs (diffs):
   applicable_diffs.difference_update(unnecessary_creates)
 
 
-  #if log.isEnabledFor(logging.DEBUG):
-    #log.debug("All diffs:\n{}".format(pprint.pformat(
-      #{diff.pretty_name: {'sql': diff.sql,
-                          #'dependencies':
-                            #{dep.pretty_name for dep in diff._dependencies},
-                          #'produces': {product.pretty_name
-                                       #for product in diff.produces},
-                          #'dropping': diff.dropping and
-                            #diff.dropping.pretty_name,
-                          #'autodrop chain': diff.dropping and
-                            #{dep.pretty_name
-                                #for dep in diff.dropping
-                                  #.dependencies_with(Reference.AUTODROP)},
-                          #'created': diff.created
-                         #}
-      #for diff in diffs})))
+  if log.isEnabledFor(logging.DEBUG):
+    log.debug("All diffs:\n{}".format(pprint.pformat(
+      {diff.pretty_name: {'sql': diff.sql,
+                          'dependencies':
+                            {dep.pretty_name for dep in diff._dependencies},
+                          'produces': {product.pretty_name
+                                       for product in diff.produces},
+                          'dropping': diff.dropping and
+                            diff.dropping.pretty_name,
+                          'autodrop chain': diff.dropping and
+                            {dep.pretty_name
+                                for dep in diff.dropping
+                                  .dependencies_with(Reference.AUTODROP)},
+                          'created': diff.created
+                         }
+      for diff in diffs})))
 
   sort_by = (lambda x: x.priority + (10 if isinstance(x, PlsqlDiff) else 0)
              if isinstance(x, Diff) else 0)
