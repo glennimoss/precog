@@ -77,11 +77,12 @@ scope tab_col_ref { alias_map; table; columns }
 }
 
 sqlplus_file[database] returns [included_files]
-scope { included_files_ }
+scope { included_files_ ; next_obj_props }
 scope g;
 @init {
   $g::database = $database
   $sqlplus_file::included_files_ = []
+  $sqlplus_file::next_obj_props = InsensitiveDict()
 }
 @after {
   $included_files = $sqlplus_file::included_files_
@@ -94,7 +95,9 @@ scope g;
         ) {
             if $stmt.obj:
               $stmt.obj.create_location = create_location
+              $stmt.obj.props.update($sqlplus_file::next_obj_props)
               $g::database.add($stmt.obj)
+            $sqlplus_file::next_obj_props = InsensitiveDict()
           }
         | directive_stmt
         | (~( CREATE | INSERT | DIRECTIVE ))=> sqlplus_stmt
@@ -153,11 +156,21 @@ finally {
 }
 
 directive_stmt
+  : { self.input.add(NL_CHANNEL) }
+    DIRECTIVE
+    ( directive_ignore
+    | directive_option
+    )
+  ;
+finally {
+  self.input.drop(NL_CHANNEL)
+}
+
+directive_ignore
 @init {
   schema = False
 }
-  : { self.input.add(NL_CHANNEL) }
-    DIRECTIVE kIGNORE (kSCHEMA { schema = True })? i=identifier NL {
+  : kIGNORE (kSCHEMA { schema = True })? i=identifier NL {
       name = $i.ident
       if schema:
         $g::database.ignore_schema(name.obj)
@@ -165,9 +178,12 @@ directive_stmt
         $g::database.ignore(name)
     }
   ;
-finally {
-  self.input.drop(NL_CHANNEL)
-}
+
+directive_option
+  : OPTION o=ID {
+      $sqlplus_file::next_obj_props[$o.text] = True
+    }
+  ;
 
 identifier returns [ident]
   : first=ID ( DOT second=ID ( DOT third=ID )? )?
