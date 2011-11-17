@@ -35,7 +35,7 @@ class PlsqlCode (OracleObject):
 
     if not diffs:
       errors = other.errors(False)
-      if errors:
+      if errors or other.props['status'] != 'VALID':
         diffs.extend(self.rebuild())
 
     return diffs

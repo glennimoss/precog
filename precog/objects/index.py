@@ -81,7 +81,10 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
                            self.props['tablespace_name'].lower()),
                    produces=self)]
     else:
-      return super().diff(other, **kwargs)
+      diffs = super().diff(other, **kwargs)
+      if not diffs and other.props['status'] != 'VALID':
+        return self.rebuild()
+      return diffs
 
   @classmethod
   def from_db (class_, schema, into_database):
@@ -89,6 +92,7 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
                            , index_type
                            , uniqueness
                            , tablespace_name
+                           , status
                            , CURSOR(
                                SELECT table_owner
                                     , table_name
@@ -134,7 +138,7 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
         continue
 
       yield class_(index_name, columns=columns, index_type=index_type,
-                   uniqueness=row['uniqueness'],
+                   uniqueness=row['uniqueness'], status=row['status'],
                    tablespace_name=row['tablespace_name'],
                    database=into_database, create_location=(db.location,))
     rs.close()
