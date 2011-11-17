@@ -487,7 +487,7 @@ class Database (HasLog):
     return diffs
 
   @classmethod
-  def dump_schema (class_, connection_string, schema_name):
+  def dump_schema (class_, connection_string, schema_name, tables=None):
     db.connect(connection_string)
 
     oracle_database = Database()
@@ -496,9 +496,16 @@ class Database (HasLog):
     db_schema = Schema(schema_name, database=oracle_database)
     oracle_database.add(db_schema)
 
-    Schema.from_db(db_schema)
+    if tables:
+      for table in tables:
+        table = db_schema.find(table, Table)
+        Data.from_db(table)
+        diffs.append(Diff([datum.sql(fq=False) for datum in table.data],
+                          produces=set(table.data)))
+    else:
+      Schema.from_db(db_schema)
 
-    diffs = db_schema.diff(Schema(schema_name))
+      diffs = db_schema.diff(Schema(schema_name))
 
     if diffs:
       diffs = order_diffs(diffs)

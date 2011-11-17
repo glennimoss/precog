@@ -46,6 +46,8 @@ parser.add_argument('--schema',
     help='Schema name for unqualified object names. Defaults to <username>.')
 parser.add_argument('--dump', action='store_true',
     help='Dump specified schema.')
+parser.add_argument('-t', '--table', action='append',
+                    help='Specify a table name to dump its data.')
 
 # User-input options
 prompt_group = parser.add_mutually_exclusive_group()
@@ -142,7 +144,7 @@ try:
           file=sys.stderr)
 
   elif args.dump:
-    diffs = Database.dump_schema(args.connect_string, schema_name)
+    diffs = Database.dump_schema(args.connect_string, schema_name, args.table)
     print("\n\n".join(str(diff) for diff in diffs))
 
 except PrecogError as e:

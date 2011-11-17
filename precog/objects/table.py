@@ -44,21 +44,15 @@ class Data (HasColumns, OracleObject):
                         if tup[1] is not None))
 
   def values (self, normalize=False):
-    vals = self.expressions
-    if normalize:
-      vals = [int(val) if isinstance(val, float) and val.is_integer() else val
-              for val in self.expressions]
-
-
     return InsensitiveDict(zip((col.name.part.lower() for col in self.columns),
-                               vals))
+                               self.expressions))
 
   def _sql (self, fq=True):
     table_name = self.table.name
     if not fq:
       table_name = table_name.obj
     values = self.values(True)
-    return "INSERT INTO {} ({}) VALUES ({})".format(self.table.name.lower(),
+    return "INSERT INTO {} ({}) VALUES ({})".format(table_name.lower(),
       ", ".join(values.keys()), ", ".join(str(val) for val in values.values()))
 
   def _drop (self):
