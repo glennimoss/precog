@@ -245,7 +245,6 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
                 "has scale too small for data found. (Min scale {})"
                                  .format(max_data_scale))
           copypasta = True
-          data_type_change = True
         elif 'char_used' == prop:
           data_type_change = True
         elif 'nullable' == prop:
@@ -267,37 +266,34 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
         elif 'expression' == prop:
           data_type_change = True
 
-      before = None
-      after = None
+      modify_diffs = []
       if copypasta:
         has_data = db.query_one(""" SELECT COUNT({}) AS has_data
                                     FROM {}
                                 """.format(other.name.part,
                                            other.table.name))['has_data']
         if has_data:
-          temp_col = GeneratedId()
-          before = Diff(["ALTER TABLE {} ADD ({}$$ {})"
-                         .format(other.table.name, temp_col,
-                                 # If the column is virtual, we want the temp
-                                 # column to be real, with whatever datatype
-                                 # it has
-                                 Column._data_type_sql(other)),
-                         "UPDATE {} SET {}$$ = {}{}"
-                         .format(other.table.name, temp_col, other.name.part,
-                                 ", {} = NULL".format(other.name.part)
-                                 if not isinstance(other, VirtualColumn)
-                                 else ''),
-                        'COMMIT'],
-                        other, priority=Diff.ALTER)
-          after = Diff(["UPDATE {} SET {} = {}$$"
-                        .format(self.table.name, self.name.part, temp_col),
-                        'COMMIT',
-                        "ALTER TABLE {} DROP ({}$$)"
-                        .format(self.table.name, temp_col)],
-                       self, priority=Diff.ALTER)
+          other_table_name = other.table.name.lower()
+          temp_col = "{}$$".format(GeneratedId().lower())
+          teardown = other.teardown()
+          create = self.create()
+          create.sql.insert(0, "ALTER TABLE {} RENAME COLUMN {} TO {}"
+                            .format(other_table_name, other.name.lower(),
+                                    temp_col))
+          create.sql.extend(["UPDATE {} SET {} = {}"
+                            .format(other_table_name, self.name.part.lower(),
+                                    temp_col),
+                            'COMMIT',
+                            "ALTER TABLE {} DROP ({})".format(other_table_name,
+                                                             temp_col)])
+          creates = other.build_up()
+          creates.append(create)
 
-      modify_diffs = []
-      if recreate:
+          for diff in creates:
+            diff.add_dependencies(teardown)
+          modify_diffs.extend(teardown)
+          modify_diffs.extend(creates)
+      elif recreate:
         modify_diffs.extend(self.recreate(other))
       else:
         modify_clauses = []
@@ -320,18 +316,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
                                            self._sql(full_def=False),
                                            " ".join(modify_clauses)),
                                    produces=self))
-
-      if modify_diffs:
-        if before:
-          for diff in modify_diffs:
-            diff.add_dependencies(before)
-          diffs.append(before)
-
-        if after:
-          after.add_dependencies(modify_diffs)
-          diffs.append(after)
-
-        diffs.extend(modify_diffs)
+      diffs.extend(modify_diffs)
 
     return diffs
 

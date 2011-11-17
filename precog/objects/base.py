@@ -123,8 +123,12 @@ class OracleObject (HasLog):
     for ref in self._referenced_by:
       self.log.debug(ref)
     return [diff for ref in self._referenced_by
-              if ref.integrity is not Reference.SOFT
+              if ref.integrity != Reference.SOFT
             for diff in ref.from_.drop()]
+
+  def build_up (self):
+    return [ref.from_.create() for ref in self._referenced_by
+            if ref.integrity != Reference.SOFT]
 
   def _drop (self):
     return Diff("DROP {} {}".format(self.type, self.name.lower()), self,
@@ -135,10 +139,9 @@ class OracleObject (HasLog):
     Recreate this object from scratch. Usually means a drop and a create.
     """
     drop, *diffs = other.drop()
-    creates = [diff for ref in self._referenced_by
-                 if ref.integrity in (Reference.AUTODROP, Reference.HARD)
-               for diff in ref.from_.create()]
-    creates.extend(self.create())
+    create = self.create()
+    creates = self.build_up()
+    creates.append(create)
     for diff in creates:
       diff.add_dependencies(drop)
     diffs.append(drop)
