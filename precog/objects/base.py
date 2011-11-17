@@ -232,13 +232,32 @@ class OracleObject (HasLog):
                        rename=True):
     diffs = []
 
-    target_objs = get_objects(self)
-    current_objs = get_objects(other)
+    targets = get_objects(self)
+    currents = get_objects(other)
 
-    if not isinstance(target_objs, dict):
-      target_objs = {label(obj): obj for obj in target_objs}
-    if not isinstance(current_objs, dict):
-      current_objs = {label(obj): obj for obj in current_objs}
+    target_dups = {}
+    if not isinstance(targets, dict):
+      target_objs = {}
+      for obj in targets:
+        key = label(obj)
+        if key in target_objs:
+          target_dups.setdefault(key, []).append(obj)
+        else:
+          target_objs[key] = obj
+
+    else:
+      target_objs = targets
+    current_dups = {}
+    if not isinstance(currents, dict):
+      current_objs = {}
+      for obj in currents:
+        key = label(obj)
+        if key in current_objs:
+          current_dups.setdefault(key, []).append(obj)
+        else:
+          current_objs[key] = obj
+    else:
+      current_objs = currents
 
     ignores = self.database.ignores() | other.database.ignores()
     filter = lambda d: {name: obj for name, obj in d.items()
@@ -278,24 +297,51 @@ class OracleObject (HasLog):
       obj_type = obj_type.namespace
     pretty_type = obj_type.pretty_type
 
+    add_dups = []
+    drop_dups = []
     if addobjs:
       self.log.debug("  Adding {} {}s: {}".format(len(addobjs), pretty_type,
         ", ".join(target_objs[obj].pretty_name for obj in addobjs)))
-      diffs.extend(
-          other.add_subobjects(target_objs[addobj] for addobj in addobjs))
+      objs = []
+      for addobj in addobjs:
+        if addobj in target_dups:
+          add_dups.append(target_objs[addobj])
+          add_dups.extend(target_dups[addobj])
+        else:
+          objs.append(target_objs[addobj])
+      diffs.extend(other.add_subobjects(objs))
     if dropobjs:
       self.log.debug("  Dropping {} {}s: {}".format(len(dropobjs), pretty_type,
         ", ".join(current_objs[obj].pretty_name for obj in dropobjs)))
-      diffs.extend(
-          other.drop_subobjects(current_objs[dropobj] for dropobj in dropobjs))
+      objs = []
+      for dropobj in dropobjs:
+        if dropobj in current_dups:
+          drop_dups.append(current_objs[dropobj])
+          drop_dups.extend(current_dups[dropobj])
+        else:
+          objs.append(current_objs[dropobj])
+      diffs.extend(other.drop_subobjects(objs))
 
-    for target_obj in target_objs.values():
-      if target_obj.name in current_objs:
+    for obj_label, target_obj in target_objs.items():
+      if obj_label in current_objs:
         try:
-          obj_diffs = target_obj.diff(current_objs[target_obj.name])
+          obj_diffs = target_obj.diff(current_objs[obj_label])
           modify_diffs.extend(obj_diffs)
+
+          dup_diff = (len(target_dups.get(obj_label, [])) -
+                      len(current_dups.get(obj_label, [])))
+          if dup_diff > 0:
+            add_dups.extend(target_dups[obj_label][:dup_diff])
+          elif dup_diff < 0:
+            drop_dups.extend(current_dups[obj_label][:-dup_diff])
+
         except DataConflict as e:
           self.log.warn(e)
+
+    if add_dups:
+      diffs.extend(other.add_dup_subobjects(add_dups))
+    if drop_dups:
+      diffs.extend(other.drop_dup_subobjects(drop_dups))
 
     if modify_diffs:
       self.log.debug("  {} modifications for {}s".format(
@@ -309,6 +355,12 @@ class OracleObject (HasLog):
 
   def drop_subobjects (self, subobjects):
     return [diff for obj in subobjects for diff in obj.drop()]
+
+  def add_dup_subobjects (self, subobjects):
+    return self.add_subobjects(subobjects)
+
+  def drop_dup_subobjects (self, subobjects):
+    return self.drop_subobjects(subobjects)
 
   def _depends_on (self, other, prop_name, integrity=Reference.HARD):
     old_dep = None

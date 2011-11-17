@@ -16,6 +16,9 @@ create unique index baz_fnidx2 on baz ( round(a + b + c));
 create index foo_virtidx on foo (id_len);
 
 insert into baz (fizz, a, e) values ('foo0', 9, '100.00');
+insert into baz (fizz, a, e) values ('foo0', 9, '100.00');
+insert into baz (fizz, a, e) values ('foo0', 9, '100.00');
+insert into baz (fizz, a, e) values ('foo0', 9, '100.00');
 insert into baz (fizz, a, f, e) values ('foo1', 9, 'bar', 101.00);
 insert into baz (fizz, a, e, g)
   values ('foo2', 9, 102.010, ' 2010-01-01    19:12:13.0');

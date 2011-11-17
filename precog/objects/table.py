@@ -141,10 +141,46 @@ class _HasData (_HasData_):
     if self.data:
       Data.from_db(other)
 
-    inserts = self.diff_subobjects(other, lambda o: o.data, lambda o: o._comp())
+    inserts = self.diff_subobjects(other, lambda o: o.data, lambda o: o._comp(),
+                                  rename=False)
     if inserts:
       diffs.extend(inserts)
       diffs.append(Commit(inserts))
+
+    return diffs
+
+  def _collect_dups (self, objs):
+    dups = {}
+    for dup in objs:
+      dups.setdefault(dup._comp(), [dup, 0])[1] += 1
+
+    return dups
+
+  def add_dup_subobjects (self, subobjects):
+    if not isinstance(subobjects[0], Data):
+      return super().add_dup_subobjects(subobjects)
+
+    dups = self._collect_dups(subobjects)
+
+    diffs = []
+    for dup, count in dups.values():
+      create = dup.create()
+      create.sql *= count
+      diffs.append(create)
+
+    return diffs
+
+  def drop_dup_subobjects (self, subobjects):
+    if not isinstance(subobjects[0], Data):
+      return super().drop_dup_subobjects(subobjects)
+
+    dups = self._collect_dups(subobjects)
+
+    diffs = []
+    for dup, count in dups.values():
+      drop = dup._drop()
+      drop.sql[0] += " AND ROWNUM < {}".format(count + 1)
+      diffs.append(drop)
 
     return diffs
 
