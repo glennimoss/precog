@@ -1,4 +1,4 @@
-import itertools
+import datetime, itertools, re
 
 from precog import db
 from precog.diff import Commit, Diff
@@ -23,7 +23,7 @@ class Data (HasColumns, OracleObject):
     self.table = table
     self.expressions = []
     for i, exp in enumerate(expressions):
-      exp = Data.numerify(exp, self.columns[i].is_number)
+      exp = Data.parse(exp, self.columns[i])
       self.expressions.append(exp)
 
   def __eq__ (self, other):
@@ -47,18 +47,30 @@ class Data (HasColumns, OracleObject):
     return InsensitiveDict(zip((col.name.part.lower() for col in self.columns),
                                self.expressions))
 
+  @staticmethod
+  def format (value):
+    if isinstance(value, datetime.datetime):
+      if value.microsecond:
+        fmt = "TO_TIMESTAMP('{}', 'YYYY-MM-DD HH24:MI:SS.FF')"
+      else:
+        fmt = "TO_DATE('{}', 'YYYY-MM-DD HH24:MI:SS')"
+      return fmt.format(value)
+    return str(value)
+
   def _sql (self, fq=True):
     table_name = self.table.name
     if not fq:
       table_name = table_name.obj
     values = self.values(True)
+
     return "INSERT INTO {} ({}) VALUES ({})".format(table_name.lower(),
-      ", ".join(values.keys()), ", ".join(str(val) for val in values.values()))
+      ", ".join(values.keys()), ", ".join(Data.format(val)
+                                          for val in values.values()))
 
   def _drop (self):
     return Diff("DELETE FROM {} WHERE {}".format(
       self.table.name.lower(), " AND ".join(
-        " = ".join((col, str(val)))
+        " = ".join((col, Data.format(val)))
         if val is not None else "{} IS NULL".format(col)
         for col, val in self.values(True).items())))
 
@@ -66,26 +78,42 @@ class Data (HasColumns, OracleObject):
     return []
 
   @staticmethod
-  def numerify (value, col_is_number):
+  def parse (value, column):
     if isinstance(value, str):
-      if col_is_number or not (value.startswith("'") and value.endswith("'")):
+      if column.is_number or not (value.startswith("'") and
+                                  value.endswith("'")):
         val = value.strip("'")
         try:
           num = float(val)
           if num.is_integer():
             num = int(num)
-          if not col_is_number:
+          if not column.is_number:
             num = "'{}'".format(num)
           return num
         except ValueError:
           pass
+      if column.is_datetime:
+        date = re.match(r"^'\s*(\d{4}(.)\d{2}\2\d{2})\s*"
+                        r"(\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?)?\s*'$", value)
+        if date:
+          date_parts = date.groups()
+          datestr = "{0} {2}".format(*date_parts).strip()
+          formatstr = ["%Y{0}%m{0}%d".format(date_parts[1])]
+          if date_parts[2]:
+            formatstr.append(" %H:%M")
+          if date_parts[3]:
+            formatstr.append(":%S")
+          if date_parts[4]:
+            formatstr.append(".%f")
+          formatstr = "".join(formatstr)
+          return datetime.datetime.strptime(datestr, formatstr)
     return value
 
   @staticmethod
-  def escape (value, col_is_number):
+  def escape (value, column):
     if isinstance(value, str):
       return "'{}'".format(value.replace("'", "''"))
-    return Data.numerify(value, col_is_number)
+    return Data.parse(value, column)
 
   @classmethod
   def from_db (class_, table):
@@ -100,7 +128,7 @@ class Data (HasColumns, OracleObject):
           for column_name in rs[0]]
 
         for row in rs:
-          table.add_data(columns, [Data.escape(col, columns[i].is_number)
+          table.add_data(columns, [Data.escape(col, columns[i])
                                    for i, col in enumerate(row.values())])
 
 _HasData_ = HasProp('data', assert_collection=list, assert_type=Data)

@@ -19,6 +19,8 @@ _is_nchar = re.compile('N(VAR)?CHAR', re.I)
 _valid_string_type = re.compile('^(N)?(VAR)?CHAR(2)?$', re.I)
 _is_string_type = lambda data_type: _valid_string_type.match(data_type)
 _is_number_type = lambda data_type: data_type in ('NUMBER', 'FLOAT')
+_is_dateish_type = lambda data_type: ('DATE' == data_type or
+                                      data_type.startswith('TIMESTAMP'))
 
 class _HasTable (HasProp('table', dependency=Reference.AUTODROP)):
 
@@ -98,6 +100,10 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
   @property
   def is_number (self):
     return _is_number_type(self.props['data_type'])
+
+  @property
+  def is_datetime (self):
+    return _is_dateish_type(self.props['data_type'])
 
   @property
   def _is_pk (self):
