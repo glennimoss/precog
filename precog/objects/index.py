@@ -13,12 +13,19 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
 
   @HasColumns.columns.setter
   def columns (self, value):
-    from precog.objects.column import VirtualColumn
     HasColumns.columns.__set__(self, value)
     if (self.props['index_type'] and
-        [col for col in self.columns if isinstance(col, VirtualColumn)]):
+        [col for col in self.columns if col.is_virtual]):
       self.props['index_type'] = "FUNCTION-BASED {}".format(
         self.props['index_type'].split()[-1])
+
+  @OracleObject.dependencies.getter
+  def dependencies (self):
+    deps = OracleObject.dependencies.__get__(self)
+    deps |= {subdep for dep in self.columns
+             if hasattr(dep, 'expression')
+             for subdep in dep.expression.references if subdep != self}
+    return deps
 
   def dependencies_with (self, integrity):
     deps = super().dependencies_with(integrity)
