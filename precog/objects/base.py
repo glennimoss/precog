@@ -309,7 +309,7 @@ class OracleObject (HasLog):
           add_dups.extend(target_dups[addobj])
         else:
           objs.append(target_objs[addobj])
-      diffs.extend(other.add_subobjects(objs))
+      diffs.extend(self.add_subobjects(objs))
     if dropobjs:
       self.log.debug("  Dropping {} {}s: {}".format(len(dropobjs), pretty_type,
         ", ".join(current_objs[obj].pretty_name for obj in dropobjs)))
@@ -320,7 +320,7 @@ class OracleObject (HasLog):
           drop_dups.extend(current_dups[dropobj])
         else:
           objs.append(current_objs[dropobj])
-      diffs.extend(other.drop_subobjects(objs))
+      diffs.extend(self.drop_subobjects(objs))
 
     for obj_label, target_obj in target_objs.items():
       if obj_label in current_objs:
@@ -339,9 +339,9 @@ class OracleObject (HasLog):
           self.log.warn(e)
 
     if add_dups:
-      diffs.extend(other.add_dup_subobjects(add_dups))
+      diffs.extend(self.add_dup_subobjects(add_dups))
     if drop_dups:
-      diffs.extend(other.drop_dup_subobjects(drop_dups))
+      diffs.extend(self.drop_dup_subobjects(drop_dups))
 
     if modify_diffs:
       self.log.debug("  {} modifications for {}s".format(

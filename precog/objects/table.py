@@ -170,13 +170,26 @@ class _HasData (_HasData_):
 
     return diffs
 
+  def drop_subobjects (self, subobjects):
+    if self.props['partial_data']:
+      subobjects = [o for o in subobjects if not isinstance(o, Data)]
+    return super().drop_subobjects(subobjects)
+
   def drop_dup_subobjects (self, subobjects):
-    if not isinstance(subobjects[0], Data):
-      return super().drop_dup_subobjects(subobjects)
-
-    dups = self._collect_dups(subobjects)
-
     diffs = []
+
+    not_data = []
+    data = []
+    for obj in subobjects:
+      if isinstance(subobjects[0], Data) and not self.props['partial_data']:
+        data.append(obj)
+      else:
+        not_data.append(obj)
+    if not_data:
+      diffs.extend(super().drop_dup_subobjects(subobjects))
+
+    dups = self._collect_dups(data)
+
     for dup, count in dups.values():
       drop = dup._drop()
       drop.sql[0] += " AND ROWNUM < {}".format(count + 1)

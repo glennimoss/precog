@@ -22,3 +22,13 @@ insert into baz (fizz, a, e) values ('foo0', 9, '100.00');
 insert into baz (fizz, a, f, e) values ('foo1', 9, 'bar', 101.00);
 insert into baz (fizz, a, e, g)
   values ('foo2', 9, 102.010, ' 2010-01-01    19:12:13.0');
+
+--@ option partial_data
+CREATE TABLE static_with_dynamic
+  ( n NUMBER CONSTRAINT static_with_dynamic_pk PRIMARY KEY
+  );
+
+INSERT INTO static_with_dynamic (n) VALUES (1);
+INSERT INTO static_with_dynamic (n) VALUES (2);
+INSERT INTO static_with_dynamic (n) VALUES (3);
+INSERT INTO static_with_dynamic (n) VALUES (4);
