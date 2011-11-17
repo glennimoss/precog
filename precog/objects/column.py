@@ -227,6 +227,9 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
         max_data_precision = rs['max_data_precision']
         max_data_scale = rs['max_data_scale']
       for prop, (expected, other_prop) in prop_diff.items():
+        if expected is None:
+          continue
+
         if 'data_type' == prop:
           data_type_change = True
           if not (_is_char.match(other_prop) and
@@ -249,6 +252,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
             if expected < (other_prop or 38):
               copypasta = True
         elif 'data_scale' == prop:
+          data_type_change = True
           if max_data_scale:
             if max_data_scale > expected:
               raise DataConflict(self,
@@ -303,29 +307,31 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
             diff.add_dependencies(teardown)
           modify_diffs.extend(teardown)
           modify_diffs.extend(creates)
-      elif recreate:
-        modify_diffs.extend(self.recreate(other))
-      else:
-        modify_clauses = []
-        if data_type_change:
-          # Data type must always come directly after the name
-          modify_clauses.append(self._data_type_sql())
 
-        if data_default_change:
-          modify_clauses.append(
-            "DEFAULT {}".format(self.data_default or 'NULL'))
+      if not modify_diffs:
+        if recreate:
+          modify_diffs.extend(self.recreate(other))
+        else:
+          modify_clauses = []
+          if data_type_change:
+            # Data type must always come directly after the name
+            modify_clauses.append(self._data_type_sql())
 
-        if nullable is not None and not self._is_pk:
-          if not nullable:
-            modify_clauses.append('NOT')
-          modify_clauses.append('NULL')
+          if data_default_change:
+            modify_clauses.append(
+              "DEFAULT {}".format(self.data_default or 'NULL'))
 
-        if modify_clauses:
-          modify_diffs.append(Diff("ALTER TABLE {} MODIFY ( {} {} )"
-                                   .format(other.table.name.lower(),
-                                           self._sql(full_def=False),
-                                           " ".join(modify_clauses)),
-                                   produces=self))
+          if nullable is not None and not self._is_pk:
+            if not nullable:
+              modify_clauses.append('NOT')
+            modify_clauses.append('NULL')
+
+          if modify_clauses:
+            modify_diffs.append(Diff("ALTER TABLE {} MODIFY ( {} {} )"
+                                     .format(other.table.name.lower(),
+                                             self._sql(full_def=False),
+                                             " ".join(modify_clauses)),
+                                     produces=self))
       diffs.extend(modify_diffs)
 
     return diffs
