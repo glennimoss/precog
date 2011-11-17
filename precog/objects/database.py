@@ -499,6 +499,10 @@ class Database (HasLog):
     if tables:
       for table in tables:
         table = db_schema.find(table, Table)
+        for col in Column.from_db(table.name.schema, oracle_database,
+                                  table.name.obj):
+          db_schema.add(col)
+
         Data.from_db(table)
         diffs.append(Diff([datum.sql(fq=False) for datum in table.data],
                           produces=set(table.data)))

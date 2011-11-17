@@ -106,6 +106,10 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
     return _is_dateish_type(self.props['data_type'])
 
   @property
+  def is_virtual (self):
+    return isinstance(self, VirtualColumn)
+
+  @property
   def _is_pk (self):
     for ref in self._referenced_by:
       if isinstance(ref.from_, UniqueConstraint) and ref.from_.is_pk:
@@ -327,7 +331,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
     return diffs
 
   @classmethod
-  def from_db (class_, schema, into_database):
+  def from_db (class_, schema, into_database, table_name=None):
     rs = db.query(""" SELECT table_name
                            , column_name
                            , qualified_col_name
@@ -357,10 +361,11 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
                              ) AS constraints
                       FROM dba_tab_cols dtc
                       WHERE owner = :o
-                  """, o=schema, oracle_names=['table_name', 'column_name',
-                                               'qualified_col_name',
-                                               'constraint_name',
-                                               'data_type_owner', 'data_type'])
+                        AND (:t IS NULL OR table_name = :t)
+                  """, o=schema, t=table_name,
+                  oracle_names=['table_name', 'column_name',
+                                'qualified_col_name', 'constraint_name',
+                                'data_type_owner', 'data_type'])
     for row in rs:
       (_, table_name), (_, col_name), *props, (_, constraints) = row.items()
       props = dict(props)

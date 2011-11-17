@@ -43,9 +43,10 @@ class Data (HasColumns, OracleObject):
     return tuple(sorted(tup for tup in self.values().items()
                         if tup[1] is not None))
 
-  def values (self, normalize=False):
-    return InsensitiveDict(zip((col.name.part.lower() for col in self.columns),
-                               self.expressions))
+  def values (self):
+    return InsensitiveDict((col.name.part.lower(), value)
+                           for col, value in zip(self.columns, self.expressions)
+                           if not col.is_virtual)
 
   @staticmethod
   def format (value):
@@ -61,7 +62,7 @@ class Data (HasColumns, OracleObject):
     table_name = self.table.name
     if not fq:
       table_name = table_name.obj
-    values = self.values(True)
+    values = {col: val for col, val in self.values().items() if val is not None}
 
     return "INSERT INTO {} ({}) VALUES ({})".format(table_name.lower(),
       ", ".join(values.keys()), ", ".join(Data.format(val)
@@ -72,7 +73,7 @@ class Data (HasColumns, OracleObject):
       self.table.name.lower(), " AND ".join(
         " = ".join((col, Data.format(val)))
         if val is not None else "{} IS NULL".format(col)
-        for col, val in self.values(True).items())))
+        for col, val in self.values().items())))
 
   def diff (self, other, **kwargs):
     return []
