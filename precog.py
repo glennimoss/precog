@@ -125,7 +125,8 @@ try:
               unapplied_diffs.append(diff)
               if diff.produces:
                 errored_objs.update(diff.produces)
-              errors += 1
+              if diff.priority:
+                errors += 1
           if errors:
             print("\nUnable to apply {}.".format(pluralize(errors, 'change')),
                   file=sys.stderr)
