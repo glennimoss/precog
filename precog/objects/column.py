@@ -154,12 +154,9 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
             for product in cons.sql_produces} | {self}
 
   def create (self):
-    diffs = [Diff("ALTER TABLE {} ADD ( {} )".format(self.table.name.lower(),
-                                                     self.sql()),
-                  produces=self.sql_produces, priority=Diff.CREATE)]
-    #diffs.extend(diff for cons in self.unique_constraints
-                 #for diff in cons.create())
-    return diffs
+    return Diff("ALTER TABLE {} ADD ( {} )".format(self.table.name.lower(),
+                                                   self.sql()),
+                produces=self.sql_produces, priority=Diff.CREATE)
 
   def _drop (self):
     return Diff("ALTER TABLE {} DROP ( {} )".format(self.table.name.lower(),

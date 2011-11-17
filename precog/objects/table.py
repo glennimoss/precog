@@ -188,20 +188,19 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
 
   @property
   def sql_produces (self):
-    return ({product for col in self.columns
-             for product in col.sql_produces} |
-            {product for cons in self.constraints
-             for product in cons.sql_produces} | {self})
+    return {self}.union(product for obj in itertools.chain(self.columns,
+                                                           self.constraints,
+                                                           self.data)
+                        for product in obj.sql_produces)
 
   def create (self):
-    diffs = super().create()
+    diff = super().create()
 
     if self.data:
-      diffs.append(Diff([datum.sql() for datum in self.data] + ['COMMIT'],
-                        produces={obj for datum in self.data
-                                  for obj in datum.sql_produces},
-                        priority=Diff.CREATE))
-    return diffs
+      diff.sql.extend(datum.sql() for datum in self.data)
+      diff.sql.append('COMMIT')
+
+    return diff
 
   def diff (self, other, **kwargs):
     diffs = super().diff(other, recreate=False, **kwargs)

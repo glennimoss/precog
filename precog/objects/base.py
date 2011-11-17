@@ -104,16 +104,16 @@ class OracleObject (HasLog):
     return {self}
 
   def create (self):
-    return [Diff(self.sql(), produces=self.sql_produces, priority=Diff.CREATE)]
+    return Diff(self.sql(), produces=self.sql_produces, priority=Diff.CREATE)
 
   def drop (self):
     self.log.debug("Dropping {}".format(self.pretty_name))
     drop = self._drop()
-    ref_diffs = self.teardown(drop=True)
+    ref_diffs = self.teardown()
     drop.add_dependencies(ref_diffs)
     return [drop] + ref_diffs
 
-  def teardown (self, drop=False):
+  def teardown (self):
     """
     Disable or drop all depdendent objects. This is necessary in certain
     circumstances when modifying an object.
@@ -302,7 +302,7 @@ class OracleObject (HasLog):
     return diffs
 
   def add_subobjects (self, subobjects):
-    return [diff for obj in subobjects for diff in obj.create()]
+    return [obj.create() for obj in subobjects]
 
   def drop_subobjects (self, subobjects):
     return [diff for obj in subobjects for diff in obj.drop()]

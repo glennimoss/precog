@@ -41,12 +41,9 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                                      for col in self.columns))
 
   def create (self):
-    try:
-      return [Diff("ALTER TABLE {} ADD {}"
-                   .format(self.table.name.lower(), self.sql()),
-                   produces=self.sql_produces, priority=Diff.CREATE)]
-    except Exception as e:
-      self.log.error("{} had this problem: {}".format(self.pretty_name, e))
+    return Diff("ALTER TABLE {} ADD {}".format(self.table.name.lower(),
+                                               self.sql()),
+                produces=self.sql_produces, priority=Diff.CREATE)
 
   def _drop (self):
     return Diff("ALTER TABLE {} DROP CONSTRAINT {}"
