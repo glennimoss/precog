@@ -24,19 +24,11 @@ class PlsqlCode (OracleObject):
     return class_(name, source=source, **props)
 
   def _sql (self, fq=True):
-    name = self.name
-    if not fq:
-      name = self.name.obj
-
-    return "CREATE OR REPLACE {}".format(self.props['source'])
-    # TODO: forcing is probably dangerous if it's being used in an actual table.
-    #parts = re.split(r'\b(is|as)\b', self.props['source'], 1, re.I)
-    #parts.insert(1, 'FORCE ')
-    #parts.insert(0, 'CREATE OR REPLACE ')
-    #return "".join(parts)
+    return self.props['source']
 
   def create (self):
-    return [PlsqlDiff(self.sql(), produces=self, priority=Diff.CREATE)]
+    return [PlsqlDiff("CREATE OR REPLACE {}".format(self.sql()), produces=self,
+                      priority=Diff.CREATE)]
 
   def diff (self, other, **kwargs):
     diffs = super().diff(other, **kwargs)

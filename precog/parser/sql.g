@@ -107,46 +107,12 @@ scope { type; name; props }
   $plsql_stmt::props = InsensitiveDict()
 }
 @after {
-  $obj = PlsqlCode.new($plsql_stmt::type, $plsql_stmt::name, $source.text,
-                       database=$g::database, **$plsql_stmt::props)
+  $obj = $plsql_stmt::type($plsql_stmt::name, source=$source.text,
+                           database=$g::database, **$plsql_stmt::props)
 }
   : CREATE (OR kREPLACE)? source=plsql_object_def
     TERMINATOR
   ;
-
-plsql_object_def
-@after {
-  if $pb.text or $tb.text:
-    # This is a body, so it depends on its header.
-    header_type = Package if $pb.text else Type
-    $plsql_stmt::props['header'] = $g::database.find($i.ident, header_type)
-}
-  : ( kFUNCTION { $plsql_stmt::type = 'FUNCTION' }
-    | PROCEDURE { $plsql_stmt::type = 'PROCEDURE' }
-    | kPACKAGE pb=kBODY?
-      {
-        $plsql_stmt::type = "PACKAGE{}".format(' BODY' if $pb.text else '')
-      }
-    | TRIGGER { $plsql_stmt::type = 'TRIGGER' }
-    | kTYPE tb=kBODY?
-      { $plsql_stmt::type = "TYPE{}".format(' BODY' if $tb.text else '') }
-    )
-    i=identifier { $plsql_stmt::name = $i.ident }
-    ( { $plsql_stmt::type in ('FUNCTION', 'PROCEDURE') }?
-      LPAREN ~RPAREN* RPAREN
-    )?
-    ( { $plsql_stmt::type == 'FUNCTION' }?
-      kRETURN data_type[False]
-      kDETERMINISTIC?
-      kPIPELINED?
-    | // nothing
-    )
-    ( { $plsql_stmt::type != 'TRIGGER' }? ( IS | AS )
-    | { $plsql_stmt::type == 'TRIGGER' }? ( BEFORE | AFTER | INSTEAD | FOR)
-    )
-    ( (~TERMINATOR)=> ~TERMINATOR )+
-  ;
-
 
 sql_stmt returns [obj]
   : ( stmt_=create_table { $obj = $stmt_.obj }
@@ -758,6 +724,81 @@ scope tab_col_ref;
 
 insert_expression
   : exp=expression { $insert_statement::expressions.append($exp.text) }
+  ;
+
+plsql_object_def
+  : plsql_function
+  | plsql_procedure
+  | plsql_trigger
+  | plsql_package
+  | plsql_package_body
+  | plsql_type
+  | plsql_type_body
+  ;
+
+plsql_function
+  : kFUNCTION { $plsql_stmt::type = Function }
+    i=identifier { $plsql_stmt::name = $i.ident }
+    LPAREN ~RPAREN* RPAREN
+    kRETURN data_type[False]
+    kDETERMINISTIC?
+    kPIPELINED?
+    ( IS | AS )
+    ( (~TERMINATOR)=> ~TERMINATOR )+
+  ;
+
+plsql_procedure
+  : PROCEDURE { $plsql_stmt::type = Procedure }
+    i=identifier { $plsql_stmt::name = $i.ident }
+    LPAREN ~RPAREN* RPAREN
+    ( IS | AS )
+    ( (~TERMINATOR)=> ~TERMINATOR )+
+  ;
+
+plsql_trigger
+  : TRIGGER { $plsql_stmt::type = Trigger }
+    i=identifier { $plsql_stmt::name = $i.ident }
+    ( BEFORE | AFTER | INSTEAD | FOR )
+    ( (~TERMINATOR)=> ~TERMINATOR )+
+  ;
+
+plsql_package
+  : kPACKAGE { $plsql_stmt::type = Package }
+    i=identifier { $plsql_stmt::name = $i.ident }
+    ( IS | AS )
+    ( (~TERMINATOR)=> ~TERMINATOR )+
+  ;
+
+plsql_package_body
+  : kPACKAGE kBODY { $plsql_stmt::type = PackageBody }
+    i=identifier { $plsql_stmt::name = $i.ident }
+    ( IS | AS )
+    ( (~TERMINATOR)=> ~TERMINATOR )+
+  ;
+
+plsql_type
+  : kTYPE { $plsql_stmt::type = Type }
+    i=identifier { $plsql_stmt::name = $i.ident }
+    ( IS | AS )
+    ( kOBJECT ( (~TERMINATOR)=> ~TERMINATOR )+
+    | ( kVARRAY size=int_parameter {
+          $plsql_stmt::props['collection_type'] = "VARRAY({})".format($size.val)
+        }
+      | TABLE {
+          $plsql_stmt::props['collection_type'] = 'TABLE'
+        }
+      )
+      OF dt=data_type[True] ( NOT NULL { $dt.props['nullable'] = 'N' } )?
+      { $plsql_stmt::props.update($dt.props) }
+      SEMI?
+    )
+  ;
+
+plsql_type_body
+  : kTYPE kBODY { $plsql_stmt::type = TypeBody }
+    i=identifier { $plsql_stmt::name = $i.ident }
+    ( IS | AS )
+    ( (~TERMINATOR)=> ~TERMINATOR )+
   ;
 
 /*
@@ -1392,6 +1433,7 @@ kNOMINVALUE : {self.input.LT(1).text.lower() == 'nominvalue'}? ID;
 kNOORDER : {self.input.LT(1).text.lower() == 'noorder'}? ID;
 kNOTFOUND : {self.input.LT(1).text.lower() == 'notfound'}? ID;
 kNVARCHAR2 : {self.input.LT(1).text.lower() == 'nvarchar2'}? ID;
+kOBJECT : {self.input.LT(1).text.lower() == 'object'}? ID;
 kPACKAGE : {self.input.LT(1).text.lower() == 'package'}? ID;
 kPIPELINED : {self.input.LT(1).text.lower() == 'pipelined'}? ID;
 kPRIMARY : {self.input.LT(1).text.lower() == 'primary'}? ID;
@@ -1412,6 +1454,7 @@ kUPDATING : {self.input.LT(1).text.lower() == 'updating'}? ID;
 kURITYPE : {self.input.LT(1).text.lower() == 'uritype'}? ID;
 kUROWID : {self.input.LT(1).text.lower() == 'urowid'}? ID;
 kUSING : {self.input.LT(1).text.lower() == 'using'}? ID;
+kVARRAY : {self.input.LT(1).text.lower() == 'varray'}? ID;
 kVIRTUAL : {self.input.LT(1).text.lower() == 'virtual'}? ID;
 kXMLTYPE : {self.input.LT(1).text.lower() == 'xmltype'}? ID;
 kYEAR : {self.input.LT(1).text.lower() == 'year'}? ID;
