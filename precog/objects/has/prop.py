@@ -52,8 +52,8 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
 
         if self.log.isEnabledFor(logging.DEBUG) and self.name == other.name:
           self.log.debug("_diff_props({}, {})[{!r}] expected {!r}, found {!r}"
-                         .format(self.pretty_name, other.pretty_name, prop,
-                                 self.props[prop], other.props[prop]))
+                         .format(self.pretty_name, other.pretty_name, prop_name,
+                                 expected, other_prop))
       return prop_diff
 
     def _satisfy (self, other):
