@@ -194,6 +194,7 @@ def progress_print (coll, message, stream=sys.stderr, start=0, count=None,
                     complete=True):
   def output (msg, term):
     print(msg, end=term, file=stream)
+    stream.flush()
 
   return _progress(coll, output, message, start, count, complete)
 
