@@ -39,9 +39,20 @@ class Data (HasColumns, OracleObject):
     return hash((self.table.name, self._comp()))
 
   def _comp (self):
+    discriminators = self.columns
+    uks = {uk for col in self.columns for uk in col._find_unique_constraints()}
+
+    for uk in uks:
+      col_set = set(uk.columns)
+      if col_set.issubset(self.columns):
+        discriminators = col_set
+        if uk.is_pk:
+          break
+    discriminators = {col.name.part.lower() for col in discriminators}
+
     """ A tuple view for hashing, comparing, etc. """
     return tuple(sorted(tup for tup in self.values().items()
-                        if tup[1] is not None))
+                        if tup[0] in discriminators and tup[1] is not None))
 
   def values (self):
     return InsensitiveDict((col.name.part.lower(), value)
@@ -68,15 +79,30 @@ class Data (HasColumns, OracleObject):
       ", ".join(values.keys()), ", ".join(Data.format(val)
                                           for val in values.values()))
 
+  def _equal_pairs (self, pairs, assign=False):
+    return [" = ".join((col, Data.format(val))) if val is not None
+            else "{} {} NULL".format(col, '=' if assign else 'IS')
+            for col, val in pairs.items()]
+
   def _drop (self):
-    return Diff("DELETE FROM {} WHERE {}".format(
-      self.table.name.lower(), " AND ".join(
-        " = ".join((col, Data.format(val)))
-        if val is not None else "{} IS NULL".format(col)
-        for col, val in self.values().items())))
+    return Diff("DELETE FROM {} WHERE {}"
+                .format(self.table.name.lower(),
+                        " AND ".join(self._equal_pairs(self.values()))))
 
   def diff (self, other, **kwargs):
+    other_vals = other.values()
+    col_diff = {col: val for col, val in self.values().items()
+                if (col in other_vals and val != other_vals[col])}
+
+    if col_diff:
+      return [Diff("UPDATE {} SET {} WHERE {}"
+                   .format(self.table.name.lower(),
+                           ", ".join(self._equal_pairs(col_diff, True)),
+                           " AND ".join(self._equal_pairs(dict(self._comp()))))
+                  )]
     return []
+
+
 
   @staticmethod
   def parse (value, column):

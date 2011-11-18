@@ -111,10 +111,14 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
 
   @property
   def _is_pk (self):
-    for ref in self._referenced_by:
-      if isinstance(ref.from_, UniqueConstraint) and ref.from_.is_pk:
+    for uk in self._find_unique_constraints():
+      if uk.is_pk:
         return True
     return False
+
+  def _find_unique_constraints (self):
+    return {ref.from_ for ref in self._referenced_by
+            if isinstance(ref.from_, UniqueConstraint)}
 
   def _sql (self, fq=False, full_def=True, default_clause=True):
     parts = []

@@ -26,9 +26,13 @@ insert into baz (fizz, a, e, g)
 --@ option partial_data
 CREATE TABLE static_with_dynamic
   ( n NUMBER CONSTRAINT static_with_dynamic_pk PRIMARY KEY
+  , o VARCHAR2(10)
+  , p NUMBER
+  , q VARCHAR2(10)
   );
 
-INSERT INTO static_with_dynamic (n) VALUES (1);
-INSERT INTO static_with_dynamic (n) VALUES (2);
-INSERT INTO static_with_dynamic (n) VALUES (3);
-INSERT INTO static_with_dynamic (n) VALUES (4);
+INSERT INTO static_with_dynamic (n, o) VALUES (1, 'cat');
+INSERT INTO static_with_dynamic (n, o, p, q) VALUES (2, 'doggy', 9, 'dog');
+INSERT INTO static_with_dynamic (n, o, q) VALUES (3, 'mouseling', 'mouse');
+INSERT INTO static_with_dynamic (n, o, p) VALUES (4, 'emu', 123);
+INSERT INTO static_with_dynamic (n, o, p) VALUES (7, 'george', 23);
