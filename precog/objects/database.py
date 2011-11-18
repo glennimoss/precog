@@ -1,4 +1,4 @@
-import math, os, pickle
+import logging, math, os, pickle
 
 from precog import db
 from precog import parser
@@ -530,6 +530,7 @@ class Database (HasLog):
             if os.stat(file).st_mtime != cached_mtime:
               break;
           else:
+            logging.getLogger('cache loader').info('Reading cache...')
             database = unpickler.load()
             database.log.info('Using cached definition...')
     except IOError:
