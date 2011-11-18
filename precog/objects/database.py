@@ -530,6 +530,7 @@ class Database (HasLog):
             if os.stat(file).st_mtime != cached_mtime:
               break;
           else:
+            database.log.info('Reading cache...')
             database = unpickler.load()
             database.log.info('Using cached definition...')
     except IOError:
