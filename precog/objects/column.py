@@ -390,7 +390,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
         props['user_type'] = into_database.find(
           OracleFQN(props['data_type_owner'], props['data_type']), Type)
         del props['data_type_owner']
-      else:
+      elif props['data_type']:
         # Remove quotes that may be on built-in types
         props['data_type'] = props['data_type'].strip('"')
 
