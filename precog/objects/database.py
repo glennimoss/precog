@@ -454,8 +454,6 @@ class Database (HasLog):
           indexes[idx.table][cols] = idx
 
   def diff_to_db (self, connection_string):
-    self.validate()
-
     self.log.info('Loading current database state')
 
     db.connect(connection_string)
@@ -543,6 +541,7 @@ class Database (HasLog):
       database = class_(default_schema)
 
       database.add_file(filename)
+      database.validate()
 
       database.log.info('Caching parsed definition...')
       with open('precog_cache.pickle', 'wb') as cache_file:
