@@ -1,6 +1,7 @@
 from precog import db
 from precog.diff import Diff
 from precog.objects.base import OracleObject, OracleFQN
+from precog.util import InsensitiveDict
 
 class Sequence (OracleObject):
 
@@ -14,7 +15,8 @@ class Sequence (OracleObject):
       name = self.name
 
     if props:
-      props = {prop: expected for prop, (expected, _) in props.items()}
+      props = InsensitiveDict({prop: expected
+                               for prop, (expected, _) in props.items()})
     else:
       props = self.props
 
