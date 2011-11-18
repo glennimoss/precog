@@ -78,4 +78,3 @@ create sequence the_seq increment by 9;
   --, constraint awesomesauce_pk primary key (n, m)
   --, CONSTRAINT awesomesauce_fk FOREIGN KEY (n, m) REFERENCES coolbeans (n, m)
 --);
-
