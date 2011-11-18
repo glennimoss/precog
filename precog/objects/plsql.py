@@ -27,8 +27,8 @@ class PlsqlCode (OracleObject):
     return self.props['source']
 
   def create (self):
-    return [PlsqlDiff("CREATE OR REPLACE {}".format(self.sql()), produces=self,
-                      priority=Diff.CREATE)]
+    return PlsqlDiff("CREATE OR REPLACE {}".format(self.sql()), produces=self,
+                     priority=Diff.CREATE)
 
   def diff (self, other, **kwargs):
     diffs = super().diff(other, **kwargs)
