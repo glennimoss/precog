@@ -433,7 +433,11 @@ class Database (HasLog):
     unsatisfied = [obj for name, schema in self.schemas.items()
                    if name not in self._ignore_schemas
                    for obj in schema.deferred.values()
-                   if (type(obj), str(obj.name)) not in ignores]
+                   if (type(obj), str(obj.name)) not in ignores and
+                     # Deferred object referred to only by soft references
+                     # aren't a big deal
+                     [ref for ref in obj._referenced_by
+                      if ref.integrity != Reference.SOFT]]
 
     if unsatisfied:
       raise UnsatisfiedDependencyError(unsatisfied)
@@ -519,31 +523,35 @@ class Database (HasLog):
   @classmethod
   def from_file (class_, filename, default_schema=None):
     database = None
-    #try:
-      #with open('precog_cache.pickle', 'rb') as cache_file:
-        #unpickler = pickle._Unpickler(cache_file)
-        ##cached_file, cached_mtime = pickle.load(cache_file)
-        #cached_file, cached_mtime = unpickler.load()
-        #if (filename.name == cached_file and
-            #os.fstat(filename.fileno()).st_mtime == cached_mtime):
-          ##database = pickle.load(cache_file)
-          #database = unpickler.load()
-          #database.log.info('Using cached definition...')
-    #except IOError:
-      #pass
-    #except EOFError:
-      #pass
+    try:
+      with open('precog_cache.pickle', 'rb') as cache_file:
+        unpickler = pickle._Unpickler(cache_file)
+        cached = unpickler.load()
+        if cached[0][0] == filename.name:
+          for file, cached_mtime in cached:
+            if os.stat(file).st_mtime != cached_mtime:
+              break;
+          else:
+            database = unpickler.load()
+            database.log.info('Using cached definition...')
+    except IOError:
+      pass
+    except EOFError:
+      pass
 
     if not database:
       database = class_(default_schema)
 
       database.add_file(filename)
 
-      #database.log.info('Caching parsed definition...')
-      #with open('precog_cache.pickle', 'wb') as cache_file:
+      database.log.info('Caching parsed definition...')
+      with open('precog_cache.pickle', 'wb') as cache_file:
+        file_times = [(file, os.stat(file).st_mtime)
+                      for file in database.parser.parsed_files]
         #mtime = os.fstat(filename.fileno()).st_mtime
-        #pickle.dump((filename.name, mtime), cache_file)
-        #pickle.dump(database, cache_file)
+        pickler = pickle._Pickler(cache_file)
+        pickler.dump(file_times)
+        pickler.dump(database)
 
     #if database.log.isEnabledFor(logging.DEBUG):
       #for schema in database.schemas.values():
@@ -558,5 +566,6 @@ class Database (HasLog):
     return database
 
   def __getstate__ (self):
-    return {'default_schema': self.default_schema,
-            'schemas': self.schemas}
+    state = super().__getstate__()
+    state['parser'] = None
+    return state

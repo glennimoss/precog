@@ -38,8 +38,12 @@ class OracleObject (HasLog):
       self._ignore_name = False
 
   def __repr__ (self, **other_props):
-    #return super().__repr__()
-    return "<{}>".format(self.pretty_name)
+    try:
+      return "<{}>".format(self.pretty_name)
+    except:
+      # When unpickling objects, this can be called before the object is
+      # properly set up, and the above can blow up. This is the fallback.
+      return object.__repr__(self)
     #if self.deferred:
       #other_props['deferred'] = True
 
@@ -79,7 +83,11 @@ class OracleObject (HasLog):
     return not self == other
 
   def __hash__ (self):
-    return hash((type(self), self.name))
+    try:
+      return hash((type(self), self.name))
+    except:
+      # See __repr__
+      return object.__hash__(self)
 
   @property
   def pretty_name (self):

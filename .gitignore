@@ -1,2 +1,3 @@
 *.pyc
 .svn
+precog_cache.pickle

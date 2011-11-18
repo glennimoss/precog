@@ -102,6 +102,7 @@ class SqlPlusFileParser (HasLog):
     from precog.parser.sqlLexer import sqlLexer
     from precog.parser.sqlParser import sqlParser
     self.parser = sqlParser(MultiChannelTokenStream(sqlLexer()))
+    self.parsed_files = []
 
   def parse (self, filename, database):
     parse_queue = [filename]
@@ -117,10 +118,13 @@ class SqlPlusFileParser (HasLog):
       token_stream.setTokenSource(lexer)
       self.parser.setTokenStream(token_stream)
 
-      self.log.info("Parsing file {}".format(self.parser.getSourceName()))
+      source_file = self.parser.getSourceName()
+      self.log.info("Parsing file {}".format(source_file))
       includes = self.parser.sqlplus_file(database).included_files
       parse_queue.extend(includes)
       num_errors += self.parser.getNumberOfSyntaxErrors()
+
+      self.parsed_files.append(source_file)
 
     if num_errors:
       raise ParseError(num_errors)
@@ -201,6 +205,6 @@ class Expression (object):
 
   def __getstate__ (self):
     state = self.__dict__.copy()
-    del state['_tree']
+    state['_tree'] = None
     return state
 

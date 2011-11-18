@@ -125,7 +125,7 @@ class HasLog (object):
 
   def __getstate__ (self):
     state = self.__dict__.copy()
-    del state['_log']
+    state['_log'] = None
     return state
 
   @staticmethod
