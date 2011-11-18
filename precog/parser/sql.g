@@ -161,6 +161,7 @@ directive_stmt
     ( directive_ignore
     | directive_option
     )
+    NL
   ;
 finally {
   self.input.drop(NL_CHANNEL)
@@ -170,7 +171,7 @@ directive_ignore
 @init {
   schema = False
 }
-  : kIGNORE (kSCHEMA { schema = True })? i=identifier NL {
+  : kIGNORE (kSCHEMA { schema = True })? i=identifier {
       name = $i.ident
       if schema:
         $g::database.ignore_schema(name.obj)
@@ -349,15 +350,19 @@ string_data_type[sized]
   ;
 
 numeric_data_type[sized]
-@after {
-  $data_type::props_['data_type'] = (($t and $t.text) or
-                                   $k1.text or $k2.text).upper()
-}
-  : t=NUMBER ({$sized}? number_precision)?
-  | t=FLOAT ({$sized}? p=int_parameter
-             { $data_type::props_['data_precision'] = $p.val })?
-  | k1=kBINARY_FLOAT
-  | k2=kBINARY_DOUBLE
+  : ( t=NUMBER ({$sized}? number_precision)?
+    | t=FLOAT ({$sized}? p=int_parameter
+               { $data_type::props_['data_precision'] = $p.val })?
+    | k1=kBINARY_FLOAT
+    | k2=kBINARY_DOUBLE
+    ) {
+      $data_type::props_['data_type'] = (($t and $t.text) or
+                                         $k1.text or $k2.text).upper()
+    }
+  | INTEGER {
+      $data_type::props_['data_type'] = 'NUMBER'
+      $data_type::props_['data_scale'] = 0
+    }
   ;
 
 number_precision
@@ -753,9 +758,9 @@ plsql_object_def
   ;
 
 plsql_function
-  : kFUNCTION { $plsql_stmt::type = Function }
+  : FUNCTION { $plsql_stmt::type = Function }
     i=identifier { $plsql_stmt::name = $i.ident }
-    LPAREN ~RPAREN* RPAREN
+    (LPAREN ~RPAREN* RPAREN)?
     kRETURN data_type[False]
     kDETERMINISTIC?
     kPIPELINED?
@@ -766,7 +771,7 @@ plsql_function
 plsql_procedure
   : PROCEDURE { $plsql_stmt::type = Procedure }
     i=identifier { $plsql_stmt::name = $i.ident }
-    LPAREN ~RPAREN* RPAREN
+    (LPAREN ~RPAREN* RPAREN)?
     ( IS | AS )
     ( (~TERMINATOR)=> ~TERMINATOR )+
   ;
@@ -779,35 +784,55 @@ plsql_trigger
   ;
 
 plsql_package
-  : kPACKAGE { $plsql_stmt::type = Package }
+  : PACKAGE { $plsql_stmt::type = Package }
     i=identifier { $plsql_stmt::name = $i.ident }
     ( IS | AS )
     ( (~TERMINATOR)=> ~TERMINATOR )+
+    /*( plsql_function | plsql_procedure )*
+    END ID? SEMI*/
   ;
 
 plsql_package_body
-  : kPACKAGE kBODY { $plsql_stmt::type = PackageBody }
+  : PACKAGE kBODY { $plsql_stmt::type = PackageBody }
     i=identifier { $plsql_stmt::name = $i.ident }
     ( IS | AS )
     ( (~TERMINATOR)=> ~TERMINATOR )+
+    /* END ID? SEMI */
   ;
 
 plsql_type
   : kTYPE { $plsql_stmt::type = Type }
     i=identifier { $plsql_stmt::name = $i.ident }
     ( IS | AS )
-    ( kOBJECT ( (~TERMINATOR)=> ~TERMINATOR )+
-    | ( kVARRAY size=int_parameter {
-          $plsql_stmt::props['collection_type'] = "VARRAY({})".format($size.val)
-        }
-      | TABLE {
-          $plsql_stmt::props['collection_type'] = 'TABLE'
-        }
-      )
-      OF dt=data_type[True] ( NOT NULL { $dt.props['nullable'] = 'N' } )?
-      { $plsql_stmt::props.update($dt.props) }
-      SEMI?
+    ( plsql_type_object
+    | plsql_type_collection
+    ) SEMI?
+  ;
+
+plsql_type_object
+  : kOBJECT
+    ( (~TERMINATOR)=> ~TERMINATOR )+
+  /*
+    LPAREN
+      plsql_type_object_attribute ( COMMA plsql_type_object_attribute )*
+    RPAREN
+    */
+  ;
+
+plsql_type_object_attribute
+  : tID data_type[True]
+  ;
+
+plsql_type_collection
+  : ( kVARRAY size=int_parameter {
+        $plsql_stmt::props['collection_type'] = "VARRAY({})".format($size.val)
+      }
+    | TABLE {
+        $plsql_stmt::props['collection_type'] = 'TABLE'
+      }
     )
+    OF dt=data_type[True] ( NOT NULL { $dt.props['nullable'] = 'N' } )?
+    { $plsql_stmt::props.update($dt.props) }
   ;
 
 plsql_type_body
@@ -1429,7 +1454,6 @@ kDISABLE : {self.input.LT(1).text.lower() == 'disable'}? ID;
 kENABLE : {self.input.LT(1).text.lower() == 'enable'}? ID;
 kFALSE : {self.input.LT(1).text.lower() == 'false'}? ID;
 kFOREIGN : {self.input.LT(1).text.lower() == 'foreign'}? ID;
-kFUNCTION : {self.input.LT(1).text.lower() == 'function'}? ID;
 kGENERATED : {self.input.LT(1).text.lower() == 'generated'}? ID;
 kIGNORE : {self.input.LT(1).text.lower() == 'ignore'}? ID;
 kINSERTING : {self.input.LT(1).text.lower() == 'inserting'}? ID;
@@ -1450,7 +1474,6 @@ kNOORDER : {self.input.LT(1).text.lower() == 'noorder'}? ID;
 kNOTFOUND : {self.input.LT(1).text.lower() == 'notfound'}? ID;
 kNVARCHAR2 : {self.input.LT(1).text.lower() == 'nvarchar2'}? ID;
 kOBJECT : {self.input.LT(1).text.lower() == 'object'}? ID;
-kPACKAGE : {self.input.LT(1).text.lower() == 'package'}? ID;
 kPIPELINED : {self.input.LT(1).text.lower() == 'pipelined'}? ID;
 kPRIMARY : {self.input.LT(1).text.lower() == 'primary'}? ID;
 kQUIT : {self.input.LT(1).text.lower() == 'quit' and self.aloneOnLine()}? ID;
@@ -1496,7 +1519,9 @@ tINTEGER returns [val]
  */
 AFTER : 'after';
 BEFORE : 'before';
+FUNCTION : 'function';
 INSTEAD : 'instead';
+PACKAGE : 'package';
 
 /*
  * PL/SQL Reserved words
