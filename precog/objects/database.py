@@ -8,6 +8,13 @@ from precog.objects import *
 from precog.objects._misc import *
 from precog.util import HasLog, progress_log, pluralize
 
+def _plural_type (obj):
+  if not isinstance(obj, type):
+    obj = type(obj)
+  if hasattr(obj, 'namespace'):
+    obj = obj.namespace
+  return pluralize(2, obj.pretty_type, False)
+
 class Schema (OracleObject):
 
   share_namespace = {
@@ -226,8 +233,11 @@ class Schema (OracleObject):
   def diff (self, other):
     diffs = []
     types = (set(self.objects) | set(other.objects)) - {Column, Constraint}
-    for t in progress_log(types, self.log, "Compared {{}} of schema {}."
-                          .format(self.name.schema)):
+    for t in progress_log(types, self.log, lambda cur_t:
+                          "Compared {{}} of schema {}.{}".format(
+                            self.name.schema, " Comparing {}...".format(
+                              _plural_type(cur_t))
+                            if cur_t else '')):
       rename = t not in {Sequence, Synonym}
       diffs.extend(self.diff_subobjects(other, lambda o: o.objects.get(t, {}),
                                         rename=rename))
@@ -243,13 +253,9 @@ class Schema (OracleObject):
     schema.log.info("Fetching schema {}...".format(owner))
 
     total_objects = db.query_one("""
-          SELECT SUM(num) AS total_objects FROM (
-              SELECT COUNT(*) AS num
-                --   object_name
-                -- , NULL AS part_name
-                -- , object_type
-                -- , status
-                -- , generated
+           SELECT COUNT(*) AS total_objects FROM (
+              SELECT object_name
+                   , last_ddl_time
               FROM dba_objects
               WHERE owner = :o
                 AND subobject_name IS NULL
@@ -267,38 +273,24 @@ class Schema (OracleObject):
                                 -- , 'VIEW'
                                    )
             UNION
-              SELECT COUNT(*)
-                --   table_name
-                -- , column_name
-                -- , 'COLUMN'
-                -- , 'VALID'
-                -- , 'N'
+              SELECT table_name || '.' || column_name
+                   , NULL
               FROM dba_tab_cols
               WHERE owner = :o
             UNION
-              SELECT COUNT(*)
-                --   constraint_name
-                -- , NULL
-                -- , 'CONSTRAINT'
-                -- , 'VALID'
-                -- , DECODE(generated, 'GENERATED NAME', 'Y', 'N')
+              SELECT constraint_name
+                   , last_change
               FROM dba_constraints
               WHERE owner = :o
-          )
+                                )
       """, o=owner, oracle_names=['object_name'])['total_objects']
 
     schema.log.info("Schema {} has {}.".format(owner, pluralize(total_objects,
                                                                 'object')))
 
-    def root_type (obj):
-      t = type(obj)
-      if hasattr(t, 'namespace'):
-        t = t.namespace
-      return t
-
     def progress_message (o):
       return "Fetched {{}} of schema {}.{}".format(owner,
-        " Currently fetching {} objects...".format(root_type(o).pretty_type)
+        " Currently fetching {}...".format(_plural_type(o))
         if o else '')
 
     for obj in progress_log((obj for obj_type in (Column,
@@ -500,14 +492,21 @@ class Database (HasLog):
 
     if tables:
       for table in tables:
-        table = db_schema.find(table, Table)
+        table = table.split(':')
+        table_name = table[0]
+        columns = None
+        if len(table) == 2:
+          columns = [c.strip() for c in table[1].split(',')]
+
+        table = db_schema.find(table_name, Table)
         for col in Column.from_db(table.name.schema, oracle_database,
                                   table.name.obj):
           db_schema.add(col)
 
         Data.from_db(table)
-        diffs.append(Diff([datum.sql(fq=False) for datum in table.data],
-                          produces=set(table.data)))
+        diffs.append(Diff(["-- Data for {}".format(table_name)] +
+                          [datum.sql(fq=False, columns=columns)
+                           for datum in table.data], produces=set(table.data)))
     else:
       Schema.from_db(db_schema)
 

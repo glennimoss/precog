@@ -1,4 +1,4 @@
-import logging, time
+import logging
 
 from precog.diff import Diff, Reference
 from precog.identifier import *
@@ -252,7 +252,6 @@ class OracleObject (HasLog):
           target_dups.setdefault(key, []).append(obj)
         else:
           target_objs[key] = obj
-
     else:
       target_objs = targets
     current_dups = {}
@@ -296,20 +295,22 @@ class OracleObject (HasLog):
         add_obj._ignore_name = False
       addobjs.difference_update(not_add)
 
-    obj_type = ((target_objs and
-                    type(next(iter(target_objs.values())))) or
-                   (current_objs and
-                    type(next(iter(current_objs.values())))) or
-                   OracleObject)
-    if hasattr(obj_type, 'namespace'):
-      obj_type = obj_type.namespace
-    pretty_type = obj_type.pretty_type
+    if self.log.isEnabledFor(logging.DEBUG):
+      obj_type = ((target_objs and
+                      type(next(iter(target_objs.values())))) or
+                     (current_objs and
+                      type(next(iter(current_objs.values())))) or
+                     OracleObject)
+      if hasattr(obj_type, 'namespace'):
+        obj_type = obj_type.namespace
+      pretty_type = obj_type.pretty_type
 
     add_dups = []
     drop_dups = []
     if addobjs:
-      self.log.debug("  Adding {} {}s: {}".format(len(addobjs), pretty_type,
-        ", ".join(target_objs[obj].pretty_name for obj in addobjs)))
+      if self.log.isEnabledFor(logging.DEBUG):
+        self.log.debug("  Adding {} {}s: {}".format(len(addobjs), pretty_type,
+          ", ".join(target_objs[obj].pretty_name for obj in addobjs)))
       objs = []
       for addobj in addobjs:
         if addobj in target_dups:
@@ -319,8 +320,11 @@ class OracleObject (HasLog):
           objs.append(target_objs[addobj])
       diffs.extend(self.add_subobjects(objs))
     if dropobjs:
-      self.log.debug("  Dropping {} {}s: {}".format(len(dropobjs), pretty_type,
-        ", ".join(current_objs[obj].pretty_name for obj in dropobjs)))
+      if self.log.isEnabledFor(logging.DEBUG):
+        self.log.debug("  Dropping {} {}s: {}"
+                       .format(len(dropobjs), pretty_type,
+                               ", ".join(current_objs[obj].pretty_name
+                                         for obj in dropobjs)))
       objs = []
       for dropobj in dropobjs:
         if dropobj in current_dups:
@@ -351,7 +355,7 @@ class OracleObject (HasLog):
     if drop_dups:
       diffs.extend(self.drop_dup_subobjects(drop_dups))
 
-    if modify_diffs:
+    if modify_diffs and self.log.isEnabledFor(logging.DEBUG):
       self.log.debug("  {} modifications for {}s".format(
         len(modify_diffs), pretty_type))
     diffs.extend(modify_diffs)

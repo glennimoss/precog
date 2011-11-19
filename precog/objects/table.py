@@ -69,11 +69,13 @@ class Data (HasColumns, OracleObject):
       return fmt.format(value)
     return str(value)
 
-  def _sql (self, fq=True):
+  def _sql (self, fq=True, columns=None):
     table_name = self.table.name
     if not fq:
       table_name = table_name.obj
     values = {col: val for col, val in self.values().items() if val is not None}
+    if columns:
+      values = InsensitiveDict((col, values[col]) for col in columns)
 
     return "INSERT INTO {} ({}) VALUES ({})".format(table_name.lower(),
       ", ".join(values.keys()), ", ".join(Data.format(val)

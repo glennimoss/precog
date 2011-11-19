@@ -296,7 +296,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
           teardown = other.teardown()
           create = self.create()
           create.sql.insert(0, "ALTER TABLE {} RENAME COLUMN {} TO {}"
-                            .format(other_table_name, other.name.lower(),
+                            .format(other_table_name, other.name.part.lower(),
                                     temp_col))
           create.sql.extend(["UPDATE {} SET {} = {}"
                             .format(other_table_name, self.name.part.lower(),

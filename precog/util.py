@@ -1,5 +1,5 @@
 from collections import OrderedDict
-import logging, sys
+import logging, sys, time
 
 class InsensitiveDict (OrderedDict):
 
@@ -160,17 +160,18 @@ def _progress (coll, output, message, start, count, complete):
   if count: # avoid divide by zero
     itr = iter(coll)
     c = start
-    obj = None
-    while True:
-      output(make_message(obj).format("{:03.0%}".format(c/count)), '\x1b[0K\r')
-      try:
-        obj = next(itr)
+    try:
+      obj = next(itr)
+      while True:
+        output(make_message(obj).format("{:03.0%}".format(c/count)),
+               '\x1b[0K\r')
         step = yield obj
-      except StopIteration:
-        break
-      if step is None:
-        step = 1
-      c += step
+        if step is None:
+          step = 1
+        c += step
+        obj = next(itr)
+    except StopIteration:
+      pass
 
   if complete:
     output(make_message(None).format('100%'), '\x1b[0K\n')
@@ -201,15 +202,31 @@ def progress_print (coll, message, stream=sys.stderr, start=0, count=None,
 def pluralize (count, word, with_count=True):
   parts = []
 
-  if with_count:
-    parts.append("{} ".format(count))
-
-  parts.append(word)
-
   if abs(count) != 1:
     if word[-1] == 'x':
       parts.append('es')
+    elif word[-1] == 'y':
+      parts.append('ies')
+      word = word[:-1]
     else:
       parts.append('s')
 
-  return "".join(parts)
+  parts.append(word)
+
+  if with_count:
+    parts.append("{} ".format(count))
+
+
+  return "".join(reversed(parts))
+
+class timer (object):
+
+  def __init__ (self, task):
+    self.task = task
+    self.start = time.time()
+
+  def stop (self, force=False):
+    took = time.time() - self.start
+    if took > 1 or force:
+      print("{} took {:.10f}".format(self.task, took))
+    return took
