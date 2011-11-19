@@ -26,5 +26,6 @@ class HasConstraints (_parent):
 
   def diff (self, other, **kwargs):
     diffs = super().diff(other, **kwargs)
-    diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
+    if self.constraints or other.constraints:
+      diffs.extend(self.diff_subobjects(other, lambda o: o.constraints))
     return diffs
