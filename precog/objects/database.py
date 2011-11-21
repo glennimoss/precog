@@ -493,7 +493,7 @@ class Database (HasLog):
 
   def from_db (self):
     try:
-      for schema in self.schemas.values():
+      for schema in set(self.schemas.values()):
         schema.from_db()
 
       self.validate()
@@ -507,12 +507,13 @@ class Database (HasLog):
 
     db.connect(connection_string)
 
-    oracle_database = Database()
+    oracle_database = Database(self.default_schema)
     oracle_database._ignores = self._ignores
     oracle_database._ignore_schemas = self._ignore_schemas
 
     for schema_name in self.schemas:
-      if schema_name not in self._ignore_schemas:
+      if (schema_name not in self._ignore_schemas and
+          schema_name not in oracle_database.schemas):
         oracle_database.add(Schema(schema_name))
     oracle_database.from_db()
 
