@@ -350,6 +350,10 @@ class Schema (OracleObject):
       pickler.dump(modified_times)
       pickler.dump(self)
 
+  def __getstate__ (self):
+    state = super().__getstate__()
+    state['database'] = None
+    return state
 
 class Database (HasLog):
 
@@ -588,6 +592,9 @@ class Database (HasLog):
           else:
             logging.getLogger('cache loader').info('Reading cache...')
             database = unpickler.load()
+            # reestablish Schema links back to Database
+            for schema in database.schemas.values():
+              schema.database = database
             database.log.info('Using cached definition...')
     except IOError:
       pass
