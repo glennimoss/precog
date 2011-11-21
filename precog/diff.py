@@ -80,7 +80,7 @@ class Diff (object):
     return "Diff({!r}, {!r}, {!r})".format(self.sql, self.dependencies,
         self.produces)
 
-  def __str__ (self):
+  def formatted (self, nosnip=False):
     binds = ''
     parts = []
     for sql, binds in itertools.zip_longest(self.sql, self.binds):
@@ -90,6 +90,9 @@ class Diff (object):
       parts.append("".join((sql, self.terminator)))
 
     return "\n".join(parts)
+
+  def __str__ (self):
+    return self.formatted()
 
   def __eq__ (self, other):
     return self.sql == other.sql
@@ -140,6 +143,17 @@ class PlsqlDiff (Diff):
     # log compile errors
     for product in self.produces:
       product.errors()
+
+  def formatted (self, nosnip=False):
+    parts = []
+    for sql in self.sql:
+      sqlparts = sql.split('\n')
+      if not nosnip and len(sqlparts) > 10:
+        sqlparts[1:-1] = ['  -- SNIP...']
+      parts.extend(sqlparts)
+      parts.append(self.terminator)
+
+    return "\n".join(parts)
 
 class Commit (Diff):
 

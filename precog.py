@@ -96,7 +96,7 @@ try:
         change_str = pluralize(changes, 'change')
         print("Found {}{}\n".format(change_str, retry),
               file=sys.stderr)
-        print("\n\n".join(str(diff) for diff in diffs))
+        print("\n\n".join(diff.formatted(args.no_apply) for diff in diffs))
         print()
 
         if args.no_apply:
