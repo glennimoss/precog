@@ -555,6 +555,12 @@ class Database (HasLog):
     else:
       db_schema.from_db()
 
+      # Set index ownership for all unique constraints
+      if Constraint in db_schema.objects:
+        for cons in db_schema.objects[Constraint].values():
+          if isinstance(cons, UniqueConstraint):
+            cons.index_ownership = UniqueConstraint.FULL_INDEX_CREATE
+
       diffs = db_schema.diff(Schema(schema_name, database=Database()))
 
     if diffs:

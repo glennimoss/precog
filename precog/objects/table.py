@@ -289,6 +289,8 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
   def _sub_sql (self):
     parts = [col.sql() for col in self.columns
              if col.props['hidden_column'] != 'YES']
+    # TODO: should not include unique constraints who don't own their indexes.
+    # They would need to be added after the creation of the index.
     parts.extend(cons.sql() for cons in self.constraints)
     return "\n  ( {}\n  )".format("\n  , ".join(parts))
 
