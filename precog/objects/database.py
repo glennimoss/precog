@@ -287,7 +287,8 @@ class Schema (OracleObject):
       object_type = object['object_type']
       if object_type not in modified_times:
         modified_times[object_type] = {}
-      modified_times[object_type][object['object_name']] = object['last_ddl_time']
+      modified_times[object_type][object['object_name']] = (
+        object['last_ddl_time'])
     modified_times['CONSTRAINT'] = {cons['constraint_name']: cons['last_change']
                                     for cons in schema['constraints']}
 
@@ -360,6 +361,7 @@ class Database (HasLog):
     #self.log.debug("Creating with default schema {}".format(default_schema))
 
     self._ignores = set()
+    self._ignore_objs = set()
     self._ignore_schemas = set()
 
     self.parser = None
@@ -376,16 +378,17 @@ class Database (HasLog):
     self._ignores.add(obj_name)
 
   def ignores (self):
-    ignores = set()
-    for obj_name in self._ignores:
-      obj = self.find(obj_name, deferred=False)
-      if obj:
-        ignores.add((type(obj), str(obj.name)))
-        ignores.update((type(ref), str(ref.name))
-                       for ref in obj
-                       ._build_dep_set(lambda self: self._referenced_by,
-                                       lambda ref: ref.from_))
-    return ignores
+    if not self._ignore_objs:
+      self._ignore_objs = set()
+      for obj_name in self._ignores:
+        obj = self.find(obj_name, deferred=False)
+        if obj:
+          self._ignore_objs.add((type(obj), str(obj.name)))
+          self._ignore_objs.update((type(ref), str(ref.name))
+                                   for ref in obj._build_dep_set(
+                                     lambda self: self._referenced_by,
+                                     lambda ref: ref.from_))
+    return self._ignore_objs
 
   def add (self, obj):
     if not obj:
