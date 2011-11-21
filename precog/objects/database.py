@@ -298,7 +298,7 @@ class Schema (OracleObject):
     cache_file_name = "precog_cache_db_{}.pickle".format(owner)
     try:
       with open(cache_file_name, 'rb') as cache_file:
-        self.log.info('Reading cache...')
+        self.log.info('Found cache file. Reading cache...')
         unpickler = pickle.Unpickler(cache_file)
         cached_times = unpickler.load()
 
@@ -319,8 +319,9 @@ class Schema (OracleObject):
           self.shared_namespace = cached_schema.shared_namespace
           self.objects = cached_schema.objects
           self.deferred = cached_schema.deferred
-          self.log.info('Using cached schema...')
+          self.log.info('Using cached schema.')
           return
+        self.log.info('Cache is out of date.')
     except IOError:
       pass
     except EOFError:
@@ -470,7 +471,7 @@ class Database (HasLog):
             .find_unique_constraint(columns, deferred))
 
   def validate (self):
-    self.log.info('Validating referential integrity')
+    self.log.info('Validating referential integrity...')
     ignores = self.ignores()
     unsatisfied = [obj for name, schema in self.schemas.items()
                    if name not in self._ignore_schemas
@@ -507,7 +508,7 @@ class Database (HasLog):
       raise
 
   def diff_to_db (self, connection_string):
-    self.log.info('Loading current database state')
+    self.log.info('Loading current database state...')
 
     db.connect(connection_string)
 
@@ -521,7 +522,7 @@ class Database (HasLog):
         oracle_database.add(Schema(schema_name))
     oracle_database.from_db()
 
-    self.log.info('Comparing database definition to current database state')
+    self.log.info('Comparing database definition to current database state...')
 
     diffs = []
     for schema_name in self.schemas:
@@ -584,19 +585,24 @@ class Database (HasLog):
     cache_file_name = "precog_cache_file_{}.pickle".format(basename)
     try:
       with open(cache_file_name, 'rb') as cache_file:
+        cache_logger = logging.getLogger('cache loader')
+        cache_logger.info('Found cache file. Reading cache...')
         unpickler = pickle.Unpickler(cache_file)
         cached = unpickler.load()
         if cached[0][0] == filename.name:
           for file, cached_mtime in cached:
             if os.stat(file).st_mtime != cached_mtime:
+              cache_logger.info('Cache is out of date.')
               break;
           else:
-            logging.getLogger('cache loader').info('Reading cache...')
             database = unpickler.load()
             # reestablish Schema links back to Database
             for schema in database.schemas.values():
               schema.database = database
-            database.log.info('Using cached definition...')
+            database.log.info('Using cached definition.')
+        else:
+          cache_logger.info('Cache is invalid.')
+
     except IOError:
       pass
     except EOFError:
