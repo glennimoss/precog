@@ -169,11 +169,11 @@ class _HasData (_HasData_):
     if self.data:
       Data.from_db(other)
 
-    inserts = self.diff_subobjects(other, lambda o: o.data, lambda o: o._comp(),
-                                  rename=False)
-    if inserts:
-      diffs.extend(inserts)
-      diffs.append(Commit(inserts))
+      inserts = self.diff_subobjects(other, lambda o: o.data,
+                                     lambda o: o._comp(), rename=False)
+      if inserts:
+        diffs.extend(inserts)
+        diffs.append(Commit(inserts))
 
     return diffs
 
