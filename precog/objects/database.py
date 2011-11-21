@@ -243,50 +243,87 @@ class Schema (OracleObject):
                                         rename=rename))
     return diffs
 
-  @classmethod
-  def from_db (class_, schema=None):
-    if not isinstance(schema, class_):
-      schema = class_(schema, database=into_database)
+  def from_db (self):
+    owner = self.name.schema
 
-    owner = schema.name.schema
+    self.log.info("Fetching schema {}...".format(owner))
 
-    schema.log.info("Fetching schema {}...".format(owner))
+    schema = db.query_one("""
+              SELECT CURSOR(SELECT object_name
+                                 , object_type
+                                 , last_ddl_time
+                            FROM dba_objects
+                            WHERE owner = :o
+                              AND subobject_name IS NULL
+                              AND object_type IN ( 'FUNCTION'
+                                                 , 'INDEX'
+                                                 , 'PACKAGE'
+                                                 , 'PACKAGE BODY'
+                                                 , 'PROCEDURE'
+                                                 , 'SEQUENCE'
+                                                 , 'SYNONYM'
+                                                 , 'TABLE'
+                                                 , 'TRIGGER'
+                                                 , 'TYPE'
+                                                 , 'TYPE BODY'
+                                              -- , 'VIEW'
+                                                 )
+                           ) AS objects
+                   , (SELECT count(*)
+                      FROM dba_tab_cols
+                      WHERE owner = :o) AS columns
+                   , CURSOR(SELECT constraint_name
+                                 , last_change
+                            FROM dba_constraints
+                            WHERE owner = :o
+                           ) AS constraints
+              FROM dual
+      """, o=owner, oracle_names=['object_name', 'constraint_name'])
+    total_objects = (len(schema['objects']) + schema['columns'] +
+                     len(schema['constraints']))
 
-    total_objects = db.query_one("""
-           SELECT COUNT(*) AS total_objects FROM (
-              SELECT object_name
-                   , last_ddl_time
-              FROM dba_objects
-              WHERE owner = :o
-                AND subobject_name IS NULL
-                AND object_type IN ( 'FUNCTION'
-                                   , 'INDEX'
-                                   , 'PACKAGE'
-                                   , 'PACKAGE BODY'
-                                   , 'PROCEDURE'
-                                   , 'SEQUENCE'
-                                   , 'SYNONYM'
-                                   , 'TABLE'
-                                   , 'TRIGGER'
-                                   , 'TYPE'
-                                   , 'TYPE BODY'
-                                -- , 'VIEW'
-                                   )
-            UNION
-              SELECT table_name || '.' || column_name
-                   , NULL
-              FROM dba_tab_cols
-              WHERE owner = :o
-            UNION
-              SELECT constraint_name
-                   , last_change
-              FROM dba_constraints
-              WHERE owner = :o
-                                )
-      """, o=owner, oracle_names=['object_name'])['total_objects']
+    modified_times = {}
+    for object in schema['objects']:
+      object_type = object['object_type']
+      if object_type not in modified_times:
+        modified_times[object_type] = {}
+      modified_times[object_type][object['object_name']] = object['last_ddl_time']
+    modified_times['CONSTRAINT'] = {cons['constraint_name']: cons['last_change']
+                                    for cons in schema['constraints']}
 
-    schema.log.info("Schema {} has {}.".format(owner, pluralize(total_objects,
+    self.log.info("Schema {} has {}.".format(owner, pluralize(total_objects,
                                                                 'object')))
+
+    cache_file_name = "precog_cache_db_{}.pickle".format(owner)
+    try:
+      with open(cache_file_name, 'rb') as cache_file:
+        self.log.info('Reading cache...')
+        unpickler = pickle.Unpickler(cache_file)
+        cached_times = unpickler.load()
+
+        changed = set()
+        for obj_type in modified_times.keys() & cached_times.keys():
+          current_objs = modified_times[obj_type]
+          cached_objs = cached_times[obj_type]
+
+          changed.update(current_objs.keys() ^ cached_objs.keys())
+
+          for obj_name in current_objs.keys() & cached_objs.keys():
+            if current_objs[obj_name] != cached_objs[obj_name]:
+              changed.add(obj_name)
+
+        if not changed:
+          cached_schema = unpickler.load()
+          self.props = cached_schema.props
+          self.shared_namespace = cached_schema.shared_namespace
+          self.objects = cached_schema.objects
+          self.deferred = cached_schema.deferred
+          self.log.info('Using cached schema...')
+          return
+    except IOError:
+      pass
+    except EOFError:
+      pass
 
     def progress_message (o):
       return "Fetched {{}} of schema {}.{}".format(owner,
@@ -300,13 +337,18 @@ class Schema (OracleObject):
                                                   Sequence,
                                                   Synonym,
                                                   Table)
-                             for obj in obj_type.from_db(schema.name.schema,
-                                                         schema.database)),
-                            schema.log, progress_message, count=total_objects):
-      schema.add(obj)
+                             for obj in obj_type.from_db(self.name.schema,
+                                                         self.database)),
+                            self.log, progress_message, count=total_objects):
+      self.add(obj)
 
-    schema.log.info("Fetching schema {} complete".format(owner))
-    return schema
+    self.log.info("Fetching schema {} complete".format(owner))
+    self.log.info('Caching schema state...')
+    with open(cache_file_name, 'wb') as cache_file:
+      pickler = pickle.Pickler(cache_file)
+      pickler.dump(modified_times)
+      pickler.dump(self)
+
 
 class Database (HasLog):
 
@@ -353,6 +395,7 @@ class Database (HasLog):
     schema_name = obj.name.schema
     if isinstance(obj, Schema):
       self.schemas[schema_name] = obj
+      obj.database = self
       return
 
     if not schema_name:
@@ -445,6 +488,17 @@ class Database (HasLog):
             raise DuplicateIndexConflict(idx, indexes[idx.table][cols])
           indexes[idx.table][cols] = idx
 
+  def from_db (self):
+    try:
+      for schema in self.schemas.values():
+        schema.from_db()
+
+      self.validate()
+    except PrecogError:
+      self.log.error(
+        'The Oracle database has errors. This is probably the fault of Precog.')
+      raise
+
   def diff_to_db (self, connection_string):
     self.log.info('Loading current database state')
 
@@ -454,24 +508,15 @@ class Database (HasLog):
     oracle_database._ignores = self._ignores
     oracle_database._ignore_schemas = self._ignore_schemas
 
-    schemas = {name: schema for name, schema in self.schemas.items()
-               if name not in self._ignore_schemas}
-    diffs = []
-    for schema_name in schemas:
-      db_schema = Schema(schema_name, database=oracle_database)
-      oracle_database.add(db_schema)
-      Schema.from_db(db_schema)
-
-    try:
-      oracle_database.validate()
-    except PrecogError:
-      self.log.error(
-        'The Oracle database has errors. This is probably the fault of Precog.')
-      raise
+    for schema_name in self.schemas:
+      if schema_name not in self._ignore_schemas:
+        oracle_database.add(Schema(schema_name))
+    oracle_database.from_db()
 
     self.log.info('Comparing database definition to current database state')
 
-    for schema_name in schemas:
+    diffs = []
+    for schema_name in oracle_database.schemas:
       diffs.extend(self.schemas[schema_name].diff(
         oracle_database.schemas[schema_name]))
 
@@ -508,9 +553,15 @@ class Database (HasLog):
                           [datum.sql(fq=False, columns=columns)
                            for datum in table.data], produces=set(table.data)))
     else:
-      Schema.from_db(db_schema)
+      db_schema.from_db()
 
-      diffs = db_schema.diff(Schema(schema_name))
+      # Set index ownership for all unique constraints
+      if Constraint in db_schema.objects:
+        for cons in db_schema.objects[Constraint].values():
+          if isinstance(cons, UniqueConstraint):
+            cons.index_ownership = UniqueConstraint.FULL_INDEX_CREATE
+
+      diffs = db_schema.diff(Schema(schema_name, database=Database()))
 
     if diffs:
       diffs = order_diffs(diffs)
@@ -520,9 +571,11 @@ class Database (HasLog):
   @classmethod
   def from_file (class_, filename, default_schema=None):
     database = None
+    basename = os.path.splitext(os.path.basename(filename.name))[0]
+    cache_file_name = "precog_cache_file_{}.pickle".format(basename)
     try:
-      with open('precog_cache.pickle', 'rb') as cache_file:
-        unpickler = pickle._Unpickler(cache_file)
+      with open(cache_file_name, 'rb') as cache_file:
+        unpickler = pickle.Unpickler(cache_file)
         cached = unpickler.load()
         if cached[0][0] == filename.name:
           for file, cached_mtime in cached:
@@ -544,11 +597,10 @@ class Database (HasLog):
       database.validate()
 
       database.log.info('Caching parsed definition...')
-      with open('precog_cache.pickle', 'wb') as cache_file:
+      with open(cache_file_name, 'wb') as cache_file:
         file_times = [(file, os.stat(file).st_mtime)
                       for file in database.parser.parsed_files]
-        #mtime = os.fstat(filename.fileno()).st_mtime
-        pickler = pickle._Pickler(cache_file)
+        pickler = pickle.Pickler(cache_file)
         pickler.dump(file_times)
         pickler.dump(database)
 

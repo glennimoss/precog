@@ -169,11 +169,11 @@ class _HasData (_HasData_):
     if self.data:
       Data.from_db(other)
 
-    inserts = self.diff_subobjects(other, lambda o: o.data, lambda o: o._comp(),
-                                  rename=False)
-    if inserts:
-      diffs.extend(inserts)
-      diffs.append(Commit(inserts))
+      inserts = self.diff_subobjects(other, lambda o: o.data,
+                                     lambda o: o._comp(), rename=False)
+      if inserts:
+        diffs.extend(inserts)
+        diffs.append(Commit(inserts))
 
     return diffs
 
@@ -289,6 +289,8 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
   def _sub_sql (self):
     parts = [col.sql() for col in self.columns
              if col.props['hidden_column'] != 'YES']
+    # TODO: should not include unique constraints who don't own their indexes.
+    # They would need to be added after the creation of the index.
     parts.extend(cons.sql() for cons in self.constraints)
     return "\n  ( {}\n  )".format("\n  , ".join(parts))
 

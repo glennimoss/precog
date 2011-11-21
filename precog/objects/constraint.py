@@ -166,9 +166,9 @@ class UniqueConstraint (HasProp('index_ownership'),
                         Constraint):
   namespace = Constraint
 
-  FULL_INDEX_CREATE = object()
-  SHORT_INDEX_CREATE = object()
-  IMPLICIT_INDEX_CREATE = object()
+  FULL_INDEX_CREATE = 'FULL_INDEX_CREATE'
+  SHORT_INDEX_CREATE = 'SHORT_INDEX_CREATE'
+  IMPLICIT_INDEX_CREATE = 'IMPLICIT_INDEX_CREATE'
 
   def __init__ (self, name, **props):
     super().__init__(name, **props)
@@ -209,14 +209,14 @@ class UniqueConstraint (HasProp('index_ownership'),
     if not inline:
       parts.append(self._column_list())
     if (self.index and
-        self.index_ownership is not UniqueConstraint.IMPLICIT_INDEX_CREATE):
+        self.index_ownership != UniqueConstraint.IMPLICIT_INDEX_CREATE):
       parts.append('USING INDEX')
 
-      if self.index_ownership is UniqueConstraint.FULL_INDEX_CREATE:
+      if self.index_ownership == UniqueConstraint.FULL_INDEX_CREATE:
         parts.append('(')
         parts.append(self.index.sql())
         parts.append(')')
-      elif self.index_ownership is UniqueConstraint.SHORT_INDEX_CREATE:
+      elif self.index_ownership == UniqueConstraint.SHORT_INDEX_CREATE:
         parts.extend(self.index.index_properties_sql())
       else:
         parts.append(self.index.name.lower())
