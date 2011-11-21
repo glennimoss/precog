@@ -524,9 +524,10 @@ class Database (HasLog):
     self.log.info('Comparing database definition to current database state')
 
     diffs = []
-    for schema_name in oracle_database.schemas:
-      diffs.extend(self.schemas[schema_name].diff(
-        oracle_database.schemas[schema_name]))
+    for schema_name in self.schemas:
+      if schema_name not in self._ignore_schemas:
+        diffs.extend(self.schemas[schema_name].diff(
+          oracle_database.schemas[schema_name]))
 
     if diffs:
       diffs = order_diffs(diffs)
