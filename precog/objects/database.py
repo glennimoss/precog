@@ -584,15 +584,15 @@ class Database (HasLog):
     if not self.parser:
       self.parser = parser.SqlPlusFileParser(self._files.keys())
 
-    parsed = self.parser.parse(filename, self)
+    included = self.parser.parse(filename, self)
 
-    for file in parsed:
+    for file in self.parser.parsed_files:
       if file not in self._files:
         # Maybe there were no objects parsed from this file, but we still need
         # to know about it because it's probably part of the include tree
         self._files[file] = []
 
-    return parsed
+    return included
 
   def __make_fqn (self, name):
     if not isinstance(name, OracleFQN):
