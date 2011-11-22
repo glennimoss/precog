@@ -377,14 +377,16 @@ class Schema (OracleObject):
 
     change_count = 0
     for obj_type, names in to_refresh.items():
-      if names is None:
+      if obj_type is Column:
+        for table in schema['columns']:
+          if names is None or table['table_name'] in names:
+            change_count += table['num_columns']
+      elif names is None:
         if obj_type is PlsqlCode:
           change_count += sum(len(n) for t, n in modified_times.items()
                               if issubclass(t, PlsqlCode))
-      elif obj_type is Column:
-        for table in schema['columns']:
-          if table['table_name'] in names:
-            change_count += table['num_columns']
+        else:
+          change_count += len(modified_times[obj_type])
       else:
         change_count += len(names)
 
