@@ -99,15 +99,17 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
 
   @property
   def is_string (self):
-    return _is_string_type(self.props['data_type']) is not None
+    return (self.props['data_type'] and
+            _is_string_type(self.props['data_type']) is not None)
 
   @property
   def is_number (self):
-    return _is_number_type(self.props['data_type'])
+    return self.props['data_type'] and _is_number_type(self.props['data_type'])
 
   @property
   def is_datetime (self):
-    return _is_dateish_type(self.props['data_type'])
+    return (self.props['data_type'] and
+            _is_dateish_type(self.props['data_type']))
 
   @property
   def is_virtual (self):
