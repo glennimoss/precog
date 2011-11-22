@@ -97,37 +97,43 @@ class LoggingParser (LoggingRecognizer, Parser):
 
 class SqlPlusFileParser (HasLog):
 
-  def __init__ (self):
+  def __init__ (self, parsed_files=None):
     super().__init__()
     from precog.parser.sqlLexer import sqlLexer
     from precog.parser.sqlParser import sqlParser
     self.parser = sqlParser(MultiChannelTokenStream(sqlLexer()))
     self.parsed_files = []
+    if parsed_files:
+      self.parsed_files.extend(parsed_files)
 
   def parse (self, filename, database):
     parse_queue = [filename]
     num_errors = 0
     for file in parse_queue:
-      stream = FileStream
-      if not isinstance(file, str):
-        stream = InputStream
+      if file not in self.parsed_files:
+        stream = FileStream
+        if not isinstance(file, str):
+          stream = InputStream
 
-      token_stream = self.parser.input
-      lexer = token_stream.tokenSource
-      lexer.setCharStream(stream(file))
-      token_stream.setTokenSource(lexer)
-      self.parser.setTokenStream(token_stream)
+        token_stream = self.parser.input
+        lexer = token_stream.tokenSource
+        lexer.setCharStream(stream(file))
+        token_stream.setTokenSource(lexer)
+        self.parser.setTokenStream(token_stream)
 
-      source_file = self.parser.getSourceName()
-      self.log.info("Parsing file {}".format(source_file))
-      includes = self.parser.sqlplus_file(database).included_files
-      parse_queue.extend(includes)
-      num_errors += self.parser.getNumberOfSyntaxErrors()
+        self.log.info("Parsing file {}".format(self.source_file))
+        includes = self.parser.sqlplus_file(database).included_files
+        parse_queue.extend(includes)
+        num_errors += self.parser.getNumberOfSyntaxErrors()
 
-      self.parsed_files.append(source_file)
+        self.parsed_files.append(self.source_file)
 
     if num_errors:
       raise ParseError(num_errors)
+
+  @property
+  def source_file (self):
+    return self.parser.getSourceName()
 
 def string_parser (string):
   from precog.parser.sqlLexer import sqlLexer
@@ -139,17 +145,16 @@ def string_parser (string):
 
 class Expression (object):
 
-  def __init__ (self, text, tree=None, scope_obj=None, database=None):
+  def __init__ (self, text, tree=None, scope_obj=None):
     self.text = text.strip()
     self._tree = tree
     self.scope_obj = scope_obj
-    self.database = database
 
   @property
   def tree (self):
-    if not self._tree and self.text and self.scope_obj and self.database:
+    if not self._tree and self.text and self.scope_obj:
       self._tree = string_parser(self.text).parse_expression(
-        self.scope_obj.name, self.database).tree
+        self.scope_obj).tree
     return self._tree
 
   @property
@@ -184,7 +189,7 @@ class Expression (object):
           continue
         parts = [self.scope_obj.name.schema, self.scope_obj.name.obj]
         parts.extend(name)
-      references.add(self.database.find(parts))
+      references.add(self.scope_obj.database.find(parts))
 
     return references
 

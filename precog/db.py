@@ -157,3 +157,8 @@ class all_strings (object):
   def __exit__ (self, *args):
     global _numbers_as_strings
     _numbers_as_strings = self.orig_str_setting
+
+def filter_clause (column_name, values):
+  if values:
+    return "AND {} IN ('{}')".format(column_name, "', '".join(values))
+  return ''

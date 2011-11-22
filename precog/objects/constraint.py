@@ -14,7 +14,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
   @HasColumns.columns.setter
   def columns (self, value):
     HasColumns.columns.__set__(self, value)
-    if len(value) > 1:
+    if value and len(value) > 1:
       self._depends_on(value, '_columns', Reference.HARD)
 
   def _build_dep_set (self, get_objects, get_ref, test=lambda x: True):
@@ -66,7 +66,8 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
       return super().diff(other, **kwargs)
 
   @classmethod
-  def from_db (class_, schema, into_database):
+  def from_db (class_, schema, into_database, constraint_names=None):
+    constraint_filter = db.filter_clause('constraint_name', constraint_names)
     rs = db.query(""" SELECT constraint_name
                            , constraint_type
                            , status
@@ -93,10 +94,14 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                            , index_name
                       FROM dba_constraints dc
                       WHERE owner = :o
-                  """, o=schema, oracle_names=['constraint_name', 'r_owner',
-                                               'r_constraint_name',
-                                               'index_owner', 'index_name',
-                                               'table_name', 'column_name'])
+                        -- Ignore columns on tables in the recyclebin
+                        AND NOT (LENGTH(table_name) = 30
+                             AND table_name LIKE 'BIN$%')
+                         {}
+                  """.format(constraint_filter), o=schema,
+                  oracle_names=['constraint_name', 'r_owner',
+                                'r_constraint_name', 'index_owner',
+                                'index_name', 'table_name', 'column_name'])
 
     for row in rs:
       constraint_name = OracleFQN(schema,

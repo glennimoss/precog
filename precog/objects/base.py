@@ -37,6 +37,17 @@ class OracleObject (HasLog):
       # Ugh this feels hacky
       self._ignore_name = False
 
+  def become_deferred (self):
+    self.create_location = None
+    self.deferred = True
+    self.database = None
+    self.props = InsensitiveDict()
+    #self._clear_dependencies()
+    # downgrade back to base types
+    namespace = getattr(type(self), 'namespace', None)
+    if namespace:
+      self.__class__ = namespace
+
   def __repr__ (self, **other_props):
     try:
       return "<{}>".format(self.pretty_name)
@@ -127,9 +138,10 @@ class OracleObject (HasLog):
     circumstances when modifying an object.
     """
 
-    self.log.debug("Tearing down {}".format(self.pretty_name))
-    for ref in self._referenced_by:
-      self.log.debug(ref)
+    if self.log.isEnabledFor(logging.DEBUG):
+      self.log.debug("Tearing down {}".format(self.pretty_name))
+      for ref in self._referenced_by:
+        self.log.debug(ref)
     return [diff for ref in self._referenced_by
               if ref.integrity != Reference.SOFT
             for diff in ref.from_.drop()]
@@ -399,19 +411,20 @@ class OracleObject (HasLog):
   def _set_dependency (self, dep, integrity=Reference.HARD):
     if isinstance(dep, OracleObject):
       dep = [dep]
-    self.log.debug("{} depends {} on [{}]".format(self.pretty_name, integrity,
-      ", ".join(obj.pretty_name for obj in dep)))
+    if self.log.isEnabledFor(logging.DEBUG):
+      self.log.debug("{} depends {} on [{}]".format(self.pretty_name, integrity,
+        ", ".join(obj.pretty_name for obj in dep)))
     for obj in dep:
       ref = Reference(self, obj, integrity)
       self._dependencies.add(ref)
-      #obj.referenced_by(self, integrity)
       obj._referenced_by.add(ref)
 
   def _drop_dependency (self, old_deps):
     if isinstance(old_deps, OracleObject):
       old_deps = [old_deps]
-    self.log.debug("{} no longer depends on [{}]".format(self.pretty_name,
-      ", ".join(old_dep.pretty_name for old_dep in old_deps)))
+    if self.log.isEnabledFor(logging.DEBUG):
+      self.log.debug("{} no longer depends on [{}]".format(self.pretty_name,
+        ", ".join(old_dep.pretty_name for old_dep in old_deps)))
     remove_deps = set()
     for dep in self._dependencies:
       if dep.to in old_deps:
@@ -422,6 +435,10 @@ class OracleObject (HasLog):
             remove_refs.add(ref)
         dep.to._referenced_by.difference_update(remove_refs)
     self._dependencies.difference_update(remove_deps)
+
+  def _clear_dependencies (self):
+    if self._dependencies:
+      self._drop_dependency({ref.to for ref in self._dependencies})
 
   def _build_dep_set (self, get_objects, get_ref, test=lambda x: True):
     all = set()

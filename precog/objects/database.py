@@ -6,7 +6,7 @@ from precog.diff import order_diffs
 from precog.identifier import *
 from precog.objects import *
 from precog.objects._misc import *
-from precog.util import HasLog, progress_log, pluralize
+from precog.util import HasLog, progress_log, pluralize, split_list
 
 def _plural_type (obj):
   if not isinstance(obj, type):
@@ -14,6 +14,32 @@ def _plural_type (obj):
   if hasattr(obj, 'namespace'):
     obj = obj.namespace
   return pluralize(2, obj.pretty_type, False)
+
+def _resolve_type (obj):
+  if isinstance(obj, type):
+    obj_type = obj
+  else:
+    obj_type = type(obj)
+  if hasattr(obj_type, 'namespace'):
+    obj_type = obj_type.namespace
+  return obj_type
+
+def _freeze_name (name):
+  if name.generated:
+    # Clear generated flags, etc... so we don't have multiple version of the
+    # same name in the schema
+    clear_flags = lambda x: x and (OracleIdentifier(x.parts)
+                                   if x.parts else str(x))
+    name = OracleFQN(name.schema, clear_flags(name.obj),
+                     clear_flags(name.part))
+  return name
+
+def _file_cache_file_name (file_name):
+  return "precog_cache_file_{}.pickle".format(
+    os.path.splitext(os.path.basename(file_name))[0])
+
+def _db_cache_file_name (schema_name):
+  return "precog_cache_db_{}.pickle".format(schema_name)
 
 class Schema (OracleObject):
 
@@ -54,28 +80,22 @@ class Schema (OracleObject):
       if obj_type not in self.objects:
         self.objects[obj_type] = {}
       self.objects[obj_type][name] = untyped_obj
+      if obj_type in self.share_namespace:
+        self.shared_namespace[name] = untyped_obj
       self.deferred[(name, obj_type)] = untyped_obj
+
 
   def add (self, obj, alternate_name=None):
     if not obj:
       return
 
-    obj_type = type(obj)
-    if hasattr(obj_type, 'namespace'):
-      obj_type = obj_type.namespace
+    obj_type = _resolve_type(obj)
+
     name = obj.name
     if alternate_name:
       name = alternate_name
 
-    if name.generated:
-      # Clear generated flags, etc... so we don't have multiple version of the
-      # same name in the schema
-      clear_flags = lambda x: x and (OracleIdentifier(x.parts)
-                                     if x.parts else str(x))
-      name = OracleFQN(self.name.schema, clear_flags(name.obj),
-                       clear_flags(name.part))
-    else:
-      name = name.with_(schema=self.name.schema)
+    name = _freeze_name(name).with_(schema=self.name.schema)
 
     self.log.debug(
         "Adding {}{} as {}".format('deferred ' if obj.deferred else '',
@@ -96,6 +116,10 @@ class Schema (OracleObject):
         self.log.debug("Satisfying deferred {} with {}".format(
           deferred.pretty_name, obj.pretty_name))
         deferred.satisfy(obj)
+        # The caller who passed this obj should accept the object returned by
+        # this function, so this one should go away, but we don't want any
+        # lingering references.
+        obj._clear_dependencies()
       del self.deferred[(name, obj_type)]
       obj = deferred
     else:
@@ -123,6 +147,8 @@ class Schema (OracleObject):
       namespace[name] = obj
       if obj_type in self.share_namespace:
         self.shared_namespace[name] = obj
+      if obj.deferred:
+        self.deferred[(name, obj_type)] = obj
 
     if not alternate_name:
       # Special case for object columns. We want to look them up by true name or
@@ -144,6 +170,42 @@ class Schema (OracleObject):
 
     return obj
 
+  def drop (self, obj):
+    obj_type = _resolve_type(obj)
+    name = _freeze_name(obj.name)
+
+    if obj_type not in self.objects or name not in self.objects[obj_type]:
+      return
+
+    del self.objects[obj_type][name]
+
+    if obj_type in self.share_namespace:
+      del self.shared_namespace[name]
+
+    if (isinstance(obj, Column) and obj.name != obj.qualified_name and
+        obj.qualified_name in self.objects[obj_type]):
+      del self.objects[obj_type][obj.qualified_name]
+
+  def make_deferred (self, obj):
+    self.drop(obj)
+    obj.become_deferred()
+    self.add(obj)
+
+  def drop_invalid_objects (self, invalid_objs):
+    for obj in invalid_objs:
+      if obj.name.schema == self.name.schema:
+        referenced_by = {ref.from_ for ref in obj._referenced_by}
+        if referenced_by.difference(invalid_objs):
+          if self.log.isEnabledFor(logging.DEBUG):
+            self.log.debug("{} will revert to deferred. Referenced by [{}]"
+                           .format(obj.pretty_name, ", ".join(referenced_by)))
+          self.make_deferred(obj)
+        else:
+          self.log.debug("{} can be discarded.".format(obj.pretty_name))
+          # no refences go outside the invalidated set
+          obj._clear_dependencies()
+          self.drop(obj)
+
   def __make_fqn (self, name):
     if not isinstance(name, OracleFQN):
       name = OracleFQN(self.name.schema, name)
@@ -164,8 +226,8 @@ class Schema (OracleObject):
     #self.log.debug("Finding {} {}".format(obj_type.__name__, name))
     name = self.__make_fqn(name)
 
-    find_type = (obj_type.namespace if hasattr(obj_type, 'namespace')
-                 else obj_type)
+    find_type = _resolve_type(obj_type)
+
     # When you don't know what type you're looking up, it must be in the shared
     # namespace to return a real object. Otherwise it will be deferred.
     if find_type is OracleObject and name in self.shared_namespace:
@@ -178,7 +240,6 @@ class Schema (OracleObject):
 
     if deferred:
       obj = self.add(obj_type(name, deferred=True))
-      self.deferred[(name, find_type)] = obj
       return obj
 
     return None
@@ -269,84 +330,161 @@ class Schema (OracleObject):
                                               -- , 'VIEW'
                                                  )
                            ) AS objects
-                   , (SELECT count(*)
-                      FROM dba_tab_cols
-                      WHERE owner = :o) AS columns
+                   , CURSOR(SELECT table_name
+                                 , COUNT(*) AS num_columns
+                            FROM dba_tab_cols
+                            WHERE owner = :o
+                              -- Ignore columns on tables in the recyclebin
+                              AND NOT (LENGTH(table_name) = 30
+                                   AND table_name LIKE 'BIN$%')
+                            GROUP BY table_name) AS columns
                    , CURSOR(SELECT constraint_name
                                  , last_change
                             FROM dba_constraints
                             WHERE owner = :o
+                              -- Ignore columns on tables in the recyclebin
+                              AND NOT (LENGTH(table_name) = 30
+                                   AND table_name LIKE 'BIN$%')
                            ) AS constraints
               FROM dual
-      """, o=owner, oracle_names=['object_name', 'constraint_name'])
-    total_objects = (len(schema['objects']) + schema['columns'] +
+      """, o=owner, oracle_names=['table_name', 'object_name',
+                                  'constraint_name'])
+    total_objects = (len(schema['objects']) +
+                     sum(table['num_columns'] for table in schema['columns']) +
                      len(schema['constraints']))
+
+    def to_type (type, name):
+      try:
+        return globals()[_type_to_class_name(type)]
+      except KeyError as e:
+        raise PrecogError(
+          "{} [{}]: unexpected type".format(type, name)) from e
 
     modified_times = {}
     for object in schema['objects']:
-      object_type = object['object_type']
+      object_name = OracleFQN(owner, object['object_name'])
+      object_type = to_type(object['object_type'], object_name)
       if object_type not in modified_times:
         modified_times[object_type] = {}
-      modified_times[object_type][object['object_name']] = (
-        object['last_ddl_time'])
-    modified_times['CONSTRAINT'] = {cons['constraint_name']: cons['last_change']
-                                    for cons in schema['constraints']}
+      modified_times[object_type][object_name] = object['last_ddl_time']
+    modified_times[Constraint] = {OracleFQN(owner, cons['constraint_name']):
+                                  cons['last_change']
+                                  for cons in schema['constraints']}
 
     self.log.info("Schema {} has {}.".format(owner, pluralize(total_objects,
                                                                 'object')))
+    to_refresh = self.read_cache(modified_times)
 
-    cache_file_name = "precog_cache_db_{}.pickle".format(owner)
+    change_count = 0
+    for obj_type, names in to_refresh.items():
+      if names is None:
+        if obj_type is PlsqlCode:
+          change_count += sum(len(n) for t, n in modified_times.items()
+                              if issubclass(t, PlsqlCode))
+      elif obj_type is Column:
+        for table in schema['columns']:
+          if table['table_name'] in names:
+            change_count += table['num_columns']
+      else:
+        change_count += len(names)
+
+    if to_refresh:
+      def progress_message (o):
+        return "Fetched {{}} of schema {}.{}".format(owner,
+          " Currently fetching {}...".format(_plural_type(o))
+          if o else '')
+
+      actual = 0
+      for obj in progress_log((obj for obj_type, names in to_refresh.items()
+                               for obj in obj_type.from_db(
+                                 self.name.schema, self.database, names)),
+                              self.log, progress_message, count=change_count):
+        actual += 1
+        self.add(obj)
+      self.log.info("Fetching schema {} complete".format(owner))
+      self.cache(modified_times)
+    else:
+      self.log.info('Using cached schema.')
+
+  def read_cache (self, modified_times):
+    to_refresh = dict.fromkeys((Constraint,
+                                Index,
+                                PlsqlCode,
+                                Sequence,
+                                Synonym,
+                                Table))
     try:
-      with open(cache_file_name, 'rb') as cache_file:
+      with open(_db_cache_file_name(self.name.schema), 'rb') as cache_file:
         self.log.info('Found cache file. Reading cache...')
         unpickler = pickle.Unpickler(cache_file)
         cached_times = unpickler.load()
 
-        changed = set()
-        for obj_type in modified_times.keys() & cached_times.keys():
-          current_objs = modified_times[obj_type]
-          cached_objs = cached_times[obj_type]
+        cached_schema = unpickler.load()
+        self.props = cached_schema.props
+        self.shared_namespace = cached_schema.shared_namespace
+        self.objects = cached_schema.objects
+        self.deferred = cached_schema.deferred
+
+        change_count = 0
+        invalid_objs = []
+        for obj_type in modified_times.keys() | cached_times.keys():
+          changed = set()
+          unchanged = set()
+
+          current_objs = modified_times.get(obj_type, {})
+          cached_objs = cached_times.get(obj_type, {})
 
           changed.update(current_objs.keys() ^ cached_objs.keys())
 
           for obj_name in current_objs.keys() & cached_objs.keys():
             if current_objs[obj_name] != cached_objs[obj_name]:
               changed.add(obj_name)
+            else:
+              unchanged.add(obj_name)
+          change_count += len(changed)
 
-        if not changed:
-          cached_schema = unpickler.load()
-          self.props = cached_schema.props
-          self.shared_namespace = cached_schema.shared_namespace
-          self.objects = cached_schema.objects
-          self.deferred = cached_schema.deferred
-          self.log.info('Using cached schema.')
-          return
-        self.log.info('Cache is out of date.')
+          changed_objs = [self.objects[obj_type][obj_name]
+                          for obj_name in changed
+                          if obj_type in self.objects and
+                          obj_name in self.objects[obj_type]]
+          if obj_type is Table:
+            for table in changed_objs:
+              invalid_objs.extend(table.columns)
+          invalid_objs.extend(changed_objs)
+          if issubclass(obj_type, PlsqlCode):
+            if to_refresh[PlsqlCode] is None:
+              to_refresh[PlsqlCode] = set()
+            to_refresh[PlsqlCode].update("{}.{}".format(obj_type.type,
+                                                        obj_name.obj)
+                                         for obj_name in (current_objs.keys() -
+                                                          unchanged))
+          elif unchanged:
+              to_refresh[obj_type] = {obj_name.obj for obj_name in
+                                      (current_objs.keys() - unchanged)}
+              if not to_refresh[obj_type]:
+                del to_refresh[obj_type]
+
+        if invalid_objs:
+          self.drop_invalid_objects(invalid_objs)
+          self.log.info("Invalidating {}...".format(pluralize(len(invalid_objs),
+                                                         'out of date object')))
+
     except IOError:
       pass
     except EOFError:
       pass
 
-    def progress_message (o):
-      return "Fetched {{}} of schema {}.{}".format(owner,
-        " Currently fetching {}...".format(_plural_type(o))
-        if o else '')
+    if Table in to_refresh:
+      to_refresh[Column] = to_refresh[Table]
 
-    for obj in progress_log((obj for obj_type in (Column,
-                                                  Constraint,
-                                                  Index,
-                                                  PlsqlCode,
-                                                  Sequence,
-                                                  Synonym,
-                                                  Table)
-                             for obj in obj_type.from_db(self.name.schema,
-                                                         self.database)),
-                            self.log, progress_message, count=total_objects):
-      self.add(obj)
+    if to_refresh[PlsqlCode] is not None and not to_refresh[PlsqlCode]:
+      del to_refresh[PlsqlCode]
 
-    self.log.info("Fetching schema {} complete".format(owner))
+    return to_refresh
+
+  def cache (self, modified_times):
     self.log.info('Caching schema state...')
-    with open(cache_file_name, 'wb') as cache_file:
+    with open(_db_cache_file_name(self.name.schema), 'wb') as cache_file:
       pickler = pickle.Pickler(cache_file)
       pickler.dump(modified_times)
       pickler.dump(self)
@@ -368,19 +506,31 @@ class Database (HasLog):
     self._ignores = set()
     self._ignore_objs = set()
     self._ignore_schemas = set()
+    self._files = {}
+    self._top_file = None
 
     self.parser = None
     self.schemas = {}
     self.add(Schema(default_schema, database=self))
 
   def ignore_schema (self, schema_name):
+    schema_name = OracleFQN(schema_name)
     self._ignore_schemas.add(schema_name)
+    self.came_from_file(schema_name)
 
   def ignore (self, obj_name):
     if not obj_name.schema:
       obj_name = obj_name.with_(schema=self.default_schema)
 
     self._ignores.add(obj_name)
+    self.came_from_file(obj_name)
+
+  def drop_ignores (self, names):
+    split = split_list(names, lambda i: i.obj is not None)
+    if True in split:
+      self._ignores.difference_update(split[True])
+    if False in split:
+      self._ignore_schemas.difference_update(split[False])
 
   def ignores (self):
     if not self._ignore_objs:
@@ -412,13 +562,31 @@ class Database (HasLog):
     if schema_name not in self.schemas:
       self.add(Schema(schema_name))
 
-    return self.schemas[schema_name].add(obj)
+    obj = self.schemas[schema_name].add(obj)
+
+    self.came_from_file(obj)
+
+    return obj
+
+  def came_from_file (self, obj):
+    if self.parser:
+      objs = self._files.get(self.parser.source_file)
+      if not objs:
+        objs = []
+        self._files[self.parser.source_file] = objs
+      objs.append(obj)
 
   def add_file (self, filename):
     if not self.parser:
-      self.parser = parser.SqlPlusFileParser()
+      self.parser = parser.SqlPlusFileParser(self._files.keys())
 
     self.parser.parse(filename, self)
+
+    for file in self.parser.parsed_files:
+      if file not in self._files:
+        # Maybe there were no objects parsed from this file, but we still need
+        # to know about it because it's probably part of the include tree
+        self._files[file] = []
 
   def __make_fqn (self, name):
     if not isinstance(name, OracleFQN):
@@ -546,19 +714,17 @@ class Database (HasLog):
     oracle_database.add(db_schema)
 
     if tables:
-      for table in tables:
-        table = table.split(':')
-        table_name = table[0]
-        columns = None
-        if len(table) == 2:
-          columns = [c.strip() for c in table[1].split(',')]
+      tables = {OracleIdentifier(table_name): ([c.strip()
+                                                for c in columns[0].split(',')]
+                                               if len(columns) else None)
+                for table_name, *columns in (table.split(':', 1)
+                                             for table in tables)}
+      for col in Column.from_db(db_schema.name.schema, oracle_database, tables):
+        db_schema.add(col)
 
+      for table_name, columns in tables.items():
         table = db_schema.find(table_name, Table)
-        for col in Column.from_db(table.name.schema, oracle_database,
-                                  table.name.obj):
-          db_schema.add(col)
-
-        Data.from_db(table)
+        Data.from_db(table, columns)
         diffs.append(Diff(["-- Data for {}".format(table_name)] +
                           [datum.sql(fq=False, columns=columns)
                            for datum in table.data], produces=set(table.data)))
@@ -580,47 +746,14 @@ class Database (HasLog):
 
   @classmethod
   def from_file (class_, filename, default_schema=None):
-    database = None
-    basename = os.path.splitext(os.path.basename(filename.name))[0]
-    cache_file_name = "precog_cache_file_{}.pickle".format(basename)
-    try:
-      with open(cache_file_name, 'rb') as cache_file:
-        cache_logger = logging.getLogger('cache loader')
-        cache_logger.info('Found cache file. Reading cache...')
-        unpickler = pickle.Unpickler(cache_file)
-        cached = unpickler.load()
-        if cached[0][0] == filename.name:
-          for file, cached_mtime in cached:
-            if os.stat(file).st_mtime != cached_mtime:
-              cache_logger.info('Cache is out of date.')
-              break;
-          else:
-            database = unpickler.load()
-            # reestablish Schema links back to Database
-            for schema in database.schemas.values():
-              schema.database = database
-            database.log.info('Using cached definition.')
-        else:
-          cache_logger.info('Cache is invalid.')
-
-    except IOError:
-      pass
-    except EOFError:
-      pass
+    database = class_.read_cache(filename.name)
 
     if not database:
       database = class_(default_schema)
-
       database.add_file(filename)
       database.validate()
-
-      database.log.info('Caching parsed definition...')
-      with open(cache_file_name, 'wb') as cache_file:
-        file_times = [(file, os.stat(file).st_mtime)
-                      for file in database.parser.parsed_files]
-        pickler = pickle.Pickler(cache_file)
-        pickler.dump(file_times)
-        pickler.dump(database)
+      database._top_file = filename.name
+      database.cache()
 
     #if database.log.isEnabledFor(logging.DEBUG):
       #for schema in database.schemas.values():
@@ -634,7 +767,85 @@ class Database (HasLog):
 
     return database
 
+  @classmethod
+  def read_cache (class_, file_name):
+    try:
+      cache_file_name = _file_cache_file_name(file_name)
+      with open(cache_file_name, 'rb') as cache_file:
+        cache_logger = logging.getLogger('cache loader')
+        cache_logger.info('Found cache file. Reading cache...')
+        unpickler = pickle.Unpickler(cache_file)
+        cached = unpickler.load()
+        out_of_date_files = []
+        saw_top_file = False
+        for file, cached_mtime in cached:
+          if file == file_name:
+            saw_top_file = True
+          if os.stat(file).st_mtime != cached_mtime:
+            out_of_date_files.append(file)
+        if not saw_top_file:
+          cache_logger.info('Cache in file "{}" does not correspond with {}. '
+                            'Ignoring cache.'
+                            .format(cache_file_name, file_name))
+          return
+
+        database = unpickler.load()
+
+        if not database._files.keys() - out_of_date_files:
+          # Everything is out of date, so there's no reason to use the cache
+          cache_logger.info('Entire cache is out of date.')
+          return
+
+        database._top_file = file_name
+        # reestablish Schema links back to Database
+        for schema in database.schemas.values():
+          schema.database = database
+
+        if out_of_date_files:
+          database.log.info("Refreshing cache with {}..."
+                            .format(pluralize(len(out_of_date_files),
+                                                  'out of date file')))
+          database.refresh_files(out_of_date_files)
+
+        database.log.info('Using cached definition.')
+
+        return database
+    except IOError:
+      pass
+    except EOFError:
+      pass
+
+  def cache (self):
+    self.log.info('Caching parsed definition...')
+    with open(_file_cache_file_name(self._top_file), 'wb') as cache_file:
+      pickler = pickle.Pickler(cache_file)
+      pickler.dump([(file, os.stat(file).st_mtime)
+                    for file in self._files])
+      pickler.dump(self)
+
+  def refresh_files (self, files):
+    invalid_objs = []
+    for file in files:
+      if file in self._files:
+        split = split_list(self._files[file], lambda i: isinstance(i, str))
+        if True in split:
+          self.drop_ignores(split[True])
+        if False in split:
+          invalid_objs.extend(split[False])
+        del self._files[file]
+
+    schema_names = {obj.name.schema for obj in invalid_objs}
+
+    for schema_name in schema_names:
+      self.schemas[schema_name].drop_invalid_objects(invalid_objs)
+
+    for file in files:
+      self.add_file(file)
+
+    self.cache()
+
   def __getstate__ (self):
     state = super().__getstate__()
     state['parser'] = None
+    state['_ignore_objs'] = None
     return state

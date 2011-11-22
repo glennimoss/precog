@@ -55,6 +55,10 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
     self.internal_column_id = internal_column_id
     self.props['virtual_column'] = 'NO'
 
+  def _satisfy (self, other):
+    super()._satisfy(other)
+    self.internal_column_id = other.internal_column_id
+
   @property
   def hidden (self):
     return self.props['hidden_column'] == 'YES'
@@ -341,7 +345,8 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
     return diffs
 
   @classmethod
-  def from_db (class_, schema, into_database, table_name=None):
+  def from_db (class_, schema, into_database, table_names=None):
+    table_filter = db.filter_clause('table_name', table_names)
     rs = db.query(""" SELECT table_name
                            , column_name
                            , qualified_col_name
@@ -371,8 +376,11 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
                              ) AS constraints
                       FROM dba_tab_cols dtc
                       WHERE owner = :o
-                        AND (:t IS NULL OR table_name = :t)
-                  """, o=schema, t=table_name,
+                        -- Ignore columns on tables in the recyclebin
+                        AND NOT (LENGTH(table_name) = 30
+                             AND table_name LIKE 'BIN$%')
+                         {}
+                  """.format(table_filter), o=schema,
                   oracle_names=['table_name', 'column_name',
                                 'qualified_col_name', 'constraint_name',
                                 'data_type_owner', 'data_type'])
@@ -416,7 +424,7 @@ class VirtualColumn (HasExpressionWithDataDefault, Column):
   @HasExpressionWithDataDefault.expression.setter
   def expression (self, value):
     HasExpressionWithDataDefault.expression.__set__(self, value)
-    if self.expression.scope_obj:
+    if self.expression and self.expression.scope_obj:
       self.table = self.expression.scope_obj
 
   def _sql (self, fq=False, full_def=True):

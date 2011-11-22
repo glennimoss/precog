@@ -9,11 +9,11 @@ from precog.objects.has.prop import HasProp
 from precog.util import HasLog
 
 def _type_to_class (type, name):
-    try:
-      return globals()[_type_to_class_name(type)]
-    except KeyError as e:
-      raise PrecogError(
-        "{} [{}]: unexpected PL/SQL type".format(type, name)) from e
+  try:
+    return globals()[_type_to_class_name(type)]
+  except KeyError as e:
+    raise PrecogError(
+      "{} [{}]: unexpected PL/SQL type".format(type, name)) from e
 
 class PlsqlCode (OracleObject):
 
@@ -77,7 +77,9 @@ class PlsqlCode (OracleObject):
       self.log.error(e)
 
   @classmethod
-  def from_db (class_, schema, into_database):
+  def from_db (class_, schema, into_database, plsql_names=None):
+    plsql_filter = db.filter_clause("object_type || '.' || object_name",
+                                    plsql_names)
     rs = db.query(""" SELECT do.object_name
                            , do.object_type
                            , do.status
@@ -98,7 +100,9 @@ class PlsqlCode (OracleObject):
                                            , 'TYPE'
                                            , 'TYPE BODY'
                                            )
-                  """, o=schema, oracle_names=['object_name'])
+                         {}
+                  """.format(plsql_filter), o=schema,
+                  oracle_names=['object_name'])
 
     for row in rs:
       plsql_name = OracleFQN(schema, row['object_name'])

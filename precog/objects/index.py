@@ -94,7 +94,8 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
       return diffs
 
   @classmethod
-  def from_db (class_, schema, into_database):
+  def from_db (class_, schema, into_database, index_names=None):
+    index_filter = db.filter_clause('index_name', index_names)
     rs = db.query(""" SELECT index_name
                            , index_type
                            , uniqueness
@@ -111,8 +112,10 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
                              ) AS columns
                       FROM dba_indexes di
                       WHERE owner = :o
-                  """, o=schema, oracle_names=['tablespace_name', 'table_owner',
-                                               'table_name', 'column_name'])
+                         {}
+                  """.format(index_filter), o=schema,
+                  oracle_names=['tablespace_name', 'table_owner', 'table_name',
+                                'column_name'])
 
     for row in rs:
       index_name = OracleFQN(schema,

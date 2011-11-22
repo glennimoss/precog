@@ -7,20 +7,20 @@ from precog.objects.base import OracleObject, SkippedObject
 from precog.objects.column import Column
 from precog.objects.constraint import Constraint
 from precog.objects.index import Index
-from precog.objects.has.columns import HasColumns, OwnsColumns
+from precog.objects.has.columns import (HasColumns, OwnsColumns,
+                                        HasTableFromColumns)
 from precog.objects.has.constraints import HasConstraints
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType
 from precog.objects.plsql import Type
 from precog.util import InsensitiveDict
 
-class Data (HasColumns, OracleObject):
+class Data (HasColumns, HasTableFromColumns, OracleObject):
 
   def __init__ (self, table, columns, expressions, **props):
     super().__init__(OracleFQN(table.name.schema, table.name.obj,
       "__DATA_{}".format(len(table.data))), columns=columns, **props)
 
-    self.table = table
     self.expressions = []
     for i, exp in enumerate(expressions):
       exp = Data.parse(exp, self.columns[i])
@@ -145,11 +145,15 @@ class Data (HasColumns, OracleObject):
     return Data.parse(value, column)
 
   @classmethod
-  def from_db (class_, table):
+  def from_db (class_, table, column_names=None):
+    order_by = ''
+    if column_names:
+      order_by = "ORDER BY {}".format(", ".join(column_names))
     if not table.data:
       rs = db.query_all(""" SELECT *
                             FROM {}
-                        """.format(table.name))
+                            {}
+                        """.format(table.name, order_by))
 
       if rs:
         columns = [table.database.find(
@@ -274,7 +278,9 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
     return super().__repr__(data=self.data)
 
   def add_data (self, columns, values):
-    self.data.append(Data(self, columns, values))
+    data = Data(self, columns, values)
+    self.data.append(data)
+    return data
 
   def _sql (self, fq=True):
     name = self.name.obj
@@ -334,7 +340,8 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
     return diffs
 
   @classmethod
-  def from_db (class_, schema, into_database):
+  def from_db (class_, schema, into_database, table_names=None):
+    table_filter = db.filter_clause('table_name', table_names)
     rs = db.query(""" SELECT table_name
                            , table_type
                            , CASE WHEN table_type_owner = 'PUBLIC'
@@ -361,8 +368,9 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
                              ) AS constraints
                       FROM dba_all_tables dat
                       WHERE owner = :o
-                  """, o=schema, oracle_names=['table_name', 'column_name',
-                                               'tablespace_name'])
+                         {}
+                  """.format(table_filter), o=schema,
+                  oracle_names=['table_name', 'column_name', 'tablespace_name'])
 
     for row in rs:
       props = {'tablespace_name': row['tablespace_name'],

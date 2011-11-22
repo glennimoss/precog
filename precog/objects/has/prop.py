@@ -33,14 +33,17 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
       return not self == other
 
     def __repr__ (self, **other_props):
-      prop_value = getattr(self, prop_name)
-      if not isinstance(prop_value, str):
-        try:
-          prop_value = type(prop_value)(obj.pretty_name for obj in prop_value)
-        except TypeError:
-          pass
+      try:
+        prop_value = getattr(self, prop_name)
+        if not isinstance(prop_value, str):
+          try:
+            prop_value = type(prop_value)(obj.pretty_name for obj in prop_value)
+          except TypeError:
+            pass
 
-      other_props[prop_name] = prop_value
+        other_props[prop_name] = prop_value
+      except:
+        pass
       return super().__repr__(**other_props)
 
     def _diff_props (self, other):
@@ -59,6 +62,11 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
     def _satisfy (self, other):
       super()._satisfy(other)
       setattr(self, prop_name, getattr(other, prop_name, None))
+
+    def become_deferred (self):
+      super().become_deferred()
+      setattr(self, prop_name, None)
+
 
   def eq (self, other):
     return getattr(self, prop_name, None) == getattr(other, prop_name, None)

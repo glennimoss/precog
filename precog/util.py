@@ -230,3 +230,13 @@ class timer (object):
     if took > 1 or force:
       print("{} took {:.10f}".format(self.task, took))
     return took
+
+def split_list (list, func):
+  lists = {}
+  for item in list:
+    ret = func(item)
+    if ret not in lists:
+      lists[ret] = []
+    lists[ret].append(item)
+
+  return lists

@@ -19,7 +19,7 @@ class HasExpression (_HasExpression, _HasExpressionRefs):
   @_HasExpression.expression.setter
   def expression (self, value):
     if value and not isinstance(value, Expression):
-      value = Expression(value, scope_obj=self.table, database=self.database)
+      value = Expression(value, scope_obj=self.table)
     _HasExpression.expression.__set__(self, value)
 
   @expression.getter

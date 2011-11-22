@@ -727,7 +727,8 @@ scope tab_col_ref;
   $tab_col_ref::columns = []
 }
 @after {
-  table.add_data($tab_col_ref::columns, $insert_statement::expressions)
+  data = table.add_data($tab_col_ref::columns, $insert_statement::expressions)
+  $g::database.came_from_file(data)
 }
   : INSERT INTO table_name=aliasing_identifier
     {
@@ -1189,11 +1190,11 @@ label_name:	ID;
 
 */
 
-parse_expression[table_name, database] returns [exp]
+parse_expression[table] returns [exp]
 scope g, tab_col_ref;
 @init {
-  $g::database = $database
-  $tab_col_ref::table = $table_name
+  $g::database = $table.database
+  $tab_col_ref::table = $table.name
 }
 @after {
   $exp = $e.exp
@@ -1204,8 +1205,7 @@ scope g, tab_col_ref;
 expression returns [exp]
 @after {
   table = $g::database.find($tab_col_ref::table, Table)
-  $exp = Expression($e.text, tree=$e.tree, scope_obj=table,
-                    database=$g::database)
+  $exp = Expression($e.text, tree=$e.tree, scope_obj=table)
 }
     : e=expression_
     ;

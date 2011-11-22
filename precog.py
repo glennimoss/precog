@@ -70,7 +70,7 @@ if args.quiet:
   log_config['stream'] = sys.stdout
 elif args.verbose:
   if len(args.verbose) > 1:
-    log_config = {'style': '{', 'format': '{levelname} {name}: {message}'}
+    log_config['format'] = '{levelname} {name}: {message}'
     log_config['level'] = logging.DEBUG
   else:
     log_config['level'] = logging.INFO
