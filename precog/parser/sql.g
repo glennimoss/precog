@@ -127,25 +127,23 @@ sql_stmt returns [obj]
   ;
 
 sqlplus_stmt returns [stmt]
-/*
-  : TERMINATOR { $stmt = 'Repeat me!' }
-  | kQUIT  { $stmt = "Quittin' time!" }
-  */
   : { self.input.add(NL_CHANNEL) }
 
-    ( (AT_SIGN | relative=DOUBLE_AT_SIGN)
+    ( (AT_SIGN | DOUBLE_AT_SIGN)
       file_name=swallow_to_nl NL
+      // At one time we had the single @ as non-relative and @@ as relative
+      // but really who ever wants it to be non-relative? It's annoying to have
+      // to change files already using single @s.
       {
         file_name = $file_name.text
-        if $relative:
-          relative_dir = os.path.dirname(self.input.getSourceName())
+        relative_dir = os.path.dirname(self.input.getSourceName())
 
-          file_name = ''.join((relative_dir,
-                               os.sep if relative_dir else '',
-                               file_name))
+        file_name = ''.join((relative_dir,
+                             os.sep if relative_dir else '',
+                             file_name))
 
-        #$g::database.add_file(file_name)
         $sqlplus_file::included_files_.append(file_name)
+        $g::database.came_from_file(file_name, 'include')
       }
     | (~( AT_SIGN | DOUBLE_AT_SIGN ))=> command=swallow_to_nl NL
       { self.log.debug("Ignoring SQL*Plus command: {}".format($command.text)) }

@@ -1,4 +1,4 @@
-import logging, math, os, pickle
+import itertools, logging, math, os, pickle
 
 from precog import db
 from precog import parser
@@ -518,14 +518,14 @@ class Database (HasLog):
   def ignore_schema (self, schema_name):
     schema_name = OracleFQN(schema_name)
     self._ignore_schemas.add(schema_name)
-    self.came_from_file(schema_name)
+    self.came_from_file(schema_name, 'ignore')
 
   def ignore (self, obj_name):
     if not obj_name.schema:
       obj_name = obj_name.with_(schema=self.default_schema)
 
     self._ignores.add(obj_name)
-    self.came_from_file(obj_name)
+    self.came_from_file(obj_name, 'ignore')
 
   def drop_ignores (self, names):
     split = split_list(names, lambda i: i.obj is not None)
@@ -570,8 +570,10 @@ class Database (HasLog):
 
     return obj
 
-  def came_from_file (self, obj):
+  def came_from_file (self, obj, kind=None):
     if self.parser:
+      if kind:
+        obj = (kind, obj)
       objs = self._files.get(self.parser.source_file)
       if not objs:
         objs = []
@@ -582,13 +584,15 @@ class Database (HasLog):
     if not self.parser:
       self.parser = parser.SqlPlusFileParser(self._files.keys())
 
-    self.parser.parse(filename, self)
+    parsed = self.parser.parse(filename, self)
 
-    for file in self.parser.parsed_files:
+    for file in parsed:
       if file not in self._files:
         # Maybe there were no objects parsed from this file, but we still need
         # to know about it because it's probably part of the include tree
         self._files[file] = []
+
+    return parsed
 
   def __make_fqn (self, name):
     if not isinstance(name, OracleFQN):
@@ -808,8 +812,8 @@ class Database (HasLog):
                             .format(pluralize(len(out_of_date_files),
                                                   'out of date file')))
           database.refresh_files(out_of_date_files)
-
-        database.log.info('Using cached definition.')
+        else:
+          database.log.info('Using cached definition.')
 
         return database
     except IOError:
@@ -825,15 +829,19 @@ class Database (HasLog):
                     for file in self._files])
       pickler.dump(self)
 
-  def refresh_files (self, files):
+  def drop_files (self, files):
     invalid_objs = []
+    outdated_includes = set()
     for file in files:
       if file in self._files:
-        split = split_list(self._files[file], lambda i: isinstance(i, str))
-        if True in split:
-          self.drop_ignores(split[True])
-        if False in split:
-          invalid_objs.extend(split[False])
+        split = split_list(self._files[file],
+                           lambda i: i[0] if isinstance(i, tuple) else None)
+        if 'ignore' in split:
+          self.drop_ignores(i[1] for i in split['ignore'])
+        if 'include' in split:
+          outdated_includes.update(i[1] for i in split['include'])
+        if None in split:
+          invalid_objs.extend(split[None])
         del self._files[file]
 
     schema_names = {obj.name.schema for obj in invalid_objs}
@@ -841,10 +849,25 @@ class Database (HasLog):
     for schema_name in schema_names:
       self.schemas[schema_name].drop_invalid_objects(invalid_objs)
 
+    return outdated_includes
+
+  def refresh_files (self, files):
+    outdated_includes = self.drop_files(files)
+
+    files = [file for file in files if file not in outdated_includes]
+
+    included = []
     for file in files:
-      self.add_file(file)
+      included.extend(self.add_file(file))
+
+    while True:
+      outdated_includes = self.drop_files(
+        outdated_includes.difference(included))
+      if not outdated_includes:
+        break
 
     self.cache()
+    self.validate()
 
   def __getstate__ (self):
     state = super().__getstate__()

@@ -126,7 +126,7 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
                         r"(\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?)?\s*'$", value)
         if date:
           date_parts = date.groups()
-          datestr = "{0} {2}".format(*date_parts).strip()
+          datestr = " ".join(filter(None, date_parts[0:3:2]))
           formatstr = ["%Y{0}%m{0}%d".format(date_parts[1])]
           if date_parts[2]:
             formatstr.append(" %H:%M")

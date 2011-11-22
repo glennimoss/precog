@@ -107,6 +107,7 @@ class SqlPlusFileParser (HasLog):
       self.parsed_files.extend(parsed_files)
 
   def parse (self, filename, database):
+    included_here = []
     parse_queue = [filename]
     num_errors = 0
     for file in parse_queue:
@@ -124,12 +125,15 @@ class SqlPlusFileParser (HasLog):
         self.log.info("Parsing file {}".format(self.source_file))
         includes = self.parser.sqlplus_file(database).included_files
         parse_queue.extend(includes)
+        included_here.extend(includes)
+
         num_errors += self.parser.getNumberOfSyntaxErrors()
 
         self.parsed_files.append(self.source_file)
 
     if num_errors:
       raise ParseError(num_errors)
+    return included_here
 
   @property
   def source_file (self):
