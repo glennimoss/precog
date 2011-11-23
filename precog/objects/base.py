@@ -400,7 +400,7 @@ class OracleObject (HasLog):
             old_integrity = dep.integrity
             break
 
-    if old_dep != other or old_integrity != integrity:
+    if old_dep is not other or old_integrity != integrity:
       if old_dep:
         self._drop_dependency(old_dep)
       if other:
