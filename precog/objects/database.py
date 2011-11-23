@@ -787,7 +787,12 @@ class Database (HasLog):
         for file, cached_mtime in cached:
           if file == file_name:
             saw_top_file = True
-          if os.stat(file).st_mtime != cached_mtime:
+          current_mtime = None
+          try:
+            current_mtime = os.stat(file).st_mtime
+          except OSError:
+            pass
+          if current_mtime != cached_mtime:
             out_of_date_files.append(file)
         if not saw_top_file:
           cache_logger.info('Cache in file "{}" does not correspond with {}. '

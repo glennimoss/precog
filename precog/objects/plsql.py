@@ -1,4 +1,4 @@
-import re
+import difflib, re
 from precog import db
 from precog.diff import Diff, PlsqlDiff, Reference
 from precog.errors import PlsqlSyntaxError, PrecogError
@@ -13,9 +13,13 @@ def _type_to_class (type, name):
     return globals()[_type_to_class_name(type)]
   except KeyError as e:
     raise PrecogError(
-      "{} [{}]: unexpected PL/SQL type".format(type, name)) from e
+      '{} [{}]: unexpected PL/SQL type'.format(type, name)) from e
 
 class PlsqlCode (OracleObject):
+
+  def __init__ (self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.unified_diff = None
 
   @staticmethod
   def new (type, name, source, **props):
@@ -27,13 +31,23 @@ class PlsqlCode (OracleObject):
     return self.props['source']
 
   def create (self):
-    return PlsqlDiff("CREATE OR REPLACE {}".format(self.sql()), produces=self,
+    return PlsqlDiff('CREATE OR REPLACE {}'.format(self.sql()), produces=self,
                      priority=Diff.CREATE)
 
   def diff (self, other, **kwargs):
     diffs = super().diff(other, **kwargs)
 
-    if not diffs:
+    if diffs:
+      udiff = ''.join('-- {}'.format(diffline)
+                      for diffline in difflib.unified_diff(
+                        other.props['source'].splitlines(True),
+                        self.props['source'].splitlines(True),
+                        _with_location(other),
+                        _with_location(self)))
+      if udiff:
+        self.unified_diff = ''.join((udiff,
+                                     '' if udiff[-1] == '\n' else '\n'))
+    else:
       errors = other.errors(False)
       if errors or other.props['status'] != 'VALID':
         diffs.extend(self.rebuild())
@@ -49,9 +63,9 @@ class PlsqlCode (OracleObject):
     parts = ['ALTER', plsql_type, self.name, 'COMPILE']
     if extra_parameters:
       parts.append(extra_parameters)
-    parts.append("REUSE SETTINGS")
+    parts.append('REUSE SETTINGS')
 
-    return [PlsqlDiff(" ".join(parts), produces=self, terminator=';')]
+    return [Diff(' '.join(parts), produces=self)]
 
   def errors (self, throw=True):
     rs = db.query_all(""" SELECT line
@@ -107,7 +121,7 @@ class PlsqlCode (OracleObject):
     for row in rs:
       plsql_name = OracleFQN(schema, row['object_name'])
       yield _type_to_class(row['object_type'], plsql_name)(
-        plsql_name, source="".join(line['text'] for line in row['text']),
+        plsql_name, source=''.join(line['text'] for line in row['text']),
         database=into_database, create_location=(db.location,),
         status=row['status'])
     rs.close()
@@ -127,6 +141,18 @@ class PlsqlBody (HasProp('header', dependency=Reference.AUTODROP,
     if not self.header:
       header_class = _type_to_class(type(self).type.split()[0], self.name)
       self.header = self.database.find(self.name, header_class)
+
+  def _eq_header (self, other):
+    # We don't want to fail just because our headers differ in text
+    return True
+
+  def diff (self, other, **kwargs):
+    diffs = super().diff(other, **kwargs)
+
+    if not diffs and self.header != other.header:
+      diffs.extend(self.rebuild())
+
+    return diffs
 
 class Function (PlsqlCode):
   pass

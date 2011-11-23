@@ -1,3 +1,5 @@
+from precog.objects._misc import _with_location
+
 class PrecogError (Exception):
 
   def __str__ (self):
@@ -54,9 +56,6 @@ class PlsqlSyntaxError (OracleError):
           plsql_obj.pretty_name, line, error_props['position'] - 1,
           plsql_obj.sql().split('\n')[line-1], error_props['text'])))
     super().__init__("\n".join(parts))
-
-def _with_location (obj):
-  return ", ".join([obj.pretty_name] + obj.create_location)
 
 class ObjectError (PrecogError):
 

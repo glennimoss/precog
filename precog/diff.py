@@ -80,7 +80,7 @@ class Diff (object):
     return "Diff({!r}, {!r}, {!r})".format(self.sql, self.dependencies,
         self.produces)
 
-  def formatted (self, nosnip=False):
+  def formatted (self, *args, **kwargs):
     binds = ''
     parts = []
     for sql, binds in itertools.zip_longest(self.sql, self.binds):
@@ -144,10 +144,11 @@ class PlsqlDiff (Diff):
     for product in self.produces:
       product.errors()
 
-  def formatted (self, nosnip=False):
-    parts = []
+  def formatted (self, nosnip=False, udiff=False):
+    parts = ([obj.unified_diff for obj in self.produces if obj.unified_diff]
+             if udiff else [])
     for sql in self.sql:
-      sqlparts = sql.split('\n')
+      sqlparts = sql.rstrip('\n').split('\n')
       if not nosnip and len(sqlparts) > 10:
         sqlparts[1:-1] = ['  -- SNIP...']
       parts.extend(sqlparts)
@@ -231,15 +232,18 @@ def order_diffs (diffs):
       for product in diff.produces:
         if product in creates:
           other_diff = creates[product]
-          if other_diff.produces.issuperset(diff.produces):
-            if log.isEnabledFor(logging.DEBUG):
-              log.debug("Filtering {}, covered by {}".format(diff, other_diff))
-            unnecessary_creates.add(diff)
-            break;
-          elif other_diff.produces.issubset(diff.produces):
-            if log.isEnabledFor(logging.DEBUG):
-              log.debug("Filtering {}, covered by {}".format(other_diff, diff))
-            unnecessary_creates.add(other_diff)
+          if other_diff.produces != diff.produces:
+            if other_diff.produces.issuperset(diff.produces):
+              if log.isEnabledFor(logging.DEBUG):
+                log.debug("Filtering {}, covered by {}"
+                          .format(diff, other_diff))
+              unnecessary_creates.add(diff)
+              break;
+            elif other_diff.produces.issubset(diff.produces):
+              if log.isEnabledFor(logging.DEBUG):
+                log.debug("Filtering {}, covered by {}"
+                          .format(other_diff, diff))
+              unnecessary_creates.add(other_diff)
           else:
             raise DuplicateCreationError(diff, other_diff)
         creates[product] = diff
