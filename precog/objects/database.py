@@ -386,7 +386,8 @@ class Schema (OracleObject):
           change_count += sum(len(n) for t, n in modified_times.items()
                               if issubclass(t, PlsqlCode))
         else:
-          change_count += len(modified_times[obj_type])
+          if obj_type in modified_times:
+            change_count += len(modified_times[obj_type])
       else:
         change_count += len(names)
 
