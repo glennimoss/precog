@@ -15,6 +15,9 @@ def _type_to_class (type, name):
     raise PrecogError(
       '{} [{}]: unexpected PL/SQL type'.format(type, name)) from e
 
+_volatile_pat = re.compile(r'--@\s*volatile\s*$', re.I)
+_volatile = lambda s: _volatile_pat.search(s)
+
 class PlsqlCode (OracleObject):
 
   def __init__ (self, *args, **kwargs):
@@ -34,20 +37,31 @@ class PlsqlCode (OracleObject):
     return PlsqlDiff('CREATE OR REPLACE {}'.format(self.sql()), produces=self,
                      priority=Diff.CREATE)
 
+  def _diff_props (self, other):
+    prop_diff = super()._diff_props(other)
+
+    if 'source' in prop_diff:
+      sourcediff = [line for line in
+                    difflib.unified_diff(other.props['source'].splitlines(),
+                                         self.props['source'].splitlines(),
+                                         _with_location(other),
+                                         _with_location(self), lineterm='')]
+      # Look to see if the the only changes have --@ volatile and ignore diffs
+      # only containing these volatile changes. Useful for things like
+      # svn:keywords $Id$ etc.
+      if not [1 for line in sourcediff[2:]
+              if line[0] == '+' and not _volatile(line)]:
+        del prop_diff['source']
+
+      self.unified_diff = ''.join('-- {}\n'.format(diffline)
+                                  for diffline in sourcediff)
+
+    return prop_diff
+
   def diff (self, other, **kwargs):
     diffs = super().diff(other, **kwargs)
 
-    if diffs:
-      udiff = ''.join('-- {}'.format(diffline)
-                      for diffline in difflib.unified_diff(
-                        other.props['source'].splitlines(True),
-                        self.props['source'].splitlines(True),
-                        _with_location(other),
-                        _with_location(self)))
-      if udiff:
-        self.unified_diff = ''.join((udiff,
-                                     '' if udiff[-1] == '\n' else '\n'))
-    else:
+    if not diffs:
       errors = other.errors(False)
       if errors or other.props['status'] != 'VALID':
         diffs.extend(self.rebuild())
