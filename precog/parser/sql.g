@@ -712,9 +712,7 @@ sequence_prop
 create_synonym returns [obj]
   : CREATE (OR kREPLACE)? SYNONYM syn=identifier FOR target=identifier
     {
-      $obj = Synonym($syn.ident,
-                     for_object=$g::database.find($target.ident, OracleObject),
-                     database=$g::database)
+      $obj = Synonym($syn.ident, for_name=$target.ident, database=$g::database)
     }
   ;
 insert_statement
