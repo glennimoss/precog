@@ -132,10 +132,7 @@ class Diff (object):
                                                  for product in self.produces),
                                   id(self))
 
-class PlsqlDiff (Diff):
-
-  def __init__ (self, sql, terminator='\n/', **kwargs):
-    super().__init__(sql, terminator=terminator, **kwargs)
+class ErrorCheckingDiff (Diff):
 
   def apply (self):
     super().apply()
@@ -143,6 +140,11 @@ class PlsqlDiff (Diff):
     # log compile errors
     for product in self.produces:
       product.errors()
+
+class PlsqlDiff (ErrorCheckingDiff):
+
+  def __init__ (self, sql, **kwargs):
+    super().__init__(sql, terminator='\n/', **kwargs)
 
   def formatted (self, nosnip=False, udiff=False):
     parts = ([obj.unified_diff for obj in self.produces if obj.unified_diff]

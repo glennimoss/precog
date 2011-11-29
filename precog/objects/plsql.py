@@ -1,6 +1,6 @@
 import difflib, re
 from precog import db
-from precog.diff import Diff, PlsqlDiff, Reference
+from precog.diff import Diff, ErrorCheckingDiff, PlsqlDiff, Reference
 from precog.errors import PlsqlSyntaxError, PrecogError
 from precog.objects._assert import *
 from precog.objects._misc import *
@@ -63,7 +63,7 @@ class PlsqlCode (OracleObject):
 
     if not diffs:
       errors = other.errors(False)
-      if errors or other.props['status'] != 'VALID':
+      if errors:
         diffs.extend(self.rebuild())
 
     return diffs
@@ -79,7 +79,7 @@ class PlsqlCode (OracleObject):
       parts.append(extra_parameters)
     parts.append('REUSE SETTINGS')
 
-    return [Diff(' '.join(parts), produces=self)]
+    return [ErrorCheckingDiff(' '.join(parts), produces=self)]
 
   def errors (self, throw=True):
     rs = db.query_all(""" SELECT line
