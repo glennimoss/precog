@@ -1,4 +1,4 @@
-import itertools, logging, math, os, pickle
+import itertools, logging, math, os
 
 from precog import db
 from precog import parser
@@ -6,7 +6,8 @@ from precog.diff import order_diffs
 from precog.identifier import *
 from precog.objects import *
 from precog.objects._misc import *
-from precog.util import HasLog, progress_log, pluralize, split_list
+from precog.util import (HasLog, progress_log, pluralize, split_list,
+                         read_cache, write_cache)
 
 def _plural_type (obj):
   if not isinstance(obj, type):
@@ -418,65 +419,60 @@ class Schema (OracleObject):
                                 Sequence,
                                 Synonym,
                                 Table))
+
     try:
-      with open(_db_cache_file_name(self.name.schema), 'rb') as cache_file:
-        self.log.info('Found cache file. Reading cache...')
-        unpickler = pickle.Unpickler(cache_file)
-        cached_times = unpickler.load()
+      cached_times, cached_schema = read_cache(
+        _db_cache_file_name(self.name.schema))
 
-        cached_schema = unpickler.load()
-        self.props = cached_schema.props
-        self.shared_namespace = cached_schema.shared_namespace
-        self.objects = cached_schema.objects
-        self.deferred = cached_schema.deferred
+      self.props = cached_schema.props
+      self.shared_namespace = cached_schema.shared_namespace
+      self.objects = cached_schema.objects
+      self.deferred = cached_schema.deferred
 
-        change_count = 0
-        invalid_objs = []
-        for obj_type in modified_times.keys() | cached_times.keys():
-          changed = set()
-          unchanged = set()
+      change_count = 0
+      invalid_objs = []
+      for obj_type in modified_times.keys() | cached_times.keys():
+        changed = set()
+        unchanged = set()
 
-          current_objs = modified_times.get(obj_type, {})
-          cached_objs = cached_times.get(obj_type, {})
+        current_objs = modified_times.get(obj_type, {})
+        cached_objs = cached_times.get(obj_type, {})
 
-          changed.update(current_objs.keys() ^ cached_objs.keys())
+        changed.update(current_objs.keys() ^ cached_objs.keys())
 
-          for obj_name in current_objs.keys() & cached_objs.keys():
-            if current_objs[obj_name] != cached_objs[obj_name]:
-              changed.add(obj_name)
-            else:
-              unchanged.add(obj_name)
-          change_count += len(changed)
+        for obj_name in current_objs.keys() & cached_objs.keys():
+          if current_objs[obj_name] != cached_objs[obj_name]:
+            changed.add(obj_name)
+          else:
+            unchanged.add(obj_name)
+        change_count += len(changed)
 
-          changed_objs = [self.objects[obj_type][obj_name]
-                          for obj_name in changed
-                          if obj_type in self.objects and
-                          obj_name in self.objects[obj_type]]
-          if obj_type is Table:
-            for table in changed_objs:
-              invalid_objs.extend(table.columns)
-          invalid_objs.extend(changed_objs)
-          if issubclass(obj_type, PlsqlCode):
-            if to_refresh[PlsqlCode] is None:
-              to_refresh[PlsqlCode] = set()
-            to_refresh[PlsqlCode].update("{}.{}".format(obj_type.type,
-                                                        obj_name.obj)
-                                         for obj_name in (current_objs.keys() -
-                                                          unchanged))
-          elif unchanged:
-              to_refresh[obj_type] = {obj_name.obj for obj_name in
-                                      (current_objs.keys() - unchanged)}
-              if not to_refresh[obj_type]:
-                del to_refresh[obj_type]
+        changed_objs = [self.objects[obj_type][obj_name]
+                        for obj_name in changed
+                        if obj_type in self.objects and
+                        obj_name in self.objects[obj_type]]
+        if obj_type is Table:
+          for table in changed_objs:
+            invalid_objs.extend(table.columns)
+        invalid_objs.extend(changed_objs)
+        if issubclass(obj_type, PlsqlCode):
+          if to_refresh[PlsqlCode] is None:
+            to_refresh[PlsqlCode] = set()
+          to_refresh[PlsqlCode].update("{}.{}".format(obj_type.type,
+                                                      obj_name.obj)
+                                       for obj_name in (current_objs.keys() -
+                                                        unchanged))
+        elif unchanged:
+            to_refresh[obj_type] = {obj_name.obj for obj_name in
+                                    (current_objs.keys() - unchanged)}
+            if not to_refresh[obj_type]:
+              del to_refresh[obj_type]
 
-        if invalid_objs:
-          self.drop_invalid_objects(invalid_objs)
-          self.log.info("Invalidating {}...".format(pluralize(len(invalid_objs),
-                                                         'out of date object')))
-
-    except IOError:
-      pass
-    except EOFError:
+      if invalid_objs:
+        self.drop_invalid_objects(invalid_objs)
+        self.log.info("Invalidating {}...".format(pluralize(len(invalid_objs),
+                                                       'out of date object')))
+    except ValueError:
       pass
 
     if Table in to_refresh:
@@ -489,10 +485,7 @@ class Schema (OracleObject):
 
   def cache (self, modified_times):
     self.log.info('Caching schema state...')
-    with open(_db_cache_file_name(self.name.schema), 'wb') as cache_file:
-      pickler = pickle.Pickler(cache_file)
-      pickler.dump(modified_times)
-      pickler.dump(self)
+    write_cache(_db_cache_file_name(self.name.schema), [modified_times, self])
 
   def __getstate__ (self):
     state = super().__getstate__()
@@ -778,64 +771,56 @@ class Database (HasLog):
 
   @classmethod
   def read_cache (class_, file_name):
+    cache_log = logging.getLogger('Cache Loader')
     try:
       cache_file_name = _file_cache_file_name(file_name)
-      with open(cache_file_name, 'rb') as cache_file:
-        cache_logger = logging.getLogger('cache loader')
-        cache_logger.info('Found cache file. Reading cache...')
-        unpickler = pickle.Unpickler(cache_file)
-        cached = unpickler.load()
-        out_of_date_files = []
-        saw_top_file = False
-        for file, cached_mtime in cached:
-          if file == file_name:
-            saw_top_file = True
-          current_mtime = None
-          try:
-            current_mtime = os.stat(file).st_mtime
-          except OSError:
-            pass
-          if current_mtime != cached_mtime:
-            out_of_date_files.append(file)
-        if not saw_top_file:
-          cache_logger.info('Cache in file "{}" does not correspond with {}. '
-                            'Ignoring cache.'
-                            .format(cache_file_name, file_name))
-          return
+      cached_files, database = read_cache(cache_file_name)
 
-        database = unpickler.load()
+      out_of_date_files = []
+      saw_top_file = False
+      for file, cached_mtime in cached_files:
+        if file == file_name:
+          saw_top_file = True
+        current_mtime = None
+        try:
+          current_mtime = os.stat(file).st_mtime
+        except OSError:
+          pass
+        if current_mtime != cached_mtime:
+          out_of_date_files.append(file)
+      if not saw_top_file:
+        cache_log.info('Cache in file "{}" does not correspond with {}. '
+                       'Ignoring cache.'
+                       .format(cache_file_name, file_name))
+        return
 
-        if not database._files.keys() - out_of_date_files:
-          # Everything is out of date, so there's no reason to use the cache
-          cache_logger.info('Entire cache is out of date.')
-          return
+      if not database._files.keys() - out_of_date_files:
+        # Everything is out of date, so there's no reason to use the cache
+        cache_log.info('Entire cache is out of date.')
+        return
 
-        database._top_file = file_name
-        # reestablish Schema links back to Database
-        for schema in database.schemas.values():
-          schema.database = database
+      database._top_file = file_name
+      # reestablish Schema links back to Database
+      for schema in database.schemas.values():
+        schema.database = database
 
-        if out_of_date_files:
-          database.log.info("Refreshing cache with {}..."
-                            .format(pluralize(len(out_of_date_files),
-                                                  'out of date file')))
-          database.refresh_files(out_of_date_files)
-        else:
-          database.log.info('Using cached definition.')
+      if out_of_date_files:
+        database.log.info("Refreshing cache with {}..."
+                          .format(pluralize(len(out_of_date_files),
+                                                'out of date file')))
+        database.refresh_files(out_of_date_files)
+      else:
+        database.log.info('Using cached definition.')
 
-        return database
-    except IOError:
-      pass
-    except EOFError:
+      return database
+    except ValueError:
       pass
 
   def cache (self):
     self.log.info('Caching parsed definition...')
-    with open(_file_cache_file_name(self._top_file), 'wb') as cache_file:
-      pickler = pickle.Pickler(cache_file)
-      pickler.dump([(file, os.stat(file).st_mtime)
-                    for file in self._files])
-      pickler.dump(self)
+    write_cache(_file_cache_file_name(self._top_file),
+                [[(file, os.stat(file).st_mtime) for file in self._files],
+                 self])
 
   def drop_files (self, files):
     invalid_objs = []

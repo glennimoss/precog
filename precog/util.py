@@ -1,5 +1,5 @@
 from collections import OrderedDict
-import logging, sys, time
+import logging, pickle, sys, time
 
 class InsensitiveDict (OrderedDict):
 
@@ -240,3 +240,31 @@ def split_list (list, func):
     lists[ret].append(item)
 
   return lists
+
+_cache_version = 'precog cache v1'
+def read_cache (file_name):
+  cache_log = logging.getLogger('Cache Loader')
+  values = []
+  try:
+    with open(file_name, 'rb') as cache_file:
+      cache_log.info('Found cache file. Reading cache...')
+      unpickler = pickle.Unpickler(cache_file)
+      version = unpickler.load()
+      if version == _cache_version:
+        while True:
+          values.append(unpickler.load())
+      else:
+        cache_log.info('Cache file version is obsolete. Ignoring cache.')
+  except IOError:
+    pass
+  except EOFError:
+    pass
+
+  return values
+
+def write_cache (file_name, values):
+  with open(file_name, 'wb') as cache_file:
+    pickler = pickle.Pickler(cache_file)
+    pickler.dump(_cache_version)
+    for value in values:
+      pickler.dump(value)
