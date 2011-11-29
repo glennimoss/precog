@@ -198,7 +198,9 @@ class Schema (OracleObject):
         if referenced_by.difference(invalid_objs):
           if self.log.isEnabledFor(logging.DEBUG):
             self.log.debug("{} will revert to deferred. Referenced by [{}]"
-                           .format(obj.pretty_name, ", ".join(referenced_by)))
+                           .format(obj.pretty_name,
+                                   ", ".join(ref_obj.pretty_name
+                                             for ref_obj in referenced_by)))
           self.make_deferred(obj)
         else:
           self.log.debug("{} can be discarded.".format(obj.pretty_name))
