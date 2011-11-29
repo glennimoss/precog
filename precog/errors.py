@@ -51,10 +51,14 @@ class PlsqlSyntaxError (OracleError):
                                     errors[0]['attribute'].lower())]
     for error_props in errors:
       line = error_props['line']
+      source_line = line
+      if len(plsql_obj.create_location) > 1:
+        source_line += plsql_obj.create_location[1] - 1
       parts.append(str(SyntaxError(
-          "PL/SQL compile {}:".format(error_props['attribute'].lower()),
-          plsql_obj.pretty_name, line, error_props['position'] - 1,
-          plsql_obj.sql().split('\n')[line-1], error_props['text'])))
+        "PL/SQL compile {}:".format(error_props['attribute'].lower()),
+        _with_location(plsql_obj, False), source_line,
+        error_props['position'] - 1, plsql_obj.sql().split('\n')[line-1],
+        error_props['text'])))
     super().__init__("\n".join(parts))
 
 class ObjectError (PrecogError):
@@ -138,6 +142,5 @@ class UnsatisfiedDependencyError (PrecogError):
     return super().__str__() + "\n  ".join(line for obj in self.unsatisfied
                                            for line in (
       ['', "{} referenced by:".format(obj.pretty_name)] +
-      ["  {}".format(", ".join([ref.from_.pretty_name] +
-                               ref.from_.create_location))
+      ["  {}".format(_with_location(ref.from_))
        for ref in obj._referenced_by]))

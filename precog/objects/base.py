@@ -67,19 +67,13 @@ class OracleObject (HasLog):
   def __str__ (self):
     return self.sql()
 
-  @property
-  def create_location (self):
-    if not self._create_location:
+  def get_location (self, with_line=True):
+    if not self.create_location:
       return ['unknown']
-    return self._create_location
-
-  @create_location.setter
-  def create_location (self, value):
-    self._create_location = value
-    if value:
-      self._create_location = ['in "{}"'.format(value[0])]
-      if len(value) > 1:
-        self._create_location.append('line {}'.format(value[1]))
+    parts = ['in "{}"'.format(self.create_location[0])]
+    if with_line and len(self.create_location) > 1:
+      parts.append('line {}'.format(self.create_location[1]))
+    return ', '.join(parts)
 
   def __eq__ (self, other):
     if not isinstance(other, type(self)):
@@ -200,8 +194,8 @@ class OracleObject (HasLog):
           part = OracleIdentifier(part, trust_me=True, generated=True)
         self.name = OracleFQN(schema, obj, part)
 
-      if not self._create_location:
-        self._create_location = other.create_location
+      if not self.create_location:
+        self.create_location = other.create_location
 
       self.props.update(other.props)
 
@@ -230,7 +224,7 @@ class OracleObject (HasLog):
       if other.props['status'] and other.props['status'] != 'VALID':
         self.log.debug("{} has status {}".format(other.pretty_name,
           other.props['status']))
-        return other.rebuild()
+        return self.rebuild()
 
     return []
 

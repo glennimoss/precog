@@ -77,7 +77,7 @@ scope tab_col_ref { alias_map; table; columns }
 }
 
 sqlplus_file[database] returns [included_files]
-scope { included_files_ ; next_obj_props }
+scope { included_files_ ; next_obj_props ; create_location }
 scope g;
 @init {
   $g::database = $database
@@ -88,13 +88,13 @@ scope g;
   $included_files = $sqlplus_file::included_files_
 }
     : ( {
-          create_location = self.get_location()
+          $sqlplus_file::create_location = self.get_location()
         }
         ( stmt=sql_stmt
         | stmt=plsql_stmt
         ) {
             if $stmt.obj:
-              $stmt.obj.create_location = create_location
+              $stmt.obj.create_location = $sqlplus_file::create_location
               $stmt.obj.props.update($sqlplus_file::next_obj_props)
               $g::database.add($stmt.obj)
             $sqlplus_file::next_obj_props = InsensitiveDict()
@@ -745,6 +745,9 @@ insert_expression
   ;
 
 plsql_object_def
+@init {
+  $sqlplus_file::create_location = self.get_location()
+}
   : plsql_function
   | plsql_procedure
   | plsql_trigger
