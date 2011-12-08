@@ -41,16 +41,17 @@ class PlsqlCode (OracleObject):
     prop_diff = super()._diff_props(other)
 
     if 'source' in prop_diff:
-      sourcediff = [line for line in
-                    difflib.unified_diff(other.props['source'].splitlines(),
-                                         self.props['source'].splitlines(),
-                                         _with_location(other),
-                                         _with_location(self), lineterm='')]
+      sourcediff = list(difflib.unified_diff(other.props['source'].splitlines(),
+                                             self.props['source'].splitlines(),
+                                             _with_location(other),
+                                             _with_location(self), lineterm=''))
       # Look to see if the the only changes have --@ volatile and ignore diffs
       # only containing these volatile changes. Useful for things like
       # svn:keywords $Id$ etc.
-      if not [1 for line in sourcediff[2:]
-              if line[0] == '+' and not _volatile(line)]:
+      adds = [line for line in sourcediff[2:] if line[0] == '+']
+      subs = [line for line in sourcediff[2:] if line[0] == '-']
+      if len(adds) == len(subs) and not [1 for line in adds
+                                         if not _volatile(line)]:
         del prop_diff['source']
 
       self.unified_diff = ''.join('-- {}\n'.format(diffline)

@@ -29,6 +29,9 @@ create type gt_string is table of varchar2(100);
 /
 
 CREATE OR REPLACE PACKAGE pack AS
+  /**
+   * $Id: something$ --@volatile
+   */
   PROCEDURE bar (
     p_param22 NUMBER
   , o_return OUT VARCHAR2
@@ -36,6 +39,7 @@ CREATE OR REPLACE PACKAGE pack AS
 
   TYPE tt_foo IS TABLE OF VARCHAR2(100);
   FUNCTION foo (p_foo tt_foo) RETURN gt_string;
+
 END pack;
 /
 
