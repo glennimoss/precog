@@ -25,13 +25,17 @@ create table foo
 
 @@ test3.sql
 
+create type gt_string is table of varchar2(100);
+/
+
 CREATE OR REPLACE PACKAGE pack AS
   PROCEDURE bar (
     p_param22 NUMBER
   , o_return OUT VARCHAR2
   );
 
-  FUNCTION foo RETURN number;
+  TYPE tt_foo IS TABLE OF VARCHAR2(100);
+  FUNCTION foo (p_foo tt_foo) RETURN gt_string;
 END pack;
 /
 
@@ -45,14 +49,17 @@ CREATE OR REPLACE PACKAGE BODY pack AS
     o_return := 'awesome sauce';
   END bar;
 
-  FUNCTION foo RETURN number AS
-    l_latest NUMBER;
+  FUNCTION foo (p_foo tt_foo) RETURN gt_string AS
+    l_foo gt_string := gt_string();
   BEGIN
-    SELECT max(foo_id)
-    INTO l_latest
-    FROM foo;
-
-    RETURN l_latest;
+    l_foo.extend(p_foo.count);
+    for i in 1..p_foo.count loop
+      l_foo(i) := 'from foo: ' || p_foo(i);
+    end loop;
+    --FOR l_foo in 1..p_foo.count LOOP
+      --PIPE ROW ('l_foo is ' || p_foo(l_foo));
+    --END LOOP;
+    return l_foo;
   END foo;
 END pack;
 /
@@ -78,3 +85,6 @@ create sequence the_seq increment by 9;
   --, constraint awesomesauce_pk primary key (n, m)
   --, CONSTRAINT awesomesauce_fk FOREIGN KEY (n, m) REFERENCES coolbeans (n, m)
 --);
+
+create synonym bogus_syn for nonexistent_schema.totally_bogus;
+

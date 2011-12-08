@@ -6,6 +6,12 @@ create table bar
   , CONSTRAINT bar_pk PRIMARY KEY (id, whee)
 );
 
+ @ dir/test4.sql
+-- @dir/test5.sql
+-- @dir/test6a.sql
+
+-- @ ignore FARGFUG
+
 create type test_type as object (num number(7), other2 varchar2(100));
 /
 
