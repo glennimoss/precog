@@ -96,7 +96,8 @@ try:
         change_str = pluralize(changes, 'change')
         print("Found {}{}\n".format(change_str, retry),
               file=sys.stderr)
-        print("\n\n".join(diff.formatted(args.no_apply, True) for diff in diffs))
+        print("\n\n".join(diff.formatted(args.no_apply, True)
+                          for diff in diffs))
         print()
 
         if args.no_apply:
@@ -141,7 +142,9 @@ try:
         retry = ' that can be retried.'
 
     else:
-      print("Oracle is up to date with {}".format(args.file.name),
+      print('Database "{}@{}" is up to date with {}'.format(args.username,
+                                                            args.dsn,
+                                                            args.file.name),
           file=sys.stderr)
 
   elif args.dump:
