@@ -1475,7 +1475,6 @@ kNVARCHAR2 : {self.input.LT(1).text.lower() == 'nvarchar2'}? ID;
 kOBJECT : {self.input.LT(1).text.lower() == 'object'}? ID;
 kPIPELINED : {self.input.LT(1).text.lower() == 'pipelined'}? ID;
 kPRIMARY : {self.input.LT(1).text.lower() == 'primary'}? ID;
-kQUIT : {self.input.LT(1).text.lower() == 'quit' and self.aloneOnLine()}? ID;
 kREFERENCES : {self.input.LT(1).text.lower() == 'references'}? ID;
 kREPLACE : {self.input.LT(1).text.lower() == 'replace'}? ID;
 kRETURN : {self.input.LT(1).text.lower() == 'return'}? ID;
