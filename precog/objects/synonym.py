@@ -19,10 +19,11 @@ class Synonym (_HasForName, OracleObject):
 
   @name.setter
   def name (self, value):
+    if (self.for_name and
+        (self.for_name.schema is None or
+         self.for_name.schema == self._name.schema)):
+      self.for_name = self.for_name.with_(schema=value.schema)
     self._name = value
-    if (self.for_name and self.for_name.schema is None and
-        self._name.schema is not None):
-      self.for_name = self.for_name
 
   def _sql (self, fq=True):
     name = self.name

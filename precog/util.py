@@ -241,7 +241,7 @@ def split_list (list, func):
 
   return lists
 
-_cache_version = 'precog cache v1'
+_cache_version = 'precog cache v2'
 def read_cache (file_name):
   cache_log = logging.getLogger('Cache Loader')
   values = []

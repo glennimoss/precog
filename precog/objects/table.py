@@ -273,6 +273,8 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
     self._name = value
     # Reset the names of all the columns
     self.columns = self._columns
+    for datum in self.data:
+      datum.name = self.name.with_(part=datum.name.part)
 
   def __repr__ (self):
     return super().__repr__(data=self.data)

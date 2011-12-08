@@ -66,6 +66,36 @@ class Schema (OracleObject):
     self.objects = {}
     self.deferred = {}
 
+  @property
+  def name (self):
+    return self._name
+
+  @name.setter
+  def name (self, value):
+    self._name = value
+    if hasattr(self, 'objects'):
+      def rename (d, schema):
+        new_d = {}
+        for name, obj in d.items():
+          name = name.with_(schema=schema)
+          obj.name = obj.name.with_(schema=schema)
+          new_d[name] = obj
+        return new_d
+
+      for obj_type, namespace in self.objects.items():
+        self.objects[obj_type] = rename(namespace, self.name.schema)
+      self.shared_namespace = rename(self.shared_namespace, self.name.schema)
+      new_deferred = {}
+      for key, obj in self.deferred.items():
+        if type(key) is tuple:
+          key = (key[0].with_(schema=self.name.schema), key[1])
+        elif type(key) is frozenset:
+          key = frozenset(name.with_(schema=self.name.schema) for name in key)
+
+        obj.name = obj.name.with_(schema=self.name.schema)
+        new_deferred[key] = obj
+      self.deferred = new_deferred
+
   def _resolve_unknown_type (self, name, obj_type):
     if obj_type is not OracleObject and (name, OracleObject) in self.deferred:
       untyped_obj = self.deferred[(name, OracleObject)]
@@ -107,6 +137,18 @@ class Schema (OracleObject):
     namespace = self.objects[obj_type]
 
     self._resolve_unknown_type(name, type(obj))
+
+    # Special case for deferred lookups to unique constraints by FK constraints
+    if isinstance(obj, UniqueConstraint):
+      columns_set = frozenset(col.name.with_(schema=self.name.schema)
+                          for col in obj.columns)
+      if columns_set in self.deferred:
+        self.log.debug(
+          "Satisfying deferred Unique Key {} on {} with {}".format(
+            self.deferred[columns_set], columns_set, obj))
+        self.deferred[columns_set].satisfy(obj)
+        obj = self.deferred[columns_set]
+        del self.deferred[columns_set]
 
     if (name, obj_type) in self.deferred:
       # Not a name conflict
@@ -156,18 +198,6 @@ class Schema (OracleObject):
       # their qualified name
       if isinstance(obj, Column) and obj.name != obj.qualified_name:
         self.add(obj, obj.qualified_name)
-
-    # Special case for deferred lookups to unique constraints by FK constraints
-    if isinstance(obj, UniqueConstraint):
-      columns_set = frozenset(col.name.with_(schema=self.name.schema)
-                          for col in obj.columns)
-      if columns_set in self.deferred:
-        self.log.debug(
-          "Satisfying deferred Unique Key {} on {} with {}".format(
-            self.deferred[columns_set], columns_set, obj))
-        self.deferred[columns_set].satisfy(obj)
-        obj = self.deferred[columns_set]
-        del self.deferred[columns_set]
 
     return obj
 
@@ -496,9 +526,7 @@ class Database (HasLog):
 
   def __init__ (self, default_schema=None):
     super().__init__()
-    if not default_schema:
-      default_schema = db.user
-    self.default_schema = OracleIdentifier(default_schema)
+    self.default_schema = default_schema
     #self.log.debug("Creating with default schema {}".format(default_schema))
 
     self._ignores = set()
@@ -510,6 +538,30 @@ class Database (HasLog):
     self.parser = None
     self.schemas = {}
     self.add(Schema(default_schema, database=self))
+
+  @property
+  def default_schema (self):
+    return self._default_schema
+
+  @default_schema.setter
+  def default_schema (self, value):
+    if not value:
+      value = db.user
+    value = OracleIdentifier(value)
+    if hasattr(self, '_default_schema'):
+      old_schema_name = self._default_schema
+      if old_schema_name != value:
+        old_schema = self.schemas[old_schema_name]
+        del self.schemas[old_schema_name]
+        old_schema.name = OracleFQN(value)
+        self.add(old_schema)
+
+        self._ignores = {(name.with_(schema=value)
+                          if name.schema == old_schema_name else name)
+                         for name in self._ignores}
+        self._ignore_objs = set()
+
+    self._default_schema = value
 
   def ignore_schema (self, schema_name):
     schema_name = OracleFQN(schema_name)
@@ -748,7 +800,7 @@ class Database (HasLog):
 
   @classmethod
   def from_file (class_, filename, default_schema=None):
-    database = class_.read_cache(filename.name)
+    database = class_.read_cache(filename.name, default_schema)
 
     if not database:
       database = class_(default_schema)
@@ -770,7 +822,7 @@ class Database (HasLog):
     return database
 
   @classmethod
-  def read_cache (class_, file_name):
+  def read_cache (class_, file_name, default_schema=None):
     cache_log = logging.getLogger('Cache Loader')
     try:
       cache_file_name = _file_cache_file_name(file_name)
@@ -803,6 +855,8 @@ class Database (HasLog):
       # reestablish Schema links back to Database
       for schema in database.schemas.values():
         schema.database = database
+
+      database.default_schema = default_schema
 
       if out_of_date_files:
         database.log.info("Refreshing cache with {}..."

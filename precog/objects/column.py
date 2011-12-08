@@ -72,11 +72,21 @@ class Column (HasConstraints, HasDataDefault, _HasTable,
       self.table = table
     return table
 
-  @HasUserType.user_type.setter
-  def user_type (self, value):
-    HasUserType.user_type.__set__(self, value)
+  @table.setter
+  def table (self, value):
+    _HasTable.table.__set__(self, value)
     if value:
-      self.props['data_type'] = value.name.lower()
+      self.name = value.name.with_(part=self.name.part)
+
+  @property
+  def props (self):
+    if self.user_type:
+      self._props['data_type'] = self.user_type.name.lower()
+    return self._props
+
+  @props.setter
+  def props (self, value):
+    self._props = value
 
   @HasConstraints.constraints.getter
   def constraints (self):
