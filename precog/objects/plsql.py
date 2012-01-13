@@ -121,14 +121,16 @@ class PlsqlCode (OracleObject):
                              ) AS text
                       FROM dba_objects do
                       WHERE do.owner = :o
-                        AND object_type IN ( 'FUNCTION'
-                                           , 'PACKAGE'
-                                           , 'PACKAGE BODY'
-                                           , 'PROCEDURE'
-                                           , 'TRIGGER'
-                                           , 'TYPE'
-                                           , 'TYPE BODY'
-                                           )
+                        AND do.object_type IN ( 'FUNCTION'
+                                              , 'PACKAGE'
+                                              , 'PACKAGE BODY'
+                                              , 'PROCEDURE'
+                                              , 'TRIGGER'
+                                              , 'TYPE'
+                                              , 'TYPE BODY'
+                                              )
+                        -- Ignore secretly generated types for PL/SQL types
+                        AND do.object_name NOT LIKE 'SYS_PLSQL%'
                          {}
                   """.format(plsql_filter), o=schema,
                   oracle_names=['object_name'])
