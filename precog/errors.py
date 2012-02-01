@@ -1,4 +1,5 @@
 from precog.objects._misc import _with_location
+from precog.util import pluralize
 
 class PrecogError (Exception):
 
@@ -14,8 +15,8 @@ class ParseError (PrecogError):
     self.num_errors = num_errors
 
   def __str__ (self):
-    return "{}{} error{} in schema definition".format(super().__str__(),
-        self.num_errors, 's' if self.num_errors > 1 else '')
+    return "{}{} {} in schema definition".format(super().__str__(),
+        pluralize(self.num_errors, 'error'))
 
 class SyntaxError (ParseError):
   def __init__ (self, title, source_name, line, column, line_text,
@@ -132,6 +133,13 @@ class OracleNameError (PrecogError):
 
 class ReservedNameError (OracleNameError):
   pass
+
+class UndefinedVariableError (PrecogError):
+  def __init__ (self, var_name):
+    self.var_name = var_name
+
+  def __str__ (self):
+    return "{}{}".format(super().__str__(), self.var_name)
 
 class UnsatisfiedDependencyError (PrecogError):
 

@@ -224,3 +224,33 @@ def name_from_oracle (name):
   except OracleNameError:
     # It came from oracle... it SHOULD be good :P
     return OracleIdentifier(name, True)
+
+defines = {}
+def define (var_name, value):
+  defines[var_name] = OracleIdentifier(value)
+
+_var_ref = re.compile(r'^&\s*(\w+)\.?$')
+def VariableIdentifier (var_name):
+  var_name = _var_ref.match(var_name).group(1)
+
+  if var_name not in defines:
+    raise UndefinedVariableError(var_name)
+  return defines[var_name]
+
+"""
+class VariableIdentifier (OracleIdentifier):
+
+  def __new__ (class_, var_name):
+
+
+    self = super().__new__(class_, '&{}.'.format(var_name), True)
+    self.var_name = var_name
+
+    return self
+
+  def resolve (self):
+    return '<{}>'.format(self.var_name)
+
+  def __getnewargs__ (self):
+    return (self.var_name,)
+"""

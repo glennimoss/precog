@@ -16,7 +16,7 @@ tokens {
   CALL;
 }
 
-scope g { database }
+scope g { database ; var_dict }
 
 scope tab_col_ref { alias_map; table; columns }
 
@@ -185,13 +185,13 @@ directive_option
   ;
 
 identifier returns [ident]
-  : first=ID ( DOT second=ID ( DOT third=ID )? )?
+  : first=tID ( DOT second=tID ( DOT third=tID )? )?
     // TODO: this should probably check for schemas to determine if it's
     // schema.obj or obj.part
     {
-      schema = $first.text if $second else None
-      obj = $second.text if $second else $first.text
-      part = $third.text if $third else None
+      schema = $first.id if $second.id else None
+      obj = $second.id if $second.id else $first.id
+      part = $third.id if $third.id else None
       $ident = OracleFQN(schema, obj, part)
     }
   ;
@@ -201,6 +201,16 @@ tID returns [id, token]
     {
       $id = OracleIdentifier($i.text)
       $token = $i
+    }
+  | i=VARIABLE
+    {
+      $token = $i
+      try:
+        $id = VariableIdentifier($i.text)
+      except UndefinedVariableError as e:
+        self.logSyntaxError('Variable &{} is undefined.'.format(e.var_name),
+                            self.input, $token.index, $token.line,
+                            $token.charPositionInLine)
     }
   ;
 
@@ -1703,6 +1713,10 @@ AT_SIGN
 DOUBLE_AT_SIGN
 	:	'@@'
 	;
+fragment
+AMPERSAND
+  : '&'
+  ;
 CARET
   : '^'
   ;
@@ -1790,6 +1804,9 @@ DOUBLEQUOTED_STRING
 DIRECTIVE
 	:	'--@'
 	;
+VARIABLE
+  : AMPERSAND SPACE* i=ID '.'?
+  ;
 
 NL : '\r'? '\n' { $channel=NL_CHANNEL } ;
 SPACE	:	(' '|'\t') { $channel=HIDDEN } ;
