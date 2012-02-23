@@ -223,7 +223,10 @@ class Schema (OracleObject):
     self.add(obj)
 
   def drop_invalid_objects (self, invalid_objs):
-    for obj in invalid_objs:
+    self.log.info("Invalidating {}...".format(pluralize(len(invalid_objs),
+                                                        'out of date object')))
+    for obj in progress_log(invalid_objs, self.log,
+                            "Purged {} of invalidated objects."):
       if obj.name.schema == self.name.schema:
         referenced_by = {ref.from_ for ref in obj._referenced_by}
         if referenced_by.difference(invalid_objs):
@@ -500,8 +503,6 @@ class Schema (OracleObject):
 
       if invalid_objs:
         self.drop_invalid_objects(invalid_objs)
-        self.log.info("Invalidating {}...".format(pluralize(len(invalid_objs),
-                                                       'out of date object')))
     except ValueError:
       pass
 
