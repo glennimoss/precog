@@ -44,15 +44,17 @@ _numbers_as_strings = False
 _max_cursors = 300
 user = None
 location = None
+dsn = None
 
 def connect (connect_string):
-  global _connection, _max_cursors, user, location
+  global _connection, _max_cursors, user, dsn, location
   if _connection:
     _connection.close()
 
   _connection = cx_Oracle.connect(connect_string)
   user = OracleIdentifier(_connection.username)
-  location = "{}@{}".format(user, _connection.dsn)
+  dsn = _connection.dsn
+  location = "{}@{}".format(user, dsn)
   # The recyclebin causes problems when trying to drop several objects that
   # depend on each other.
   execute('ALTER SESSION SET RECYCLEBIN=OFF')

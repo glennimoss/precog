@@ -40,7 +40,7 @@ def _file_cache_file_name (file_name):
     os.path.splitext(os.path.basename(file_name))[0])
 
 def _db_cache_file_name (schema_name):
-  return "precog_cache_db_{}.pickle".format(schema_name)
+  return "precog_cache_db_{}-{}.pickle".format(schema_name, db.dsn)
 
 class Schema (OracleObject):
 
