@@ -1679,6 +1679,9 @@ ID
 		( 'a' .. 'z' | '0' .. '9' | '_' | '$' | '#' )*
 	|	DOUBLEQUOTED_STRING
 	;
+PLSQL_COMPILE_DIRECTIVE
+  : '$' ID
+  ;
 SEMI
 	:	';'
 	;
