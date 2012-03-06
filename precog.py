@@ -134,9 +134,12 @@ try:
           successes = changes - errors
           print("Successfully applied {}."
                 .format(pluralize(successes, 'change')), file=sys.stderr)
-        if not errors or not successes:
+        if not errors:
           # We're done here
           break
+        if not successes:
+          # Terminate with a nonzero status code
+          sys.exit(1)
         # Let's retry those that didn't work
         diffs = unapplied_diffs
         retry = ' that can be retried.'
