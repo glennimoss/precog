@@ -75,7 +75,8 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
       table_name = table_name.obj
     values = {col: val for col, val in self.values().items() if val is not None}
     if columns:
-      values = InsensitiveDict((col, values[col]) for col in columns)
+      values = InsensitiveDict((col, values[col])
+                               for col in columns if col in values)
 
     return "INSERT INTO {} ({}) VALUES ({})".format(table_name.lower(),
       ", ".join(values.keys()), ", ".join(Data.format(val)

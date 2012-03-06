@@ -47,7 +47,8 @@ parser.add_argument('--schema',
 parser.add_argument('--dump', action='store_true',
     help='Dump specified schema.')
 parser.add_argument('-t', '--table', action='append',
-                    help='Specify a table name to dump its data.')
+                    help='Specify a table name to dump its data. Repeat as '
+                    'needed. Columns can be specified like TABLE:COL1,COL2,...')
 
 # User-input options
 prompt_group = parser.add_mutually_exclusive_group()
@@ -60,8 +61,7 @@ prompt_group.add_argument('-n', '--no-apply', action='store_true',
 args = parser.parse_args()
 
 if not args.file and not args.dump:
-  print('Provide a file, or --dump', file=sys.stderr)
-  sys.exit()
+  parser.error('Provide a file, or --dump')
 
 # Configure logger
 log_config = {'style': '{', 'format': '{levelname}: {message}'}

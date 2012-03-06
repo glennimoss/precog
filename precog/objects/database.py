@@ -274,11 +274,12 @@ class Schema (OracleObject):
     if find_type in self.objects and name in self.objects[find_type]:
       return self.objects[find_type][name]
 
+    obj = obj_type(name, deferred=True)
     if deferred:
-      obj = self.add(obj_type(name, deferred=True))
+      obj = self.add(obj)
       return obj
 
-    return None
+    raise NonexistentSchemaObjectError(obj)
 
   def find_unique_constraint (self, columns, deferred=True):
     column_names = [col.name.with_(schema=self.name.schema) for col in columns]
@@ -317,15 +318,15 @@ class Schema (OracleObject):
     if second_best:
       return second_best
 
+    cons = UniqueConstraint(OracleFQN(self.name.schema, GeneratedId()),
+                            columns=columns, deferred=True)
     if deferred:
-      cons = UniqueConstraint(OracleFQN(self.name.schema, GeneratedId()),
-                              columns=columns, deferred=True)
       self.log.debug("Deferring Unique Key on {} as {}".format(columns_set,
                                                                cons))
       self.deferred[columns_set] = cons
       return cons
 
-    return None
+    raise NonexistentSchemaObjectError(obj)
 
   def diff (self, other):
     diffs = []
@@ -440,7 +441,7 @@ class Schema (OracleObject):
                               self.log, progress_message, count=change_count):
         actual += 1
         self.add(obj)
-      self.log.info("Fetching schema {} complete".format(owner))
+      self.log.info("Fetching schema {} complete.".format(owner))
       self.cache(modified_times)
     else:
       self.log.info('Using cached schema.')
@@ -774,11 +775,17 @@ class Database (HasLog):
                                                if len(columns) else None)
                 for table_name, *columns in (table.split(':', 1)
                                              for table in tables)}
-      for col in Column.from_db(db_schema.name.schema, oracle_database, tables):
-        db_schema.add(col)
+      for table in Table.from_db(db_schema.name.schema, oracle_database,
+                                 tables):
+        db_schema.add(table)
+      #for col in Column.from_db(db_schema.name.schema, oracle_database, tables):
+        #db_schema.add(col)
 
       for table_name, columns in tables.items():
-        table = db_schema.find(table_name, Table)
+        table = db_schema.find(table_name, Table, False)
+        if columns:
+          for column_name in columns:
+            db_schema.find(table.name.with_(part=column_name), Column, False)
         Data.from_db(table, columns)
         diffs.append(Diff(["-- Data for {}".format(table_name)] +
                           [datum.sql(fq=False, columns=columns)

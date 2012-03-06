@@ -128,6 +128,13 @@ class DuplicateIndexConflict (SchemaConflict):
       self.other.pretty_name, ", ".join(col.pretty_name
                                         for col in self.other.columns))
 
+class NonexistentSchemaObjectError (ObjectError):
+  def __init__ (self, obj):
+    super().__init__(obj)
+
+  def __str__ (self):
+    return "{} does not exist".format(self.obj.pretty_name)
+
 class OracleNameError (PrecogError):
   pass
 
