@@ -39,6 +39,10 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
   def unique (self):
     return self.props['uniqueness'] == 'UNIQUE'
 
+  @property
+  def partitioned (self):
+    return self.props['partitioned'] == 'YES'
+
   @unique.setter
   def unique (self, value):
     self.props['uniqueness'] = 'UNIQUE' if value else 'NONUNIQUE'
@@ -71,7 +75,7 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
     if ('index_type' in self.props and
         self.props['index_type'].endswith('/REV')):
       parts.append('REVERSE')
-    if self.props['tablespace_name']:
+    if self.props['tablespace_name'] and not self.partitioned:
       parts.append('TABLESPACE')
       parts.append(self.props['tablespace_name'].lower())
     return parts
@@ -101,6 +105,7 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
                            , uniqueness
                            , tablespace_name
                            , status
+                           , partitioned
                            , CURSOR(
                                SELECT table_owner
                                     , table_name
