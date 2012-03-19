@@ -588,13 +588,15 @@ class Database (HasLog):
     if not self._ignore_objs:
       self._ignore_objs = set()
       for obj_name in self._ignores:
-        obj = self.find(obj_name, deferred=False)
-        if obj:
+        try:
+          obj = self.find(obj_name, deferred=False)
           self._ignore_objs.add((type(obj), str(obj.name)))
           self._ignore_objs.update((type(ref), str(ref.name))
                                    for ref in obj._build_dep_set(
                                      lambda self: self._referenced_by,
                                      lambda ref: ref.from_))
+        except NonexistentSchemaObjectError:
+          pass
     return self._ignore_objs
 
   def add (self, obj):
