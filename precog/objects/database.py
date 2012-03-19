@@ -778,8 +778,6 @@ class Database (HasLog):
       for table in Table.from_db(db_schema.name.schema, oracle_database,
                                  tables):
         db_schema.add(table)
-      #for col in Column.from_db(db_schema.name.schema, oracle_database, tables):
-        #db_schema.add(col)
 
       for table_name, columns in tables.items():
         table = db_schema.find(table_name, Table, False)
