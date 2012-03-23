@@ -257,7 +257,7 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
         if len(cons.columns) == 1:
           # add this constraint to the appropriate column
           col = cols[cons.columns[0].name]
-          # We don'tjust do a .add() because we need to trigger the setter
+          # We don't just do a .add() because we need to trigger the setter
           col.constraints = col.constraints | {cons}
 
           column_constraints.add(cons)

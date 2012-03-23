@@ -3,6 +3,7 @@ import argparse, logging, os, re, sys
 from precog.objects.database import Database
 from precog.errors import PrecogError, OracleError, UnappliedDependencyError
 from precog.util import progress_print, pluralize
+from precog.identifier import add_schema_alias
 
 #Always print help
 class HelpyArgparser(argparse.ArgumentParser):
@@ -49,6 +50,7 @@ parser.add_argument('--dump', action='store_true',
 parser.add_argument('-t', '--table', action='append',
                     help='Specify a table name to dump its data. Repeat as '
                     'needed. Columns can be specified like TABLE:COL1,COL2,...')
+parser.add_argument('-a', '--alias', action='append')
 
 # User-input options
 prompt_group = parser.add_mutually_exclusive_group()
@@ -83,6 +85,10 @@ try:
   schema_name = args.username
   if args.schema:
     schema_name = args.schema
+
+  if args.alias:
+    for alias in args.alias:
+      add_schema_alias(*alias.split(':'))
 
   if args.file:
     database = Database.from_file(args.file, schema_name)

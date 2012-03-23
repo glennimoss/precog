@@ -551,19 +551,33 @@ class Database (HasLog):
       value = db.user
     value = OracleIdentifier(value)
     if hasattr(self, '_default_schema'):
-      old_schema_name = self._default_schema
-      if old_schema_name != value:
-        old_schema = self.schemas[old_schema_name]
-        del self.schemas[old_schema_name]
-        old_schema.name = OracleFQN(value)
-        self.add(old_schema)
-
-        self._ignores = {(name.with_(schema=value)
-                          if name.schema == old_schema_name else name)
-                         for name in self._ignores}
-        self._ignore_objs = set()
-
+      self.rename_schema(self._default_schema, value)
     self._default_schema = value
+
+  def rename_schema (self, from_schema, to_schema):
+    from_schema = OracleIdentifier(from_schema)
+    to_schema = OracleIdentifier(to_schema)
+    if from_schema != to_schema:
+      schema = self.schemas[from_schema]
+      del self.schemas[from_schema]
+      schema.name = OracleFQN(to_schema)
+      self.add(schema)
+
+      self._ignores = {(name.with_(schema=to_schema)
+                        if name.schema == from_schema else name)
+                       for name in self._ignores}
+      self._ignore_objs = set()
+
+  def merge_schemas(self, into_schema, source_schema):
+    into_schema = self.schemas[into_schema]
+    source_schema = self.schemas[source_schema]
+    for bucket in source_schema.objects.values():
+      for obj in bucket.values():
+        try:
+          into_schema.add(obj)
+        except SchemaConflict:
+          raise MergeConflict(into_schema, source_schema)
+    del self.schemas[source_schema.name.schema]
 
   def ignore_schema (self, schema_name):
     schema_name = OracleFQN(schema_name)
@@ -735,6 +749,17 @@ class Database (HasLog):
 
   def diff_to_db (self, connection_string):
     self.log.info('Loading current database state...')
+
+    # Perform all schema aliasing on self, before passing any attributes on to
+    # the oracle_database. The oracle_database will therefore be fully aliased.
+    self.default_schema = schema_alias(self.default_schema)
+    for schema_name in set(self.schemas):
+      aliased_schema_name = schema_alias(schema_name)
+      if schema_name != aliased_schema_name:
+        if aliased_schema_name in self.schemas:
+          self.merge_schemas(aliased_schema_name, schema_name)
+        else:
+          self.rename_schema(schema_name, aliased_schema_name)
 
     db.connect(connection_string)
 

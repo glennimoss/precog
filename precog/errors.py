@@ -66,9 +66,7 @@ class ObjectError (PrecogError):
 
   def __init__ (self, obj):
     self.obj = obj
-
-  def __str__ (self):
-    return _with_location(self.obj)
+    super().__init__(_with_location(self.obj))
 
 class SchemaConflict (ObjectError):
 
@@ -134,6 +132,21 @@ class NonexistentSchemaObjectError (ObjectError):
 
   def __str__ (self):
     return "{} does not exist".format(self.obj.pretty_name)
+
+class MergeConflict (PrecogError):
+  def __init__ (self, into_schema, source_schema):
+    self.into_schema = into_schema
+    self.source_schema = source_schema
+    super().__init__(
+      "While merging schema {} into {}".format(source_schema.name,
+                                               into_schema.name))
+
+  def __str__ (self):
+    ret = super().__str__()
+    if self.__context__:
+      ret = "{}: {}".format(ret, self.__context__)
+    return ret
+
 
 class OracleNameError (PrecogError):
   pass
