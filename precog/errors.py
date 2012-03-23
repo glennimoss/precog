@@ -1,5 +1,5 @@
-from precog.objects._misc import _with_location
-from precog.util import pluralize
+from precog.parser.util import format_syntax_error
+from precog.util import pluralize, _with_location
 
 class PrecogError (Exception):
 
@@ -29,10 +29,10 @@ class SyntaxError (ParseError):
     self.explanation = explanation
 
   def __str__ (self):
-    return '{}{}\n  {}, line {}\n    {}\n    {}^{}'.format(
-      super(ParseError, self).__str__(), self.title, self.source_name,
-      self.line, self.line_text, ' '*(self.column),
-      "\n{}".format(self.explanation) if self.explanation else '')
+    return '{}{}'.format(
+      super(ParseError, self).__str__(),
+      format_syntax_error(self.title, self.source_name, self.line, self.column,
+                          self.line_text, self.explanation))
 
 class SqlSyntaxError (SyntaxError):
   pass

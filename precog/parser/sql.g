@@ -22,7 +22,7 @@ scope tab_col_ref { alias_map; table; columns }
 
 @lexer::header {
   from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
-  from precog.parser.util import *
+  from precog.parser.util import aloneOnLine, LoggingLexer
 
   # Monkey patch in our lexer superclass
   Lexer = LoggingLexer
@@ -34,6 +34,7 @@ scope tab_col_ref { alias_map; table; columns }
   from antlr3.ext import (NamedConstant, FileStream, NL_CHANNEL, ValueNode,
                           CommonTreeAdaptor)
   from precog.parser.util import *
+  from precog.parser.parser import Expression
   from precog.identifier import OracleFQN, OracleIdentifier, GeneratedId
   from precog.objects import *
   from precog.util import InsensitiveDict
@@ -122,6 +123,7 @@ sql_stmt returns [obj]
     | stmt_=create_index { $obj = $stmt_.obj }
     | stmt_=create_sequence { $obj = $stmt_.obj }
     | stmt_=create_synonym { $obj = $stmt_.obj }
+    | stmt_=grant { $obj = $stmt_.obj }
     | insert_statement
     ) SEMI
   ;
@@ -425,10 +427,10 @@ lob_data_type
 
 rowid_data_type[sized]
 @after {
-  $data_type::props_['data_type'] = (($t and $t.text) or $k.text).upper()
+  $data_type::props_['data_type'] = (($t and $t.text) or $t2.text).upper()
 }
   : t=ROWID
-  | k=kUROWID ({$sized}? i=int_parameter
+  | t2=kUROWID ({$sized}? i=int_parameter
                { $data_type::props_['data_length'] = $i.val })?
   ;
 
@@ -714,6 +716,37 @@ create_synonym returns [obj]
       $obj = Synonym($syn.ident, for_name=$target.ident, database=$g::database)
     }
   ;
+
+grant returns [obj]
+scope { privs }
+@init {
+  $grant::privs = []
+}
+  : GRANT privilege (COMMA privilege)*
+    ON on_obj=identifier
+    TO grantee=tID
+    {
+      #$obj = Grant(grantee=$grantee.id, privileges=$grant::privs,
+                   #on_obj=$g::database.find($on_obj.ident, OracleObject),
+                   #database=$g::database)
+    }
+  ;
+
+privilege
+@after {
+  # Get rid of any weird spacing between words. One space only!
+  $grant::privs.append(' '.join($privilege.text.split()))
+}
+  : ALL PRIVILEGES?
+  | kEXECUTE
+  | DELETE
+  | INDEX
+  | INSERT
+  | SELECT
+  | UPDATE
+  | kREFERENCES
+  ;
+
 insert_statement
 scope { expressions; }
 scope tab_col_ref;
@@ -1431,6 +1464,7 @@ kDELETING : {self.input.LT(1).text.lower() == 'deleting'}? ID;
 kDETERMINISTIC : {self.input.LT(1).text.lower() == 'deterministic'}? ID;
 kDISABLE : {self.input.LT(1).text.lower() == 'disable'}? ID;
 kENABLE : {self.input.LT(1).text.lower() == 'enable'}? ID;
+kEXECUTE : {self.input.LT(1).text.lower() == 'execute'}? ID;
 kFALSE : {self.input.LT(1).text.lower() == 'false'}? ID;
 kFOREIGN : {self.input.LT(1).text.lower() == 'foreign'}? ID;
 kGENERATED : {self.input.LT(1).text.lower() == 'generated'}? ID;

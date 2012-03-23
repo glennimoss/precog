@@ -1,0 +1,21 @@
+--GRANT ALL            ON foo TO kount_gim;
+--GRANT all            ON foo TO kount_gim;
+--GRANT ALL PRIVILEGES ON foo TO kount_gim;
+--GRANT all privileges ON foo TO kount_gim;
+--GRANT All      /* coolbeans */ PrIvIlEGes ON foo TO kount_gim;
+--GRANT EXECUTE        ON foo TO kount_gim;
+--GRANT execute        ON foo TO kount_gim;
+--GRANT DELETE         ON foo TO kount_gim;
+--GRANT delete         ON foo TO kount_gim;
+--GRANT INDEX          ON foo TO kount_gim;
+--GRANT index          ON foo TO kount_gim;
+--GRANT INSERT         ON foo TO kount_gim;
+--GRANT insert         ON foo TO kount_gim;
+--GRANT SELECT         ON foo TO kount_gim;
+--GRANT select         ON foo TO kount_gim;
+--GRANT UPDATE         ON foo TO kount_gim;
+--GRANT update         ON foo TO kount_gim;
+--GRANT REFERENCES     ON foo TO kount_gim;
+--GRANT references     ON foo TO kount_gim;
+
+grant ALL           , ALL    PRIVILEGES , EXECUTE       , DELETE        , INDEX         , INSERT        , SELECT        , UPDATE        , REFERENCES    on foobar to kount_gim;

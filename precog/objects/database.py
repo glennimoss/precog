@@ -1,13 +1,14 @@
-import itertools, logging, math, os
+import itertools, logging, math, os, pickle
 
 from precog import db
-from precog import parser
 from precog.diff import order_diffs
 from precog.identifier import *
 from precog.objects import *
-from precog.objects._misc import *
+from precog.parser import parser
+from precog.parser.parser import Expression
 from precog.util import (HasLog, progress_log, pluralize, split_list,
-                         read_cache, write_cache)
+                         _type_to_class_name)
+
 
 def _plural_type (obj):
   if not isinstance(obj, type):
@@ -40,6 +41,35 @@ def _file_cache_file_name (file_name):
 
 def _db_cache_file_name (schema_name):
   return "precog_cache_db_{}-{}.pickle".format(schema_name, db.dsn)
+
+_cache_version = 'precog cache v2'
+def _read_cache (file_name):
+  cache_log = logging.getLogger('Cache Loader')
+  values = []
+  try:
+    with open(file_name, 'rb') as cache_file:
+      cache_log.info('Found cache file. Reading cache...')
+      unpickler = pickle.Unpickler(cache_file)
+      version = unpickler.load()
+      if version == _cache_version:
+        while True:
+          values.append(unpickler.load())
+      else:
+        cache_log.info('Cache file version is obsolete. Ignoring cache.')
+  except IOError:
+    pass
+  except EOFError:
+    pass
+
+  return values
+
+def _write_cache (file_name, values):
+  with open(file_name, 'wb') as cache_file:
+    pickler = pickle.Pickler(cache_file)
+    pickler.dump(_cache_version)
+    for value in values:
+      pickler.dump(value)
+
 
 class Schema (OracleObject):
 
@@ -457,7 +487,7 @@ class Schema (OracleObject):
                                 Table))
 
     try:
-      cached_times, cached_schema = read_cache(
+      cached_times, cached_schema = _read_cache(
         _db_cache_file_name(self.name.schema))
 
       self.props = cached_schema.props
@@ -519,7 +549,7 @@ class Schema (OracleObject):
 
   def cache (self, modified_times):
     self.log.info('Caching schema state...')
-    write_cache(_db_cache_file_name(self.name.schema), [modified_times, self])
+    _write_cache(_db_cache_file_name(self.name.schema), [modified_times, self])
 
   def __getstate__ (self):
     state = super().__getstate__()
@@ -861,7 +891,7 @@ class Database (HasLog):
     cache_log = logging.getLogger('Cache Loader')
     try:
       cache_file_name = _file_cache_file_name(file_name)
-      cached_files, database = read_cache(cache_file_name)
+      cached_files, database = _read_cache(cache_file_name)
 
       out_of_date_files = []
       saw_top_file = False
@@ -907,9 +937,9 @@ class Database (HasLog):
 
   def cache (self):
     self.log.info('Caching parsed definition...')
-    write_cache(_file_cache_file_name(self._top_file),
-                [[(file, os.stat(file).st_mtime) for file in self._files],
-                 self])
+    _write_cache(_file_cache_file_name(self._top_file),
+                 [[(file, os.stat(file).st_mtime) for file in self._files],
+                  self])
 
   def drop_files (self, files):
     invalid_objs = []

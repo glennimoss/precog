@@ -1,7 +1,7 @@
 from precog.diff import Reference
 from precog.objects.base import OracleObject
 from precog.objects.has.prop import HasProp
-from precog.parser import Expression
+from precog.parser.parser import Expression
 
 _HasDataDefault = HasProp('data_default', strict_none=True)
 class HasDataDefault (_HasDataDefault):
