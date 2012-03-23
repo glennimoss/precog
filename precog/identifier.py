@@ -192,11 +192,10 @@ class OracleFQN (OracleIdentifier):
     return ".".join(x.lower() for x in (self.schema, self.obj, self.part) if x)
 
   def __repr__ (self):
-    return "OracleFQN({})".format(', '.join(
-        "{}='{}'".format(arg, val) for arg, val in
-          (('schema', self.schema), ('obj', self.obj), ('part', self.part),
-           ('generated', self.generated if self.generated else None))
-          if val))
+    attrs = (('schema', self.schema), ('obj', self.obj), ('part', self.part),
+             ('generated', self.generated if self.generated else None))
+    return "OracleFQN({})".format(', '.join("{}='{}'".format(arg, val)
+                                            for arg, val in attrs if val))
 
   def __getnewargs__ (self):
     return (self._schema, self._obj, self._part, True)
@@ -225,14 +224,25 @@ def name_from_oracle (name):
     # It came from oracle... it SHOULD be good :P
     return OracleIdentifier(name, True)
 
-_schema_alias = {}
+_schema_aliases = {}
 def add_schema_alias (from_schema, to_schema):
   from_schema = OracleIdentifier(from_schema)
   to_schema = OracleIdentifier(to_schema)
-  _schema_alias[from_schema] = to_schema
+  if from_schema != to_schema:
+    cycle = [to_schema]
+    while cycle[-1] in _schema_aliases:
+      cycle.append(_schema_aliases[cycle[-1]])
+      if cycle[-1] == from_schema:
+        cycle.append(to_schema)
+        raise PrecogError('Schema alias cycle found: {}'.format(
+          ' -> '.join(cycle)))
 
-def schema_alias (schema):
-  schema = OracleIdentifier(schema)
-  while schema in _schema_alias:
-    schema = _schema_alias[schema]
-  return schema
+    _schema_aliases[from_schema] = to_schema
+
+def schema_alias (schema_name):
+  if not schema_name:
+    return None
+  schema_name = OracleIdentifier(schema_name)
+  while schema_name in _schema_aliases:
+    schema_name = _schema_aliases[schema_name]
+  return schema_name

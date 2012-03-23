@@ -146,7 +146,6 @@ sqlplus_stmt returns [stmt]
         $g::database.came_from_file(file_name, 'include')
       }
     | (~( AT_SIGN | DOUBLE_AT_SIGN ))=> command=swallow_to_nl NL
-      { self.log.debug("Ignoring SQL*Plus command: {}".format($command.text)) }
     )
   ;
 finally {
@@ -201,16 +200,6 @@ tID returns [id, token]
     {
       $id = OracleIdentifier($i.text)
       $token = $i
-    }
-  | i=VARIABLE
-    {
-      $token = $i
-      try:
-        $id = VariableIdentifier($i.text)
-      except UndefinedVariableError as e:
-        self.logSyntaxError('Variable &{} is undefined.'.format(e.var_name),
-                            self.input, $token.index, $token.line,
-                            $token.charPositionInLine)
     }
   ;
 
@@ -1303,25 +1292,6 @@ call
 @init {
   is_call = False
 }
-@after {
-  #if not is_call:
-    #ref = $i.parts
-    #found = None
-    #if len(ref) > 1:
-      #found = $g::database.find(ref, OracleObject, False)
-
-    #if not found:
-      #name = $ expression_ctx::ctx_name
-      #name_parts = []
-      #if name.schema:
-        #name_parts.append(name.schema)
-      #name_parts.append(name.obj)
-      #name_parts.extend(ref)
-      #found = $g::database.find(name_parts, OracleObject)
-
-    #if found:
-      #$ expression::refs.add(found)
-}
     : /* COLON? sqlplus vars */
       i=part_identifier
       ( LPAREN ( parameter ( COMMA parameter )* )? RPAREN { is_call = True }
@@ -1807,10 +1777,6 @@ DOUBLEQUOTED_STRING
 DIRECTIVE
 	:	'--@'
 	;
-VARIABLE
-  : AMPERSAND SPACE* i=ID '.'?
-  ;
-
 NL : '\r'? '\n' { $channel=NL_CHANNEL } ;
 SPACE	:	(' '|'\t') { $channel=HIDDEN } ;
 SL_COMMENT

@@ -31,8 +31,7 @@ def _freeze_name (name):
     # same name in the schema
     clear_flags = lambda x: x and (OracleIdentifier(x.parts)
                                    if x.parts else str(x))
-    name = OracleFQN(name.schema, clear_flags(name.obj),
-                     clear_flags(name.part))
+    name = OracleFQN(name.schema, clear_flags(name.obj), clear_flags(name.part))
   return name
 
 def _file_cache_file_name (file_name):
@@ -59,7 +58,10 @@ class Schema (OracleObject):
   def __init__ (self, name=None, **props):
     if not name:
       name = db.user
-    super().__init__(OracleFQN(name), **props)
+    if not isinstance(name, OracleFQN):
+      name = OracleFQN(name)
+
+    super().__init__(name, **props)
 
     # Namespaces
     self.shared_namespace = {}
@@ -74,17 +76,17 @@ class Schema (OracleObject):
   def name (self, value):
     self._name = value
     if hasattr(self, 'objects'):
-      def rename (d, schema):
+      def rename (d):
         new_d = {}
         for name, obj in d.items():
-          name = name.with_(schema=schema)
-          obj.name = obj.name.with_(schema=schema)
+          name = name.with_(schema=self.name.schema)
+          obj.name = obj.name.with_(schema=self.name.schema)
           new_d[name] = obj
         return new_d
 
       for obj_type, namespace in self.objects.items():
-        self.objects[obj_type] = rename(namespace, self.name.schema)
-      self.shared_namespace = rename(self.shared_namespace, self.name.schema)
+        self.objects[obj_type] = rename(namespace)
+      self.shared_namespace = rename(self.shared_namespace)
       new_deferred = {}
       for key, obj in self.deferred.items():
         if type(key) is tuple:
@@ -668,7 +670,7 @@ class Database (HasLog):
       name = OracleFQN(self.default_schema, name.obj, name.part)
 
     if name.schema not in self.schemas:
-      self.schemas[name.schema] = Schema(name.schema, database=self)
+      self.add(Schema(name.schema, database=self))
 
     return name
 

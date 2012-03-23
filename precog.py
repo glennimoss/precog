@@ -47,10 +47,15 @@ parser.add_argument('--schema',
     help='Schema name for unqualified object names. Defaults to <username>.')
 parser.add_argument('--dump', action='store_true',
     help='Dump specified schema.')
-parser.add_argument('-t', '--table', action='append',
+parser.add_argument('-t', '--table',
+                    metavar='TABLE[:COL1,COL2,...]', action='append',
                     help='Specify a table name to dump its data. Repeat as '
                     'needed. Columns can be specified like TABLE:COL1,COL2,...')
-parser.add_argument('-a', '--alias', action='append')
+parser.add_argument('-a', '--alias',
+                    metavar='FROM_SCHEMA:TO_SCHEMA', action='append',
+                    help='Specify a schema name in the definition file(s) that '
+                    'you wish to replace with a different schema name for this '
+                    'run. Repeat for each alias.')
 
 # User-input options
 prompt_group = parser.add_mutually_exclusive_group()
