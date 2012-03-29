@@ -13,7 +13,7 @@ def format_syntax_error (title, source_name, line, column, line_text,
                          explanation=''):
   return '{}\n  {}, line {}\n    {}\n    {}^{}'.format(
     title, source_name, line, line_text, ' '*(column),
-    "\n{}".format(explanation) if self.explanation else '')
+    "\n{}".format(explanation) if explanation else '')
 
 def aloneOnLine (LT):
   #log = logging.getLogger('precog.parser.util.aloneOnLine')
