@@ -612,7 +612,7 @@ class Database (HasLog):
     del self.schemas[source_schema.name.schema]
 
   def ignore_schema (self, schema_name):
-    schema_name = OracleFQN(schema_name)
+    schema_name = OracleIdentifier(schema_name)
     self._ignore_schemas.add(schema_name)
     self.came_from_file(schema_name, 'ignore')
 
