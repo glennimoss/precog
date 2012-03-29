@@ -9,10 +9,12 @@ from precog.util import HasLog
 __all__ = ['format_syntax_error', 'aloneOnLine', 'LoggingLexer',
            'LoggingParser']
 
-def format_syntax_error (title, source_name, line, column, line_text,
+def format_syntax_error (title, source_name, lineno, column, line_text,
                          explanation=''):
-  return '{}\n  {}, line {}\n    {}\n    {}^{}'.format(
-    title, source_name, line, line_text, ' '*(column),
+  lines = line_text if isinstance(line_text, list) else line_text.split('\n')
+  lines.insert(lineno, '{}^'.format(' '*column))
+  return '{}\n  {}, line {}\n    {}{}'.format(
+    title, source_name, lineno, '\n    '.join(lines),
     "\n{}".format(explanation) if explanation else '')
 
 def aloneOnLine (LT):

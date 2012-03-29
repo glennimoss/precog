@@ -38,7 +38,26 @@ class SqlSyntaxError (SyntaxError):
   pass
 
 class OracleError (PrecogError):
-  pass
+  def __init__ (self, db_error, sql):
+    self.db_error = db_error
+    self.sql = sql
+
+  def __str__ (self):
+    offset = self.db_error.args[0].offset
+    lines = self.sql.split('\n')
+    pos = 0
+    for lineno in range(len(lines)):
+      linelen = len(lines[lineno]) + 1
+      if pos + linelen > offset:
+        break
+      pos += linelen
+    offset -= pos
+    lineno += 1 # 1-based line numbering
+
+    return '{}{}'.format(
+      super().__str__(),
+      format_syntax_error(str(self.db_error).strip(), 'SQL statement', lineno,
+                          offset, self.sql))
 
 class UnappliedDependencyError (PrecogError):
   pass

@@ -2,7 +2,7 @@ import logging, math
 
 from precog.identifier import OracleIdentifier, name_from_oracle
 from precog.util import InsensitiveDict
-from precog.errors import OracleError
+from precog.errors import OracleError, PrecogError
 
 try:
   import cx_Oracle
@@ -122,7 +122,7 @@ def execute (*args, **kwargs):
 
 def _execute(sql, *args, parse_only=False, **kwargs):
   if not _connection:
-    raise OracleError('Not connected')
+    raise PrecogError('Not connected')
 
   _unquote(kwargs)
   cursor = _connection.cursor()
@@ -133,20 +133,7 @@ def _execute(sql, *args, parse_only=False, **kwargs):
     else:
       cursor.execute(sql, *args, **kwargs)
   except cx_Oracle.DatabaseError as e:
-    offset = e.args[0].offset
-    lines = sql.split('\n')
-    pos = 0
-    for lineno in range(len(lines)):
-      linelen = len(lines[lineno]) + 1
-      if pos + linelen > offset:
-        break
-      pos += linelen
-    offset -= pos
-
-    lines.insert(lineno + 1, "{}^".format(' '*offset))
-    sql = "\n".join(lines)
-
-    raise OracleError("{}SQL:\n{}".format(e, sql)) from e
+    raise OracleError(e, sql) from e
   return cursor
 
 class all_strings (object):
