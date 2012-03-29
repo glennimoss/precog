@@ -7,23 +7,15 @@ from precog.objects.has.prop import HasProp
 _HasForName = HasProp('for_name', assert_type=OracleFQN)
 class Synonym (_HasForName, OracleObject):
 
-  @_HasForName.for_name.setter
-  def for_name (self, value):
-    _HasForName.for_name.__set__(self, value)
-    if self.for_name.schema is None:
-      self._for_name = self.for_name.with_(schema=self.name.schema)
-
-  @property
-  def name (self):
-    return self._name
-
-  @name.setter
-  def name (self, value):
-    if (self.for_name and
-        (self.for_name.schema is None or
-         self.for_name.schema == self._name.schema)):
-      self.for_name = self.for_name.with_(schema=value.schema)
-    self._name = value
+  @_HasForName.for_name.getter
+  def for_name (self):
+    name = _HasForName.for_name.__get__(self)
+    if name:
+      if name.schema is None:
+        name = name.with_(schema=self.database.default_schema)
+      else:
+        name = name.with_(schema=schema_alias(name.schema))
+    return name
 
   def _sql (self, fq=True):
     name = self.name
