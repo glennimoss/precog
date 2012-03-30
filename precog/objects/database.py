@@ -294,6 +294,9 @@ class Schema (OracleObject):
     #self.log.debug("Finding {} {}".format(obj_type.__name__, name))
     name = self.__make_fqn(name)
 
+    if obj_type is Schema and name.schema == self.name.schema:
+      return self
+
     find_type = _resolve_type(obj_type)
 
     # When you don't know what type you're looking up, it must be in the shared
@@ -565,7 +568,7 @@ class Database (HasLog):
 
     self._ignores = set()
     self._ignore_objs = set()
-    self._ignore_schemas = set()
+    self._ignore_schemas = {OracleIdentifier('SYS')}
     self._files = {}
     self._top_file = None
 
@@ -624,7 +627,7 @@ class Database (HasLog):
     self.came_from_file(obj_name, 'ignore')
 
   def drop_ignores (self, names):
-    split = split_list(names, lambda i: i.obj is not None)
+    split = split_list(names, lambda i: isinstance(i, OracleFQN))
     if True in split:
       self._ignores.difference_update(split[True])
     if False in split:
@@ -735,6 +738,9 @@ class Database (HasLog):
       return {obj for schema in self.schemas.values()
               for obj in schema.find(test, obj_type)}
 
+    if obj_type is Schema and not isinstance(name, OracleFQN):
+      name = OracleFQN(name)
+
     name = self.__make_fqn(name)
     return self.schemas[name.schema].find(name, obj_type, deferred)
 
@@ -770,8 +776,16 @@ class Database (HasLog):
 
   def from_db (self):
     try:
-      for schema in set(self.schemas.values()):
-        schema.from_db()
+      to_load = set(self.schemas.keys())
+      loaded = set()
+      while to_load:
+        print('loading: ' + str(to_load))
+        for schema_name in to_load:
+          if schema_name not in self._ignore_schemas:
+            self.schemas[schema_name].from_db()
+
+        loaded.update(to_load)
+        to_load = self.schemas.keys() - loaded
 
       self.validate()
     except PrecogError:
