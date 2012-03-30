@@ -418,12 +418,17 @@ class Schema (OracleObject):
                               AND NOT (LENGTH(table_name) = 30
                                    AND table_name LIKE 'BIN$%')
                            ) AS constraints
+                   , (SELECT COUNT(*)
+                      FROM (SELECT DISTINCT owner, table_name
+                            FROM dba_tab_privs
+                            WHERE grantee = :o)
+                     ) AS grants
               FROM dual
       """, o=owner, oracle_names=['table_name', 'object_name',
                                   'constraint_name'])
     total_objects = (len(schema['objects']) +
                      sum(table['num_columns'] for table in schema['columns']) +
-                     len(schema['constraints']))
+                     len(schema['constraints']) + schema['grants'])
 
     def to_type (type, name):
       try:
@@ -460,6 +465,8 @@ class Schema (OracleObject):
         else:
           if obj_type in modified_times:
             change_count += len(modified_times[obj_type])
+          elif obj_type is Grant:
+            change_count += schema['grants']
       else:
         change_count += len(names)
 
@@ -483,6 +490,7 @@ class Schema (OracleObject):
 
   def read_cache (self, modified_times):
     to_refresh = dict.fromkeys((Constraint,
+                                Grant,
                                 Index,
                                 PlsqlCode,
                                 Sequence,
@@ -536,6 +544,9 @@ class Schema (OracleObject):
                                     (current_objs.keys() - unchanged)}
             if not to_refresh[obj_type]:
               del to_refresh[obj_type]
+
+      if Grant in self.objects:
+        invalid_objs.extend(self.objects[Grant].values())
 
       if invalid_objs:
         self.drop_invalid_objects(invalid_objs)

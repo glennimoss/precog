@@ -724,9 +724,9 @@ scope { privs }
     ON on_obj=identifier
     TO grantee=tID
     {
-      #$obj = Grant(grantee=$grantee.id, privileges=$grant::privs,
-                   #on_obj=$g::database.find($on_obj.ident, OracleObject),
-                   #database=$g::database)
+      $obj = Grant($grantee.id, privileges=$grant::privs,
+                   on_obj=$g::database.find($on_obj.ident),
+                   database=$g::database)
     }
   ;
 
