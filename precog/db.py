@@ -90,7 +90,10 @@ def _init_cursor (cursor, args=[], kwargs={}, oracle_names=[]):
   cursor.rowfactory = rowfactory
 
   if cursor.statement:
-    cursor.execute(None, *args, **kwargs)
+    try:
+      cursor.execute(None, *args, **kwargs)
+    except cx_Oracle.DatabaseError as e:
+      raise OracleError(e, cursor.statement.decode()) from e
 
 def _unquote (d):
   for k in d:
