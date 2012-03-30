@@ -140,9 +140,7 @@ sqlplus_stmt returns [stmt]
         file_name = $file_name.text
         relative_dir = os.path.dirname(self.input.getSourceName())
 
-        file_name = ''.join((relative_dir,
-                             os.sep if relative_dir else '',
-                             file_name))
+        file_name = os.path.normpath(os.path.join(relative_dir, file_name))
 
         $sqlplus_file::included_files_.append(file_name)
         $g::database.came_from_file(file_name, 'include')
