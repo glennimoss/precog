@@ -453,7 +453,6 @@ class Schema (OracleObject):
                                 Sequence,
                                 Synonym,
                                 Table))
-
     try:
       cached_times, cached_schema = read_cache(
         _db_cache_file_name(self.name.schema))

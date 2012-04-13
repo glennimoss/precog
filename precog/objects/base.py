@@ -220,8 +220,8 @@ class OracleObject (HasLog):
         return self.recreate(other)
       elif self.name.obj != other.name.obj:
         return [self.rename(other)]
-    else:
-      if other.props['status'] and other.props['status'] != 'VALID':
+    elif (other.props['status'] and
+          other.props['status'] not in ('VALID', 'N/A')):
         self.log.debug("{} has status {}".format(other.pretty_name,
           other.props['status']))
         return self.rebuild()
