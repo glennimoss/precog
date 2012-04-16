@@ -110,6 +110,9 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
   @staticmethod
   def parse (value, column):
     if isinstance(value, str):
+      if value == 'NULL':
+        return None
+
       if column.is_number or not (value.startswith("'") and
                                   value.endswith("'")):
         val = value.strip("'")
@@ -151,10 +154,11 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
     if column_names:
       order_by = "ORDER BY {}".format(", ".join(column_names))
     if not table.data:
-      rs = db.query_all(""" SELECT *
-                            FROM {}
-                            {}
-                        """.format(table.name, order_by))
+      with db.exact_numbers():
+        rs = db.query_all(""" SELECT *
+                              FROM {}
+                              {}
+                          """.format(table.name, order_by))
 
       if rs:
         columns = [table.database.find(

@@ -65,24 +65,47 @@ def connect (connect_string):
                                    WHERE name = 'open_cursors'
                                """)['value'])
 
+def _fetch_subcursor (subcursor, oracle_names):
+  _init_cursor(subcursor, oracle_names=oracle_names)
+  return subcursor.fetchall()
+
+_soft = lambda f: lambda v: v and f(v)
+_soft_float = _soft(float)
+_soft_int = _soft(int)
+
+def _int_or_float (v):
+  try:
+    return _soft_int(v)
+  except ValueError:
+    return float(v)
+
 def _init_cursor (cursor, args=[], kwargs={}, oracle_names=[]):
   cursor_desc = cursor.description
   cursor.arraysize = 1000
-  cursors_in_query = sum(1 for c in cursor_desc if c[1] == cx_Oracle.CURSOR)
+  cursors_in_query = sum(1 for c in cursor_desc if c[1] is cx_Oracle.CURSOR)
   if cursors_in_query:
     # WARNING: if subcursors have subcursors, there won't be enough left and
     # they'll error out. Not sure the best way to handle that case, so I won't.
     cursor.arraysize = math.floor((_max_cursors - 1)/cursors_in_query/2)
 
   column_names = [column[0] for column in cursor_desc]
+  column_transforms = []
+  for column in cursor_desc:
+    if column[1] is cx_Oracle.CURSOR:
+      column_transforms.append((column[0],
+                                lambda c: _fetch_subcursor(c, oracle_names)))
+    elif (cursor.numbersAsStrings and column[1] is cx_Oracle.NUMBER):
+      scale = column[5]
+
+      if scale > 0:
+        column_transforms.append((column[0], _soft_float))
+      else:
+        column_transforms.append((column[0], _int_or_float))
+
   def rowfactory (*row):
     row = InsensitiveDict(zip(column_names, row))
-    for column in cursor_desc:
-      if column[1] == cx_Oracle.CURSOR:
-        subcursor = row[column[0]]
-        _init_cursor(subcursor, oracle_names=oracle_names)
-        row[column[0]] = subcursor.fetchall()
-
+    for column_name, transform in column_transforms:
+      row[column_name] = transform(row[column_name])
     for column_name in oracle_names:
       if column_name in row:
         row[column_name] = name_from_oracle(row[column_name])
@@ -139,7 +162,7 @@ def _execute(sql, *args, parse_only=False, **kwargs):
     raise OracleError(e, sql) from e
   return cursor
 
-class all_strings (object):
+class exact_numbers (object):
   def __enter__ (self):
     global _numbers_as_strings
     self.orig_str_setting = _numbers_as_strings

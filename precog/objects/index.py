@@ -90,12 +90,8 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
       return [Diff("ALTER INDEX {} REBUILD TABLESPACE {}"
                    .format(other.name.lower(),
                            self.props['tablespace_name'].lower()),
-                   produces=self)]
-    else:
-      diffs = super().diff(other, **kwargs)
-      if not diffs and other.props['status'] != 'VALID':
-        return self.rebuild()
-      return diffs
+                   produces=self)] if not other.partitioned else []
+    return super().diff(other, **kwargs)
 
   @classmethod
   def from_db (class_, schema, into_database, index_names=None):
@@ -155,5 +151,6 @@ class Index (HasTableFromColumns, HasColumns, OracleObject):
       yield class_(index_name, columns=columns, index_type=index_type,
                    uniqueness=row['uniqueness'], status=row['status'],
                    tablespace_name=row['tablespace_name'],
+                   partitioned=row['partitioned'],
                    database=into_database, create_location=(db.location,))
     rs.close()
