@@ -347,43 +347,76 @@ class Schema (OracleObject):
     self.log.info("Fetching schema {}...".format(owner))
 
     schema = db.query_one("""
-              SELECT CURSOR(SELECT object_name
-                                 , object_type
-                                 , last_ddl_time
-                            FROM dba_objects
-                            WHERE owner = :o
-                              AND subobject_name IS NULL
-                              AND object_type IN ( 'FUNCTION'
-                                                 , 'INDEX'
-                                                 , 'PACKAGE'
-                                                 , 'PACKAGE BODY'
-                                                 , 'PROCEDURE'
-                                                 , 'SEQUENCE'
-                                                 , 'SYNONYM'
-                                                 , 'TABLE'
-                                                 , 'TRIGGER'
-                                                 , 'TYPE'
-                                                 , 'TYPE BODY'
-                                              -- , 'VIEW'
-                                                 )
-                           ) AS objects
-                   , CURSOR(SELECT table_name
-                                 , COUNT(*) AS num_columns
-                            FROM dba_tab_cols
-                            WHERE owner = :o
-                              -- Ignore columns on tables in the recyclebin
-                              AND NOT (LENGTH(table_name) = 30
-                                   AND table_name LIKE 'BIN$%')
-                            GROUP BY table_name) AS columns
-                   , CURSOR(SELECT constraint_name
-                                 , last_change
-                            FROM dba_constraints
-                            WHERE owner = :o
-                              -- Ignore columns on tables in the recyclebin
-                              AND NOT (LENGTH(table_name) = 30
-                                   AND table_name LIKE 'BIN$%')
-                           ) AS constraints
-              FROM dual
+      SELECT CURSOR(SELECT object_name
+                         , object_type
+                         , last_ddl_time
+                    FROM dba_objects
+                    WHERE owner = :o
+                      AND subobject_name IS NULL
+                      AND object_type IN ( 'FUNCTION'
+                                         , 'INDEX'
+                                         , 'PACKAGE'
+                                         , 'PACKAGE BODY'
+                                         , 'PROCEDURE'
+                                         , 'SEQUENCE'
+                                         , 'SYNONYM'
+                                         , 'TABLE'
+                                         , 'TRIGGER'
+                                         , 'TYPE'
+                                         , 'TYPE BODY'
+                                      -- , 'VIEW'
+                                         )
+                   ) AS objects
+           , CURSOR(SELECT table_name
+                         , COUNT(*) AS num_columns
+                    FROM dba_tab_cols
+                    WHERE owner = :o
+                      -- Ignore columns on tables in the recyclebin
+                      AND NOT (LENGTH(table_name) = 30
+                           AND table_name LIKE 'BIN$%')
+                    GROUP BY table_name) AS columns
+           , CURSOR(
+               SELECT dc.constraint_name
+                    , CASE
+                      WHEN dc.index_name IS NOT NULL THEN
+                        -- When indexes are renamed, the constraint last_change
+                        -- date isn't modified. Using the last_ddl_time of the
+                        -- index tells us when we need to reload the constraint
+                        -- to point to the new index name.
+                        GREATEST(dc.last_change,
+                                 (SELECT do.last_ddl_time
+                                  FROM dba_objects do
+                                  WHERE do.owner = dc.index_owner
+                                    AND do.object_name = dc.index_name
+                                    AND do.object_type = 'INDEX'))
+                      WHEN dc.r_constraint_name IS NOT NULL THEN
+                        -- When referenced constraints are renamed, this
+                        -- constraint last_change date isn't modified. Using the
+                        -- last_ddl_time of the referenced constraint's table
+                        -- tells us when we need to reload this constraint
+                        -- to point to the new referenced constraint name.
+                        GREATEST(dc.last_change,
+                                 (SELECT GREATEST(dcfk.last_change,
+                                                  dot.last_ddl_time)
+                                  FROM dba_constraints dcfk
+                                     , dba_objects dot
+                                  WHERE dcfk.owner = dc.r_owner
+                                    AND dcfk.constraint_name =
+                                        dc.r_constraint_name
+                                    AND dcfk.owner = dot.owner
+                                    AND dcfk.table_name = dot.object_name
+                                    AND dot.object_type = 'TABLE'))
+                      ELSE
+                        dc.last_change
+                      END
+                      AS last_change
+               FROM dba_constraints dc
+               WHERE dc.owner = :o
+                 -- Ignore columns on tables in the recyclebin
+                 AND NOT (LENGTH(dc.table_name) = 30
+                      AND dc.table_name LIKE 'BIN$%')
+             ) AS constraints
+      FROM dual
       """, o=owner, oracle_names=['table_name', 'object_name',
                                   'constraint_name'])
     total_objects = (len(schema['objects']) +
@@ -504,6 +537,7 @@ class Schema (OracleObject):
       if invalid_objs:
         self.drop_invalid_objects(invalid_objs)
     except ValueError:
+      self.log.info('Cache is incomplete. Ignoring cache.')
       pass
 
     if Table in to_refresh:
