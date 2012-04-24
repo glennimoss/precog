@@ -248,6 +248,10 @@ class ForeignKeyConstraint (_HasFkConstraint, HasProp('delete_rule'),
                             Constraint):
   namespace = Constraint
 
+  def _eq_fk_constraint (self, other):
+    return ([c.name for c in self.fk_constraint.columns] ==
+            [c.name for c in other.fk_constraint.columns])
+
   def _sub_sql (self, inline):
     parts = []
     if not inline:
