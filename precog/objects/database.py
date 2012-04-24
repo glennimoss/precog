@@ -846,9 +846,10 @@ class Database (HasLog):
     if not database:
       database = class_(default_schema)
       database.add_file(filename)
-      database.validate()
       database._top_file = filename.name
       database.cache()
+
+    database.validate()
 
     #if database.log.isEnabledFor(logging.DEBUG):
       #for schema in database.schemas.values():
@@ -955,7 +956,6 @@ class Database (HasLog):
         break
 
     self.cache()
-    self.validate()
 
   def __getstate__ (self):
     state = super().__getstate__()
