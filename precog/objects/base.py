@@ -89,7 +89,10 @@ class OracleObject (HasLog):
 
   def __hash__ (self):
     try:
-      return hash((type(self), self.name))
+      type_self = type(self)
+      if hasattr(type_self, 'namespace'):
+        type_self = type_self.namespace
+      return hash((type_self, self.name))
     except:
       # See __repr__
       return object.__hash__(self)
