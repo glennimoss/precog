@@ -15,7 +15,7 @@ class ParseError (PrecogError):
     self.num_errors = num_errors
 
   def __str__ (self):
-    return "{}{} {} in schema definition".format(super().__str__(),
+    return "{}{} in schema definition".format(super().__str__(),
         pluralize(self.num_errors, 'error'))
 
 class SyntaxError (ParseError):
