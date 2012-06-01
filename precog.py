@@ -42,6 +42,9 @@ output_group.add_argument('-q', '--quiet', action='store_true',
     help='Suppress output')
 
 # Configuration options
+parser.add_argument('--list-plsql-only', action='store_true',
+                    help='List only the names of the changed PL/SQL objects, '
+                    'rather than the full source code.')
 parser.add_argument('--schema',
     help='Schema name for unqualified object names. Defaults to <username>.')
 parser.add_argument('--dump', action='store_true',
@@ -96,7 +99,8 @@ try:
         change_str = pluralize(changes, 'change')
         print("Found {}{}\n".format(change_str, retry),
               file=sys.stderr)
-        print("\n\n".join(diff.formatted(args.no_apply, True)
+        print("\n\n".join(diff.formatted(nosnip=args.no_apply, udiff=True,
+                                         list_only=args.list_plsql_only)
                           for diff in diffs))
         print()
 
