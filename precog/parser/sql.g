@@ -1678,7 +1678,7 @@ ID
 	|	DOUBLEQUOTED_STRING
 	;
 PLSQL_COMPILE_DIRECTIVE
-  : '$' ID
+  : '$' '$'? ID
   ;
 SEMI
 	:	';'
