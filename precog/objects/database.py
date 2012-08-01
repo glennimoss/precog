@@ -42,6 +42,10 @@ def _to_type (type, name):
     raise PrecogError(
       "{} [{}]: unexpected type".format(type, name)) from e
 
+# When dealing with the cache, we group all PL/SQL objects under the PlsqlCode
+# object. However, we need to get the real type back later to look it up in the
+# schema, so we hide the type in the name. Perhaps all subclasses of PlsqlCode
+# could be stored in one entry in the schema under the PlsqlCode type...
 def _mangle_plsql_name (object_type, object_name):
   return object_name.with_(obj=OracleIdentifier(
     "{}.{}".format(object_type.type, object_name.obj), trust_me=True))
@@ -495,12 +499,16 @@ class Schema (OracleObject):
 
         if obj_type is PlsqlCode:
           changed_objs = [
-            self.objects[_to_type(type_name, object_name)][object_name]
-            for type_name, object_name in (
-              (type_name, OracleFQN(schema, name))
-              for schema, (type_name, name) in (
-                (changed_name.schema, changed_name.obj.split('.', 1))
-                for changed_name in changed))]
+            self.objects[real_obj_type][object_name]
+            for real_obj_type, object_name in (
+              (_to_type(type_name, object_name), object_name)
+              for type_name, object_name in (
+                (type_name, OracleFQN(schema, name))
+                for schema, (type_name, name) in (
+                  (changed_name.schema, changed_name.obj.split('.', 1))
+                  for changed_name in changed)))
+            if real_obj_type in self.objects and
+               object_name in self.objects[real_obj_type]]
         else:
           changed_objs = [self.objects[obj_type][obj_name]
                           for obj_name in changed
