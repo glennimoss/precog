@@ -541,7 +541,6 @@ class Schema (OracleObject):
           del to_refresh[obj_type]
 
     except ValueError:
-      self.log.info('Cache is incomplete. Ignoring cache.')
       pass
 
     if Table in to_refresh:
