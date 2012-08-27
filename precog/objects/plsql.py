@@ -1,7 +1,8 @@
 import difflib, re
 from precog import db
 from precog.diff import Diff, ErrorCheckingDiff, PlsqlDiff, Reference
-from precog.errors import PlsqlSyntaxError, PrecogError
+from precog.errors import (NonexistentSchemaObjectError, PlsqlSyntaxError,
+                           PrecogError)
 from precog.objects._assert import *
 from precog.objects._misc import *
 from precog.objects.base import OracleObject, OracleFQN
@@ -145,6 +146,17 @@ class PlsqlCode (OracleObject):
 
 class PlsqlHeader (PlsqlCode):
 
+  def __init__ (self, name, **props):
+    super().__init__(name, **props)
+
+    if not self.deferred:
+      try:
+        body_class = _type_to_class(type(self).type + ' BODY', self.name)
+        body = self.database.find(self.name, body_class, deferred=False)
+        body.header = self
+      except NonexistentSchemaObjectError:
+        pass
+
   def rebuild(self):
     return super().rebuild(extra_parameters='SPECIFICATION')
 
@@ -155,9 +167,13 @@ class PlsqlBody (HasProp('header', dependency=Reference.AUTODROP,
   def __init__ (self, name, **props):
     super().__init__(name, **props)
 
-    if not self.header:
-      header_class = _type_to_class(type(self).type.split()[0], self.name)
-      self.header = self.database.find(self.name, header_class)
+    if not self.deferred and not self.header:
+      try:
+        header_class = _type_to_class(type(self).type.split()[0], self.name)
+        self.header = self.database.find(self.name, header_class,
+                                         deferred=False)
+      except NonexistentSchemaObjectError:
+        pass
 
   def _eq_header (self, other):
     # We don't want to fail just because our headers differ in text

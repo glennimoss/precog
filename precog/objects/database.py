@@ -289,7 +289,7 @@ class Schema (OracleObject):
     if find_type in self.objects and name in self.objects[find_type]:
       return self.objects[find_type][name]
 
-    obj = obj_type(name, deferred=True)
+    obj = obj_type(name, deferred=True, database=self.database)
     if deferred:
       obj = self.add(obj)
       return obj
