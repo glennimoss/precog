@@ -70,6 +70,21 @@ class ObjectError (PrecogError):
   def __str__ (self):
     return _with_location(self.obj)
 
+class PropertyConflict (ObjectError):
+
+  def __init__ (self, obj, prop_name, other_value):
+    super().__init__(obj)
+
+    self.prop_name = prop_name
+    self.other_value = other_value
+
+  def __str__ (self):
+    return ("{} with property {} of {} is trying to be satisfied "
+            "with a different value {}".format(
+              super().__str__(), self.prop_name,
+              self.obj.props[self.prop_name] if self.prop_name in self.obj.props
+              else getattr(self.obj, self.prop_name, None), self.other_value))
+
 class SchemaConflict (ObjectError):
 
   def __init__ (self, obj, other):

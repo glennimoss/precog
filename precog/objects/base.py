@@ -2,6 +2,7 @@ import logging
 
 from precog.diff import Diff, Reference
 from precog.identifier import *
+from precog.objects._misc import _with_location
 from precog.util import classproperty, HasLog, InsensitiveDict
 
 SkippedObject = object()
@@ -69,7 +70,12 @@ class OracleObject (HasLog):
 
   def get_location (self, with_line=True):
     if not self.create_location:
-      return ['unknown']
+      if self.deferred:
+        if self._referenced_by:
+          return "referenced by: {}".format(', '.join(
+            _with_location(ref.from_) for ref in self._referenced_by))
+        return 'deferred'
+      return 'unknown'
     parts = ['in "{}"'.format(self.create_location[0])]
     if with_line and len(self.create_location) > 1:
       parts.append('line {}'.format(self.create_location[1]))
@@ -200,7 +206,13 @@ class OracleObject (HasLog):
       if not self.create_location:
         self.create_location = other.create_location
 
-      self.props.update(other.props)
+      for k, v in other.props.items():
+        if (v is not None and k in self.props and self.props[k] is not None and
+            v != self.props[k]):
+          raise PropertyConflict(self, k, v)
+
+        if k not in self.props or v is not None:
+          self.props[k] = v
 
       self._satisfy(other)
 

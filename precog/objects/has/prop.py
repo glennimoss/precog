@@ -1,4 +1,5 @@
 import logging
+from precog.errors import PropertyConflict
 from precog.objects._assert import *
 from precog.objects.base import OracleObject
 
@@ -61,7 +62,13 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
 
     def _satisfy (self, other):
       super()._satisfy(other)
-      setattr(self, prop_name, getattr(other, prop_name, None))
+
+      other_value = getattr(other, prop_name, None)
+
+      if other_value is not None:
+        if getattr(self, prop_name) and not equal(self, other):
+          raise PropertyConflict(self, prop_name, other_value)
+        setattr(self, prop_name, other_value)
 
     def become_deferred (self):
       super().become_deferred()
