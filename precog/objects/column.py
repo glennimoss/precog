@@ -29,9 +29,26 @@ class _HasTable (HasProp('table', dependency=Reference.AUTODROP)):
             (self.table and other.table and
              self.table.name == other.table.name))
 
-class Column (HasConstraints, HasDataDefault, _HasTable,
-              HasUserType, HasProp('qualified_col_name', assert_type=str),
-              OracleObject):
+_HasQualifiedColName_ = HasProp('qualified_col_name', assert_type=str)
+class _HasQualifiedColName(_HasQualifiedColName_):
+  def _satisfy (self, other):
+    super(_HasQualifiedColName_, self)._satisfy(other)
+
+    if other.qualified_col_name is not None:
+      # A deferred object may have a value not marked as generated because we
+      # didn't know if it was at the lookup time, and when the real one arrives
+      # and it IS generated, the two will not be equal. We test for equality to
+      # allow for generated name matching, but then only if they actually differ
+      # by text will we make a stink.
+      if (self.qualified_col_name and
+          self.qualified_col_name != other.qualified_col_name and
+          not str.__eq__(self.qualified_col_name, other.qualified_col_name)):
+        raise PropertyConflict(self, 'qualified_col_name',
+                               other.qualified_col_name)
+      self.qualified_col_name = other.qualified_col_name
+
+class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
+              _HasQualifiedColName, OracleObject):
 
   def __new__ (class_, *args, **props):
     # Sometimes columns are marked as virtual columns, but because they

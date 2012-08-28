@@ -8,6 +8,16 @@ from precog.util import classproperty, HasLog, InsensitiveDict
 SkippedObject = object()
 UnsetProperty = object()
 
+def _generatify (l, r):
+  if isinstance(l, OracleFQN) and isinstance(r, OracleFQN):
+    schema = _generatify(l.schema, r.schema)
+    obj = _generatify(l.obj, r.obj)
+    part = _generatify(l.part, r.part)
+    return OracleFQN(schema, obj, part)
+  if l and r and r.generated:
+    l = OracleIdentifier(l, trust_me=True, generated=True)
+  return l
+
 class OracleObject (HasLog):
 
   @classproperty
@@ -192,16 +202,7 @@ class OracleObject (HasLog):
       if self.name.generated and not other.name.generated:
         self.name = other.name
       elif other.name.generated:
-        schema = self.name.schema
-        if schema and other.name.schema and other.name.schema.generated:
-          schema = OracleIdentifier(schema, trust_me=True, generated=True)
-        obj = self.name.obj
-        if obj and other.name.obj and other.name.obj.generated:
-          obj = OracleIdentifier(obj, trust_me=True, generated=True)
-        part = self.name.part
-        if part and other.name.part and other.name.part.generated:
-          part = OracleIdentifier(part, trust_me=True, generated=True)
-        self.name = OracleFQN(schema, obj, part)
+        self.name = _generatify(self.name, other.name)
 
       if not self.create_location:
         self.create_location = other.create_location
