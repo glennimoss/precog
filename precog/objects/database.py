@@ -1,4 +1,4 @@
-import itertools, logging, math, os, pickle
+import logging, os, pickle
 
 from precog import db
 from precog.diff import order_diffs
@@ -35,6 +35,21 @@ def _freeze_name (name):
     name = OracleFQN(name.schema, clear_flags(name.obj), clear_flags(name.part))
   return name
 
+def _to_type (type, name):
+  try:
+    return globals()[_type_to_class_name(type)]
+  except KeyError as e:
+    raise PrecogError(
+      "{} [{}]: unexpected type".format(type, name)) from e
+
+# When dealing with the cache, we group all PL/SQL objects under the PlsqlCode
+# object. However, we need to get the real type back later to look it up in the
+# schema, so we hide the type in the name. Perhaps all subclasses of PlsqlCode
+# could be stored in one entry in the schema under the PlsqlCode type...
+def _mangle_plsql_name (object_type, object_name):
+  return object_name.with_(obj=OracleIdentifier(
+    "{}.{}".format(object_type.type, object_name.obj), trust_me=True))
+
 def _file_cache_file_name (file_name):
   return "precog_cache_file_{}.pickle".format(
     os.path.splitext(os.path.basename(file_name))[0])
@@ -42,7 +57,7 @@ def _file_cache_file_name (file_name):
 def _db_cache_file_name (schema_name):
   return "precog_cache_db_{}-{}.pickle".format(schema_name, db.dsn)
 
-_cache_version = 'precog cache v2'
+_cache_version = 'precog cache v3'
 def _read_cache (file_name):
   cache_log = logging.getLogger('Cache Loader')
   values = []
@@ -309,7 +324,7 @@ class Schema (OracleObject):
     if find_type in self.objects and name in self.objects[find_type]:
       return self.objects[find_type][name]
 
-    obj = obj_type(name, deferred=True)
+    obj = obj_type(name, deferred=True, database=self.database)
     if deferred:
       obj = self.add(obj)
       return obj
@@ -430,17 +445,13 @@ class Schema (OracleObject):
                      sum(table['num_columns'] for table in schema['columns']) +
                      len(schema['constraints']) + schema['grants'])
 
-    def to_type (type, name):
-      try:
-        return globals()[_type_to_class_name(type)]
-      except KeyError as e:
-        raise PrecogError(
-          "{} [{}]: unexpected type".format(type, name)) from e
-
     modified_times = {}
     for object in schema['objects']:
       object_name = OracleFQN(owner, object['object_name'])
-      object_type = to_type(object['object_type'], object_name)
+      object_type = _to_type(object['object_type'], object_name)
+      if issubclass(object_type, PlsqlCode):
+        object_name = _mangle_plsql_name(object_type, object_name)
+        object_type = PlsqlCode
       if object_type not in modified_times:
         modified_times[object_type] = {}
       modified_times[object_type][object_name] = object['last_ddl_time']
@@ -459,14 +470,10 @@ class Schema (OracleObject):
           if names is None or table['table_name'] in names:
             change_count += table['num_columns']
       elif names is None:
-        if obj_type is PlsqlCode:
-          change_count += sum(len(n) for t, n in modified_times.items()
-                              if issubclass(t, PlsqlCode))
-        else:
-          if obj_type in modified_times:
-            change_count += len(modified_times[obj_type])
-          elif obj_type is Grant:
-            change_count += schema['grants']
+        if obj_type in modified_times:
+          change_count += len(modified_times[obj_type])
+        elif obj_type is Grant:
+          change_count += schema['grants']
       else:
         change_count += len(names)
 
@@ -489,13 +496,8 @@ class Schema (OracleObject):
       self.log.info('Using cached schema.')
 
   def read_cache (self, modified_times):
-    to_refresh = dict.fromkeys((Constraint,
-                                Grant,
-                                Index,
-                                PlsqlCode,
-                                Sequence,
-                                Synonym,
-                                Table))
+    to_refresh = dict.fromkeys(modified_times.keys())
+
     try:
       cached_times, cached_schema = _read_cache(
         _db_cache_file_name(self.name.schema))
@@ -505,8 +507,22 @@ class Schema (OracleObject):
       self.objects = cached_schema.objects
       self.deferred = cached_schema.deferred
 
-      change_count = 0
-      invalid_objs = []
+      refresh_all = set()
+
+      def refresh (obj_names, obj_type):
+        if obj_type is not PlsqlCode and issubclass(obj_type, PlsqlCode):
+          obj_names = [_mangle_plsql_name(obj_type, obj_name)
+                       for obj_name in obj_names]
+          obj_type = PlsqlCode
+        if hasattr(obj_type, 'namespace'):
+          obj_type = obj_type.namespace
+
+        if obj_type not in to_refresh or to_refresh[obj_type] is None:
+            to_refresh[obj_type] = set()
+
+        to_refresh[obj_type].update(obj_name.obj for obj_name in obj_names)
+
+      invalid_objs = set()
       for obj_type in modified_times.keys() | cached_times.keys():
         changed = set()
         unchanged = set()
@@ -521,43 +537,65 @@ class Schema (OracleObject):
             changed.add(obj_name)
           else:
             unchanged.add(obj_name)
-        change_count += len(changed)
 
-        changed_objs = [self.objects[obj_type][obj_name]
-                        for obj_name in changed
-                        if obj_type in self.objects and
-                        obj_name in self.objects[obj_type]]
-        if obj_type is Table:
-          for table in changed_objs:
-            invalid_objs.extend(table.columns)
-        invalid_objs.extend(changed_objs)
-        if issubclass(obj_type, PlsqlCode):
-          if to_refresh[PlsqlCode] is None:
-            to_refresh[PlsqlCode] = set()
-          to_refresh[PlsqlCode].update("{}.{}".format(obj_type.type,
-                                                      obj_name.obj)
-                                       for obj_name in (current_objs.keys() -
-                                                        unchanged))
-        elif unchanged:
-            to_refresh[obj_type] = {obj_name.obj for obj_name in
-                                    (current_objs.keys() - unchanged)}
-            if not to_refresh[obj_type]:
-              del to_refresh[obj_type]
+        if obj_type is PlsqlCode:
+          changed_objs = [
+            self.objects[real_obj_type][object_name]
+            for real_obj_type, object_name in (
+              (_to_type(type_name, object_name), object_name)
+              for type_name, object_name in (
+                (type_name, OracleFQN(schema, name))
+                for schema, (type_name, name) in (
+                  (changed_name.schema, changed_name.obj.split('.', 1))
+                  for changed_name in changed)))
+            if real_obj_type in self.objects and
+               object_name in self.objects[real_obj_type]]
+        else:
+          changed_objs = [self.objects[obj_type][obj_name]
+                          for obj_name in changed
+                          if obj_type in self.objects and
+                          obj_name in self.objects[obj_type]]
+        invalid_objs.update(changed_objs)
+        for obj in changed_objs:
+          refs = {ref.from_ for ref in obj._referenced_by
+                  if ref.integrity != Reference.SOFT}
+          for ref in refs:
+            refresh([ref.name], type(ref))
+          invalid_objs.update(refs)
+
+        if unchanged:
+          refresh((obj_name
+                   for obj_name in (current_objs.keys() - unchanged)),
+                  obj_type)
+        else:
+          to_refresh[obj_type] = refresh_all
 
       if Grant in self.objects:
         invalid_objs.extend(self.objects[Grant].values())
 
       if invalid_objs:
         self.drop_invalid_objects(invalid_objs)
+
+      # Set to None all types we want to have refreshed in full and delete all
+      # types that we won't load at all.
+      for obj_type in set(to_refresh):
+        if to_refresh[obj_type] is refresh_all:
+          to_refresh[obj_type] = None
+        elif to_refresh[obj_type] is not None and not to_refresh[obj_type]:
+          del to_refresh[obj_type]
+
     except ValueError:
       pass
 
     if Table in to_refresh:
       to_refresh[Column] = to_refresh[Table]
+    elif Column in to_refresh:
+      raise PrecogError('Changed columns, not tables. Should never happen.')
 
-    if to_refresh[PlsqlCode] is not None and not to_refresh[PlsqlCode]:
-      del to_refresh[PlsqlCode]
+    # Always refresh all grants
+    to_refresh[Grant] = None
 
+    self.log.debug("Refreshing objects: {}".format(to_refresh))
     return to_refresh
 
   def cache (self, modified_times):
@@ -894,9 +932,10 @@ class Database (HasLog):
     if not database:
       database = class_(default_schema)
       database.add_file(filename)
-      database.validate()
       database._top_file = filename.name
       database.cache()
+
+    database.validate()
 
     #if database.log.isEnabledFor(logging.DEBUG):
       #for schema in database.schemas.values():
@@ -966,7 +1005,7 @@ class Database (HasLog):
                   self])
 
   def drop_files (self, files):
-    invalid_objs = []
+    invalid_objs = set()
     outdated_includes = set()
     for file in files:
       if file in self._files:
@@ -977,7 +1016,7 @@ class Database (HasLog):
         if 'include' in split:
           outdated_includes.update(i[1] for i in split['include'])
         if None in split:
-          invalid_objs.extend(split[None])
+          invalid_objs.update(split[None])
         del self._files[file]
 
     schema_names = {obj.name.schema for obj in invalid_objs}
@@ -1003,7 +1042,6 @@ class Database (HasLog):
         break
 
     self.cache()
-    self.validate()
 
   def __getstate__ (self):
     state = super().__getstate__()

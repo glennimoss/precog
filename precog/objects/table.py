@@ -110,7 +110,7 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
   @staticmethod
   def parse (value, column):
     if isinstance(value, str):
-      if value == 'NULL':
+      if value.upper() == 'NULL' or value == "''":
         return None
 
       if column.is_number or not (value.startswith("'") and

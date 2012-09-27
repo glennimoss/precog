@@ -80,7 +80,7 @@ class Diff (object):
     return "Diff({!r}, {!r}, {!r})".format(self.sql, self.dependencies,
         self.produces)
 
-  def formatted (self, *args, **kwargs):
+  def formatted (self, **kwargs):
     binds = ''
     parts = []
     for sql, binds in itertools.zip_longest(self.sql, self.binds):
@@ -141,12 +141,21 @@ class ErrorCheckingDiff (Diff):
     for product in self.produces:
       product.errors()
 
+  def formatted (self, list_only=False, **kwargs):
+    if list_only:
+      return '-- Recompile {}'.format(', '.join(p.pretty_name
+                                                for p in self.produces));
+    return super().formatted()
+
 class PlsqlDiff (ErrorCheckingDiff):
 
   def __init__ (self, sql, **kwargs):
     super().__init__(sql, terminator='\n/', **kwargs)
 
-  def formatted (self, nosnip=False, udiff=False):
+  def formatted (self, nosnip=False, udiff=False, list_only=False):
+    if list_only:
+      return super().formatted(list_only=True)
+
     parts = ([obj.unified_diff for obj in self.produces if obj.unified_diff]
              if udiff else [])
     for sql in self.sql:
@@ -269,7 +278,8 @@ def order_diffs (diffs):
                          }
       for diff in diffs})))
 
-  sort_by = (lambda x: x.priority + (10 if isinstance(x, PlsqlDiff) else 0)
+  sort_by = (lambda x: x.priority + (10
+                                     if isinstance(x, ErrorCheckingDiff) else 0)
              if isinstance(x, Diff) else 0)
   # edges is dict of obj: [dependencies, ...]
   edges = {}

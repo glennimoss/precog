@@ -2,10 +2,20 @@ import logging
 
 from precog.diff import Diff, Reference
 from precog.identifier import *
-from precog.util import classproperty, HasLog, InsensitiveDict
+from precog.util import classproperty, HasLog, InsensitiveDict, _with_location
 
 SkippedObject = object()
 UnsetProperty = object()
+
+def _generatify (l, r):
+  if isinstance(l, OracleFQN) and isinstance(r, OracleFQN):
+    schema = _generatify(l.schema, r.schema)
+    obj = _generatify(l.obj, r.obj)
+    part = _generatify(l.part, r.part)
+    return OracleFQN(schema, obj, part)
+  if l and r and r.generated:
+    l = OracleIdentifier(l, trust_me=True, generated=True)
+  return l
 
 class OracleObject (HasLog):
 
@@ -69,7 +79,12 @@ class OracleObject (HasLog):
 
   def get_location (self, with_line=True):
     if not self.create_location:
-      return ['unknown']
+      if self.deferred:
+        if self._referenced_by:
+          return "referenced by: {}".format(', '.join(
+            _with_location(ref.from_) for ref in self._referenced_by))
+        return 'deferred'
+      return 'unknown'
     parts = ['in "{}"'.format(self.create_location[0])]
     if with_line and len(self.create_location) > 1:
       parts.append('line {}'.format(self.create_location[1]))
@@ -89,7 +104,10 @@ class OracleObject (HasLog):
 
   def __hash__ (self):
     try:
-      return hash((type(self), self.name))
+      type_self = type(self)
+      if hasattr(type_self, 'namespace'):
+        type_self = type_self.namespace
+      return hash((type_self, self.name))
     except:
       # See __repr__
       return object.__hash__(self)
@@ -183,21 +201,18 @@ class OracleObject (HasLog):
       if self.name.generated and not other.name.generated:
         self.name = other.name
       elif other.name.generated:
-        schema = self.name.schema
-        if schema and other.name.schema and other.name.schema.generated:
-          schema = OracleIdentifier(schema, trust_me=True, generated=True)
-        obj = self.name.obj
-        if obj and other.name.obj and other.name.obj.generated:
-          obj = OracleIdentifier(obj, trust_me=True, generated=True)
-        part = self.name.part
-        if part and other.name.part and other.name.part.generated:
-          part = OracleIdentifier(part, trust_me=True, generated=True)
-        self.name = OracleFQN(schema, obj, part)
+        self.name = _generatify(self.name, other.name)
 
       if not self.create_location:
         self.create_location = other.create_location
 
-      self.props.update(other.props)
+      for k, v in other.props.items():
+        if (v is not None and k in self.props and self.props[k] is not None and
+            v != self.props[k]):
+          raise PropertyConflict(self, k, v)
+
+        if k not in self.props or v is not None:
+          self.props[k] = v
 
       self._satisfy(other)
 

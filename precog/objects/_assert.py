@@ -1,9 +1,8 @@
 __all__ = ['_assert_type', '_assert_contains_type']
 
 def _assert_type (value, type):
-  if value is not None:
-    if not isinstance(value, type):
-      raise TypeError("Expected {}: {!r}".format(type.__name__, value))
+  if value is not None and not isinstance(value, type):
+    raise TypeError("Expected {}: {!r}".format(type.__name__, value))
 
 def _assert_contains_type (value, contains_type):
   if value is not None:

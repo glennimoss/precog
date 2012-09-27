@@ -29,10 +29,12 @@ class HasExpression (_HasExpression, _HasExpressionRefs):
         self.table and self.database):
       # Try again for late binding
       self.expression = expression.text
-    expression = _HasExpression.expression.__get__(self)
+      expression = _HasExpression.expression.__get__(self)
     if expression:
       return expression
-    self.log.warn("{} has no expression!".format(self.pretty_name))
+    if not self.deferred:
+      self.log.warn("{} has no expression!".format(self.pretty_name))
+    return None
 
   def _build_dep_set (self, *args, **kwargs):
     # refresh expression references
