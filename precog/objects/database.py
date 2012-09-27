@@ -1,4 +1,4 @@
-import itertools, logging, math, os
+import logging, os
 
 from precog import db
 from precog import parser
@@ -922,7 +922,7 @@ class Database (HasLog):
                  self])
 
   def drop_files (self, files):
-    invalid_objs = []
+    invalid_objs = set()
     outdated_includes = set()
     for file in files:
       if file in self._files:
@@ -933,7 +933,7 @@ class Database (HasLog):
         if 'include' in split:
           outdated_includes.update(i[1] for i in split['include'])
         if None in split:
-          invalid_objs.extend(split[None])
+          invalid_objs.update(split[None])
         del self._files[file]
 
     schema_names = {obj.name.schema for obj in invalid_objs}
