@@ -433,7 +433,7 @@ class Schema (OracleObject):
                               AND NOT (LENGTH(table_name) = 30
                                    AND table_name LIKE 'BIN$%')
                            ) AS constraints
-                   , (SELECT COUNT(*)
+                   , (SELECT 0 /* COUNT(*) disable grants */
                       FROM (SELECT DISTINCT owner, table_name
                             FROM dba_tab_privs
                             WHERE grantee = :o)
@@ -462,6 +462,11 @@ class Schema (OracleObject):
     self.log.info("Schema {} has {}.".format(owner, pluralize(total_objects,
                                                                 'object')))
     to_refresh = self.read_cache(modified_times)
+
+    if schema['grants']:
+      # Refresh all grants, but only if there are actually any grants out there
+      to_refresh[Grant] = None
+
 
     change_count = 0
     for obj_type, names in to_refresh.items():
@@ -571,7 +576,7 @@ class Schema (OracleObject):
           to_refresh[obj_type] = refresh_all
 
       if Grant in self.objects:
-        invalid_objs.extend(self.objects[Grant].values())
+        invalid_objs.update(self.objects[Grant].values())
 
       if invalid_objs:
         self.drop_invalid_objects(invalid_objs)
@@ -591,9 +596,6 @@ class Schema (OracleObject):
       to_refresh[Column] = to_refresh[Table]
     elif Column in to_refresh:
       raise PrecogError('Changed columns, not tables. Should never happen.')
-
-    # Always refresh all grants
-    to_refresh[Grant] = None
 
     self.log.debug("Refreshing objects: {}".format(to_refresh))
     return to_refresh
