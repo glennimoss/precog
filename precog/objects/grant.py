@@ -67,7 +67,7 @@ class Grant (_HasOnObj, _HasPrivileges, OracleObject):
 
 
     for grant in group(rs):
-      yield class_(grant['name'].schema, privileges=set(grant['privs']),
-                   on_obj=into_database.find(grant['name'], OracleObject),
+      yield class_(schema, privileges=set(grant['privs']),
+                   on_obj=into_database.find(grant['name']),
                    database=into_database, create_location=(db.location,))
     rs.close()
