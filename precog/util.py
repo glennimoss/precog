@@ -1,6 +1,21 @@
 from collections import OrderedDict
 import logging, sys, time
 
+class classproperty (object):
+
+  def __init__ (self, getter, instance_getter=None):
+    self._getter = getter
+    self._instance_getter = instance_getter
+
+  def instance (self, func):
+    self._instance_getter = func
+    return self
+
+  def __get__ (self, obj, class_):
+    if obj is None or self._instance_getter is None:
+      return self._getter(class_)
+    return self._instance_getter(obj)
+
 class InsensitiveDict (OrderedDict):
 
   def __setitem__ (self, key, value):
@@ -111,13 +126,15 @@ def coerced_comparison (class_):
 
 class HasLog (object):
   """ Mixin for making a log named after the class """
+  _log = None
 
-  def __init__ (self, *args, **kwargs):
-    self._log = None
+  @classproperty
+  def log (class_):
+    if not class_._log:
+      class_._log = HasLog.log_for(class_)
+    return class_._log
 
-    super().__init__(*args, **kwargs)
-
-  @property
+  @log.instance
   def log (self):
     if not self._log:
       self._log = HasLog.log_for(self)
@@ -139,14 +156,6 @@ class HasLog (object):
 
     return logging.getLogger(
         "{}.{}{}".format(class_.__module__, class_.__name__, id_))
-
-class classproperty (object):
-
-  def __init__ (self, getter):
-    self.getter = getter
-
-  def __get__ (self, obj, class_):
-    return self.getter(class_)
 
 def _progress (coll, output, message, start, count, complete):
   if count is None:
