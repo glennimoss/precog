@@ -433,11 +433,14 @@ class Schema (OracleObject):
                               AND NOT (LENGTH(table_name) = 30
                                    AND table_name LIKE 'BIN$%')
                            ) AS constraints
-                   , (SELECT 0 /* COUNT(*) disable grants */
+                   , 0 AS grants
+                   /* Disable grants
+                   , (SELECT COUNT(*)
                       FROM (SELECT DISTINCT owner, table_name
                             FROM dba_tab_privs
                             WHERE grantee = :o)
                      ) AS grants
+                   */
               FROM dual
       """, o=owner, oracle_names=['table_name', 'object_name',
                                   'constraint_name'])
