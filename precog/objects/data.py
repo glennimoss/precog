@@ -45,7 +45,7 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
 
     """ A tuple view for hashing, comparing, etc. """
     return tuple(sorted(tup for tup in self.values().items()
-                        if tup[0] in discriminators and tup[1] is not None))
+                        if tup[0] in discriminators))
 
   def values (self):
     return InsensitiveDict((col.name.part.lower(), value)
@@ -54,6 +54,8 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
 
   @staticmethod
   def format (value):
+    if value is None:
+      return 'NULL'
     if isinstance(value, datetime.datetime):
       if value.microsecond:
         fmt = "TO_TIMESTAMP('{}', 'YYYY-MM-DD HH24:MI:SS.FF')"
@@ -66,7 +68,7 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
     table_name = self.table.name
     if not fq:
       table_name = table_name.obj
-    values = {col: val for col, val in self.values().items() if val is not None}
+    values = self.values()
     if columns:
       values = InsensitiveDict((col, values[col])
                                for col in columns if col in values)
@@ -76,8 +78,8 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
                                           for val in values.values()))
 
   def _equal_pairs (self, pairs, assign=False):
-    return [" = ".join((col, Data.format(val))) if val is not None
-            else "{} {} NULL".format(col, '=' if assign else 'IS')
+    return [" = ".join((col, Data.format(val))) if val is not None or assign
+            else "{} IS NULL".format(col)
             for col, val in pairs.items()]
 
   def _drop (self):
