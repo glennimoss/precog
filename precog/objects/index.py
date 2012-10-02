@@ -1,7 +1,7 @@
 from precog import db
 from precog.diff import Diff, Reference
 from precog.identifier import *
-from precog.objects.base import OracleObject, SkippedObject
+from precog.objects.base import OracleObject
 from precog.objects.has.columns import HasColumns, HasTableFromColumns
 
 class Index (HasTableFromColumns, HasColumns, OracleObject):

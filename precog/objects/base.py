@@ -4,9 +4,6 @@ from precog.diff import Diff, Reference
 from precog.identifier import *
 from precog.util import classproperty, HasLog, InsensitiveDict, _with_location
 
-SkippedObject = object()
-UnsetProperty = object()
-
 def _generatify (l, r):
   if isinstance(l, OracleFQN) and isinstance(r, OracleFQN):
     schema = _generatify(l.schema, r.schema)

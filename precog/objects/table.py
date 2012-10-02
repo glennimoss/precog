@@ -3,7 +3,7 @@ import datetime, itertools, re
 from precog import db
 from precog.diff import Commit, Diff
 from precog.identifier import *
-from precog.objects.base import OracleObject, SkippedObject
+from precog.objects.base import OracleObject
 from precog.objects.column import Column
 from precog.objects.constraint import Constraint
 from precog.objects.index import Index
