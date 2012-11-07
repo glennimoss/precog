@@ -57,7 +57,7 @@ def _file_cache_file_name (file_name):
 def _db_cache_file_name (schema_name):
   return "precog_cache_db_{}-{}.pickle".format(schema_name, db.dsn)
 
-_cache_version = 'precog cache v3'
+_cache_version = 'precog cache v4'
 def _read_cache (file_name):
   cache_log = logging.getLogger('Cache Loader')
   values = []
@@ -832,7 +832,6 @@ class Database (HasLog):
       to_load = set(self.schemas.keys())
       loaded = set()
       while to_load:
-        print('loading: ' + str(to_load))
         for schema_name in to_load:
           if schema_name not in self._ignore_schemas:
             self.schemas[schema_name].from_db()
