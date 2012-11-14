@@ -38,6 +38,9 @@ class SqlSyntaxError (SyntaxError):
   pass
 
 class OracleError (PrecogError):
+  pass
+
+class SqlError (OracleError):
   def __init__ (self, db_error, sql):
     self.db_error = db_error
     self.sql = sql

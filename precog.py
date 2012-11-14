@@ -1,7 +1,7 @@
 import argparse, logging, os, re, sys
 
 from precog.objects.database import Database
-from precog.errors import PrecogError, OracleError, UnappliedDependencyError
+from precog.errors import PrecogError, UnappliedDependencyError
 from precog.util import progress_print, pluralize
 from precog.identifier import add_schema_alias
 

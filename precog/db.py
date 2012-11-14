@@ -2,7 +2,7 @@ import logging, math
 
 from precog.identifier import OracleIdentifier, name_from_oracle
 from precog.util import InsensitiveDict
-from precog.errors import OracleError, PrecogError
+from precog.errors import SqlError, PrecogError
 
 try:
   import cx_Oracle
@@ -116,7 +116,7 @@ def _init_cursor (cursor, args=[], kwargs={}, oracle_names=[]):
     try:
       cursor.execute(None, *args, **kwargs)
     except cx_Oracle.DatabaseError as e:
-      raise OracleError(e, cursor.statement.decode()) from e
+      raise SqlError(e, cursor.statement.decode()) from e
 
 def _unquote (d):
   for k in d:
@@ -159,7 +159,7 @@ def _execute(sql, *args, parse_only=False, **kwargs):
     else:
       cursor.execute(sql, *args, **kwargs)
   except cx_Oracle.DatabaseError as e:
-    raise OracleError(e, sql) from e
+    raise SqlError(e, sql) from e
   return cursor
 
 class exact_numbers (object):
