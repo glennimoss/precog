@@ -584,6 +584,12 @@ class Schema (OracleObject):
       if invalid_objs:
         self.drop_invalid_objects(invalid_objs)
 
+      if Table in to_refresh:
+        # We don't refresh columns individually, but by the tables they are in
+        to_refresh[Column] = to_refresh[Table]
+      elif Column in to_refresh:
+        raise PrecogError('Changed columns, not tables. Should never happen.')
+
       # Set to None all types we want to have refreshed in full and delete all
       # types that we won't load at all.
       for obj_type in set(to_refresh):
@@ -594,11 +600,6 @@ class Schema (OracleObject):
 
     except ValueError:
       pass
-
-    if Table in to_refresh:
-      to_refresh[Column] = to_refresh[Table]
-    elif Column in to_refresh:
-      raise PrecogError('Changed columns, not tables. Should never happen.')
 
     self.log.debug("Refreshing objects: {}".format(to_refresh))
     return to_refresh
