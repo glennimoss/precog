@@ -584,12 +584,6 @@ class Schema (OracleObject):
       if invalid_objs:
         self.drop_invalid_objects(invalid_objs)
 
-      if Table in to_refresh:
-        # We don't refresh columns individually, but by the tables they are in
-        to_refresh[Column] = to_refresh[Table]
-      elif Column in to_refresh:
-        raise PrecogError('Changed columns, not tables. Should never happen.')
-
       # Set to None all types we want to have refreshed in full and delete all
       # types that we won't load at all.
       for obj_type in set(to_refresh):
@@ -600,6 +594,14 @@ class Schema (OracleObject):
 
     except ValueError:
       pass
+
+    if Table in to_refresh:
+      # We don't refresh columns individually, but by the tables they are in
+      to_refresh[Column] = to_refresh[Table]
+    elif Column in to_refresh:
+      # We must have decided we don't need to refresh any tables, so we don't
+      # need to refresh any dependent columns either.
+      del to_refresh[Column]
 
     self.log.debug("Refreshing objects: {}".format(to_refresh))
     return to_refresh
@@ -811,8 +813,8 @@ class Database (HasLog):
                    if (type(obj), str(obj.name)) not in ignores and
                      # Deferred object referred to only by soft references
                      # aren't a big deal
-                     [ref for ref in obj._referenced_by
-                      if ref.integrity != Reference.SOFT]]
+                     any(ref for ref in obj._referenced_by
+                         if ref.integrity != Reference.SOFT)]
 
     if unsatisfied:
       raise UnsatisfiedDependencyError(unsatisfied)
