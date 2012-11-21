@@ -153,7 +153,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     return {ref.from_ for ref in self._referenced_by
             if isinstance(ref.from_, UniqueConstraint)}
 
-  def _sql (self, fq=False, full_def=True, default_clause=True):
+  def _sql (self, fq=False, full_def=True):
     parts = []
     name = self.qualified_name
     if not fq:
@@ -163,23 +163,23 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
     if full_def:
       parts.append(self._data_type_sql())
 
-      if default_clause and self.data_default:
-        parts.append("DEFAULT {}".format(self.data_default))
+      parts.append(self._extra_sql())
 
       if self.props['nullable'] and not self._is_pk:
         if 'N' == self.props['nullable']:
           parts.append('NOT')
         parts.append('NULL')
 
-      #for cons in self.other_constraints:
       for cons in self.constraints:
         parts.append(cons.sql(inline=True))
 
-    return " ".join(parts)
+    return " ".join(x for x in parts if x)
 
 
   def _data_type_sql (self):
     data_type = self.props['data_type']
+    if not data_type:
+      return ''
     if data_type in ('NUMBER', 'FLOAT'):
       if self.props['data_precision'] or self.props['data_scale']:
         precision = (self.props['data_precision']
@@ -194,6 +194,10 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
           (" CHAR" if self.props['char_used'] == 'C' else " BYTE")
           if self.props['char_used'] else '')
     return data_type
+
+  def _extra_sql (self):
+    if self.data_default:
+      return "DEFAULT {}".format(self.data_default)
 
   @property
   def sql_produces (self):
@@ -245,24 +249,25 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
       max_data_precision = None
       max_data_scale = None
       other_data_type = other.props['data_type']
-      if (('data_type' in prop_diff or
-           'data_length' in prop_diff or
-           'char_length' in prop_diff) and
-          _is_string_type(other_data_type)):
-        max_data_length = db.query_one(""" SELECT MAX(LENGTH({})) AS max
-                                           FROM {}
-                                       """.format(other.name.part,
-                                                  other.table.name))['max']
-      elif (('data_precision' in prop_diff or 'data_scale' in prop_diff) and
-            _is_number_type(other_data_type)):
-        rs = db.query_one(""" SELECT MAX(LENGTH(TRUNC(ABS({0}))))
-                                       AS max_data_precision
-                                   , MAX(LENGTH(ABS({0} - TRUNC({0}))) - 1)
-                                       AS max_data_scale
-                              FROM {1}
-                          """.format(other.name.part, other.table.name))
-        max_data_precision = rs['max_data_precision']
-        max_data_scale = rs['max_data_scale']
+      if type(self) is not VirtualColumn or 'virtual_column' not in prop_diff:
+        if (('data_type' in prop_diff or
+             'data_length' in prop_diff or
+             'char_length' in prop_diff) and
+            _is_string_type(other_data_type)):
+          max_data_length = db.query_one(""" SELECT MAX(LENGTH({})) AS max
+                                             FROM {}
+                                         """.format(other.name.part,
+                                                    other.table.name))['max']
+        elif (('data_precision' in prop_diff or 'data_scale' in prop_diff) and
+              _is_number_type(other_data_type)):
+          rs = db.query_one(""" SELECT MAX(LENGTH(TRUNC(ABS({0}))))
+                                         AS max_data_precision
+                                     , MAX(LENGTH(ABS({0} - TRUNC({0}))) - 1)
+                                         AS max_data_scale
+                                FROM {1}
+                            """.format(other.name.part, other.table.name))
+          max_data_precision = rs['max_data_precision']
+          max_data_scale = rs['max_data_scale']
       for prop, (expected, other_prop) in prop_diff.items():
         if expected is None:
           continue
@@ -315,7 +320,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
           else:
             data_default_change = True
         elif 'expression' == prop:
-          data_type_change = True
+          recreate = True
 
       modify_diffs = []
       if copypasta:
@@ -331,6 +336,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
           create.sql.insert(0, "ALTER TABLE {} RENAME COLUMN {} TO {}"
                             .format(other_table_name, other.name.part.lower(),
                                     temp_col))
+
           create.sql.extend(["UPDATE {} SET {} = {}"
                             .format(other_table_name, self.name.part.lower(),
                                     temp_col),
@@ -458,9 +464,8 @@ class VirtualColumn (HasExpressionWithDataDefault, Column):
 
   def _sql (self, fq=False, full_def=True):
     if not self.hidden:
-      return super()._sql(fq=fq, full_def=full_def, default_clause=False)
-
+      return super()._sql(fq=fq, full_def=full_def)
     return self.expression.text
 
-  def _data_type_sql (self):
-    return "AS ( {} )".format(self.expression.text)
+  def _extra_sql (self):
+    return ' '.join(('AS (', self.expression.text, ')'))

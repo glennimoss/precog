@@ -284,15 +284,19 @@ scope tab_col_ref;
   $column = $col_spec::column_
 }
   : i=tID
-    ( dt=data_type[True] { props.update($dt.props) }
+    ( dt=data_type[True]
       ( DEFAULT e=expression
         { props['data_default'] = $e.exp.text } )?
-    | ( kGENERATED kALWAYS )? AS LPAREN virt=expression RPAREN kVIRTUAL? {
+    | ( dt=data_type[True] )? ( kGENERATED kALWAYS )?
+        AS LPAREN virt=expression RPAREN kVIRTUAL? {
         props['virtual_column'] = 'YES'
         props['expression'] = $virt.exp
       }
     )
     {
+      dtp = $dt.props
+      if dtp:
+        props.update(dtp)
       $col_spec::column_ = $g::database.add(
         Column($create_table::table_name.with_(part=$i.id),
                database=$g::database, create_location=create_location, **props))
