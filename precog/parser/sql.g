@@ -259,6 +259,7 @@ scope { props; table_name }
     RPAREN
     ( kTABLESPACE ID
       { $create_table::props['tablespace_name'] = $ID.text }
+    | kORGANIZATION kEXTERNAL external_table_clause
     )?
   ;
 
@@ -616,6 +617,47 @@ using_index [constraint_name] returns [props]
   | // Nothing
   ;
 
+external_table_clause
+@init {
+  xprops = {'locations': []}
+  $create_table::props['external'] = xprops
+}
+  : LPAREN
+    ( kTYPE driver_type=ID
+      { xprops['type_name'] = $driver_type.text }
+    )?
+    DEFAULT kDIRECTORY dir_name=tID
+    { xprops['default_directory_name'] = $dir_name.id }
+    ( ACCESS kPARAMETERS
+      LPAREN
+        access_params=matched_parens
+      RPAREN
+      { xprops['access_parameters'] = $access_params.text }
+    )?
+    kLOCATION
+      LPAREN
+        extern_location_specifier ( COMMA extern_location_specifier)*
+      RPAREN
+    RPAREN
+    ( kREJECT kLIMIT
+      { rl = 0 }
+      ( kUNLIMITED
+        { rl = 'UNLIMITED' }
+      | reject_limit=tINTEGER
+        { rl = $reject_limit.val }
+      )
+      { xprops['reject_limit'] = rl }
+    )?
+  ;
+
+extern_location_specifier
+@after {
+  $create_table::props['external']['locations'].append(($dir_name.id,
+                                                        $file_name.text))
+}
+  : (dir_name=tID COLON)? file_name=QUOTED_STRING
+  ;
+
 create_index returns [obj]
 scope tab_col_ref;
 @init {
@@ -795,7 +837,8 @@ plsql_function
     kDETERMINISTIC?
     kPIPELINED?
     ( IS | AS )
-    ( (~TERMINATOR)=> ~TERMINATOR )+
+    //( (~TERMINATOR)=> ~TERMINATOR )+
+    swallow_to_terminator
   ;
 
 plsql_procedure
@@ -803,21 +846,24 @@ plsql_procedure
     i=identifier { $plsql_stmt::name = $i.ident }
     (LPAREN ~RPAREN* RPAREN)?
     ( IS | AS )
-    ( (~TERMINATOR)=> ~TERMINATOR )+
+    //( (~TERMINATOR)=> ~TERMINATOR )+
+    swallow_to_terminator
   ;
 
 plsql_trigger
   : TRIGGER { $plsql_stmt::type = Trigger }
     i=identifier { $plsql_stmt::name = $i.ident }
     ( BEFORE | AFTER | INSTEAD | FOR )
-    ( (~TERMINATOR)=> ~TERMINATOR )+
+    //( (~TERMINATOR)=> ~TERMINATOR )+
+    swallow_to_terminator
   ;
 
 plsql_package
   : PACKAGE { $plsql_stmt::type = Package }
     i=identifier { $plsql_stmt::name = $i.ident }
     ( IS | AS )
-    ( (~TERMINATOR)=> ~TERMINATOR )+
+    //( (~TERMINATOR)=> ~TERMINATOR )+
+    swallow_to_terminator
     /*( plsql_function | plsql_procedure )*
     END ID? SEMI*/
   ;
@@ -826,7 +872,8 @@ plsql_package_body
   : PACKAGE kBODY { $plsql_stmt::type = PackageBody }
     i=identifier { $plsql_stmt::name = $i.ident }
     ( IS | AS )
-    ( (~TERMINATOR)=> ~TERMINATOR )+
+    //( (~TERMINATOR)=> ~TERMINATOR )+
+    swallow_to_terminator
     /* END ID? SEMI */
   ;
 
@@ -841,7 +888,8 @@ plsql_type
 
 plsql_type_object
   : kOBJECT
-    ( (~TERMINATOR)=> ~TERMINATOR )+
+    //( (~TERMINATOR)=> ~TERMINATOR )+
+    swallow_to_terminator
   /*
     LPAREN
       plsql_type_object_attribute ( COMMA plsql_type_object_attribute )*
@@ -869,7 +917,8 @@ plsql_type_body
   : kTYPE kBODY { $plsql_stmt::type = TypeBody }
     i=identifier { $plsql_stmt::name = $i.ident }
     ( IS | AS )
-    ( (~TERMINATOR)=> ~TERMINATOR )+
+    //( (~TERMINATOR)=> ~TERMINATOR )+
+    swallow_to_terminator
   ;
 
 /*
@@ -1460,9 +1509,11 @@ kCYCLE : {self.input.LT(1).text.lower() == 'cycle'}? ID;
 kDAY : {self.input.LT(1).text.lower() == 'day'}? ID;
 kDELETING : {self.input.LT(1).text.lower() == 'deleting'}? ID;
 kDETERMINISTIC : {self.input.LT(1).text.lower() == 'deterministic'}? ID;
+kDIRECTORY : {self.input.LT(1).text.lower() == 'directory'}? ID;
 kDISABLE : {self.input.LT(1).text.lower() == 'disable'}? ID;
 kENABLE : {self.input.LT(1).text.lower() == 'enable'}? ID;
 kEXECUTE : {self.input.LT(1).text.lower() == 'execute'}? ID;
+kEXTERNAL : {self.input.LT(1).text.lower() == 'external'}? ID;
 kFALSE : {self.input.LT(1).text.lower() == 'false'}? ID;
 kFOREIGN : {self.input.LT(1).text.lower() == 'foreign'}? ID;
 kGENERATED : {self.input.LT(1).text.lower() == 'generated'}? ID;
@@ -1471,7 +1522,9 @@ kINSERTING : {self.input.LT(1).text.lower() == 'inserting'}? ID;
 kINTERVAL : {self.input.LT(1).text.lower() == 'interval'}? ID;
 kISOPEN : {self.input.LT(1).text.lower() == 'isopen'}? ID;
 kKEY : {self.input.LT(1).text.lower() == 'key'}? ID;
+kLIMIT : {self.input.LT(1).text.lower() == 'limit'}? ID;
 kLOCAL : {self.input.LT(1).text.lower() == 'local'}? ID;
+kLOCATION : {self.input.LT(1).text.lower() == 'location'}? ID;
 kMAXVALUE : {self.input.LT(1).text.lower() == 'maxvalue'}? ID;
 kMINVALUE : {self.input.LT(1).text.lower() == 'minvalue'}? ID;
 kMONTH : {self.input.LT(1).text.lower() == 'month'}? ID;
@@ -1485,9 +1538,12 @@ kNOORDER : {self.input.LT(1).text.lower() == 'noorder'}? ID;
 kNOTFOUND : {self.input.LT(1).text.lower() == 'notfound'}? ID;
 kNVARCHAR2 : {self.input.LT(1).text.lower() == 'nvarchar2'}? ID;
 kOBJECT : {self.input.LT(1).text.lower() == 'object'}? ID;
+kORGANIZATION : {self.input.LT(1).text.lower() == 'organization'}? ID;
+kPARAMETERS : {self.input.LT(1).text.lower() == 'parameters'}? ID;
 kPIPELINED : {self.input.LT(1).text.lower() == 'pipelined'}? ID;
 kPRIMARY : {self.input.LT(1).text.lower() == 'primary'}? ID;
 kREFERENCES : {self.input.LT(1).text.lower() == 'references'}? ID;
+kREJECT : {self.input.LT(1).text.lower() == 'reject'}? ID;
 kREPLACE : {self.input.LT(1).text.lower() == 'replace'}? ID;
 kRETURN : {self.input.LT(1).text.lower() == 'return'}? ID;
 kREVERSE : {self.input.LT(1).text.lower() == 'reverse'}? ID;
@@ -1499,6 +1555,7 @@ kTIME : {self.input.LT(1).text.lower() == 'time'}? ID;
 kTIMESTAMP : {self.input.LT(1).text.lower() == 'timestamp'}? ID;
 kTRUE : {self.input.LT(1).text.lower() == 'true'}? ID;
 kTYPE : {self.input.LT(1).text.lower() == 'type'}? ID;
+kUNLIMITED : {self.input.LT(1).text.lower() == 'unlimited'}? ID;
 kUPDATING : {self.input.LT(1).text.lower() == 'updating'}? ID;
 kURITYPE : {self.input.LT(1).text.lower() == 'uritype'}? ID;
 kUROWID : {self.input.LT(1).text.lower() == 'urowid'}? ID;
@@ -1510,11 +1567,17 @@ kYEAR : {self.input.LT(1).text.lower() == 'year'}? ID;
 kZONE : {self.input.LT(1).text.lower() == 'zone'}? ID;
 // kXYZZY : {self.input.LT(1).text.lower() == 'xyzzy'}? ID;
 
+
+
 /*
 swallow_to_semi
   : ~( SEMI )+
   ;
   */
+
+swallow_to_terminator
+  : ( (~TERMINATOR)=> ~TERMINATOR )+
+  ;
 
 swallow_to_nl
   : ~( NL )+
@@ -1522,6 +1585,14 @@ swallow_to_nl
 
 tINTEGER returns [val]
   : i=T_INTEGER { $val = int($i.text) }
+  ;
+
+matched_parens
+  : ( ~(LPAREN | RPAREN)
+    | LPAREN
+      matched_parens
+      RPAREN
+    )+
   ;
 
 /*

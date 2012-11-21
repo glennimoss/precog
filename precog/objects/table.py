@@ -84,6 +84,7 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
   def __new__ (class_, *args, **props):
     if 'table_type' in props and props['table_type']:
       class_ = ObjectTable
+
     return super().__new__(class_, *args, **props)
 
   def __init__ (self, name, **props):
@@ -194,33 +195,44 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
   @classmethod
   def from_db (class_, schema, into_database, table_names=None):
     table_filter = db.filter_clause('table_name', table_names)
-    rs = db.query(""" SELECT table_name
-                           , table_type
-                           , CASE WHEN table_type_owner = 'PUBLIC'
-                                    OR table_type_owner LIKE '%SYS' THEN NULL
-                                  ELSE table_type_owner
-                             END AS table_type_owner
-                           , tablespace_name
-                           , iot_type
-                           , nested
-                           , CURSOR(
-                               SELECT column_name
-                               FROM dba_tab_cols dtc
-                               WHERE dtc.owner = dat.owner
-                                 AND dtc.table_name = dat.table_name
-                               ORDER BY dtc.internal_column_id
-                             ) AS columns
-                           , CURSOR(
-                               SELECT constraint_name
-                               FROM dba_cons_columns dcc
-                               WHERE dcc.owner = dat.owner
-                                 AND dcc.table_name = dat.table_name
-                               GROUP BY constraint_name
-                               HAVING COUNT(*) > 1
-                             ) AS constraints
-                      FROM dba_all_tables dat
-                      WHERE owner = :o
-                         {}
+    rs = db.query("""SELECT table_name
+                          , table_type
+                          , CASE WHEN table_type_owner = 'PUBLIC'
+                                   OR table_type_owner LIKE '%SYS' THEN NULL
+                                 ELSE table_type_owner
+                            END AS table_type_owner
+                          , tablespace_name
+                          , iot_type
+                          , nested
+                          , CURSOR(
+                              SELECT column_name
+                              FROM dba_tab_cols dtc
+                              WHERE dtc.owner = dat.owner
+                                AND dtc.table_name = dat.table_name
+                              ORDER BY dtc.internal_column_id
+                            ) AS columns
+                          , CURSOR(
+                              SELECT constraint_name
+                              FROM dba_cons_columns dcc
+                              WHERE dcc.owner = dat.owner
+                                AND dcc.table_name = dat.table_name
+                              GROUP BY constraint_name
+                              HAVING COUNT(*) > 1
+                            ) AS constraints
+                          , ext.type AS external_type
+                          , ext.default_dir AS external_default_directory
+                          , ext.reject_limit AS external_reject_limit
+                          , ext.param_clob AS external_access_parameters
+                          , ext.location AS external_locations
+                     FROM dba_all_tables dat
+                        , dba_objects do
+                        , sys.ku$_exttab_view ext
+                     WHERE dat.owner = :o
+                       AND dat.owner = do.owner
+                       AND dat.table_name = do.object_name
+                       AND do.object_type = 'TABLE'
+                       AND do.object_id = ext.obj_num(+)
+                        {}
                   """.format(table_filter), o=schema,
                   oracle_names=['table_name', 'column_name', 'tablespace_name'])
 
@@ -254,6 +266,15 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
                                      cons['constraint_name']),
                            Constraint)
         for cons in row['constraints']}
+
+      if row['external_type']:
+        props['external'] = {
+          'type_name': row['external_type'],
+          'default_directory_name': row['external_default_directory'],
+          'reject_limit': row['external_reject_limit'],
+          'access_parameters': str(row['external_access_parameters']),
+          'locations': [(l.DIR, l.NAME) for l in row['external_locations']],
+        }
 
       yield class_(table_name, database=into_database,
                         create_location=(db.location,), **props)
