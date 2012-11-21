@@ -370,8 +370,8 @@ number_precision
   : LPAREN
      ( precision=tINTEGER
        { $data_type::props_['data_precision'] = $precision.val }
-       (COMMA neg=HYPHEN? scale=tINTEGER)?
-     | ASTERISK COMMA neg=HYPHEN? scale=tINTEGER
+       (COMMA neg=DASH? scale=tINTEGER)?
+     | STAR COMMA neg=DASH? scale=tINTEGER
      )
      {
        if $scale.val:
@@ -1286,15 +1286,15 @@ numeric_expression
 */
 
 add_expr
-    : mul_expr ( ( HYPHEN | PLUS | DOUBLEVERTBAR )^ mul_expr )*
+    : mul_expr ( ( DASH | PLUS | DOUBLEVERTBAR )^ mul_expr )*
     ;
 
 mul_expr
-    : unary_sign_expr ( ( ASTERISK | SLASH )^ unary_sign_expr )*
+    : unary_sign_expr ( ( STAR | SLASH )^ unary_sign_expr )*
     ;
 
 unary_sign_expr
-    : ( HYPHEN | PLUS )? exponent_expr
+    : ( DASH | PLUS )? exponent_expr
     ;
 
 exponent_expr
@@ -1710,7 +1710,7 @@ COMMA
 EXPONENT
 	:	'**'
 	;
-ASTERISK
+STAR
 	:	'*'
 	;
 BANG
@@ -1744,7 +1744,7 @@ LBRACK
 PLUS
 	:	'+'
 	;
-HYPHEN
+DASH
 	:	'-'
 	;
 SLASH
@@ -1793,7 +1793,7 @@ T_INTEGER
     :   N
     ;
 REAL_NUMBER
-	:	NUMBER_VALUE	( 'e' ( PLUS | HYPHEN )? N )?
+	:	NUMBER_VALUE	( 'e' ( PLUS | DASH )? N )?
 	;
 fragment
 NUMBER_VALUE
