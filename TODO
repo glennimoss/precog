@@ -1,3 +1,5 @@
-Parse PL/SQL to build dependency graph.
+- Parse PL/SQL to build dependency graph.
 
-Have Data objects depend on others based on foreign key constraints.
+- Have Data objects depend on others based on foreign key constraints.
+- Have Data objects depend on other constraints on the columns they use so that
+any DDL on those columns happens before the Data modification.
