@@ -1232,86 +1232,87 @@ scope g, tab_col_ref;
 @after {
   $exp = $e.exp
 }
-    : e=expression
-    ;
+  : e=expression
+  ;
 
 expression returns [exp]
 @after {
   table = $g::database.find($tab_col_ref::table, Table)
   $exp = Expression($e.text, tree=$e.tree, scope_obj=table)
 }
-    : e=expression_
-    ;
+  : e=expression_
+  ;
 
 expression_
-    : or_expr
-    ;
+  : or_expr
+  ;
 
 or_expr
-    : and_expr ( OR^ and_expr )*
-    ;
+  : and_expr ( OR^ and_expr )*
+  ;
 
 and_expr
-    : not_expr ( AND^ not_expr )*
-    ;
+  : not_expr ( AND^ not_expr )*
+  ;
 
 not_expr
-    : NOT? compare_expr
-    ;
+  : NOT? compare_expr
+  ;
 
 compare_expr
-    : is_null_expr ( ( EQ | NOT_EQ | LTH | LEQ | GTH | GEQ )^ is_null_expr )?
-    ;
+  : is_null_expr ( ( EQ | NOT_EQ | LTH | LEQ | GTH | GEQ )^ is_null_expr )?
+  ;
 
 is_null_expr
-    : like_expr ( IS NOT? NULL)?
-    ;
+  : like_expr ( IS NOT? NULL)?
+  ;
 
 like_expr
-    : between_expr ( NOT? LIKE between_expr )?
-    ;
+  : between_expr ( NOT? LIKE between_expr )?
+  ;
 
 between_expr
-    : in_expr ( NOT? BETWEEN in_expr AND in_expr )?
-    ;
+  : in_expr ( NOT? BETWEEN in_expr AND in_expr )?
+  ;
 
 in_expr
-    : add_expr ( NOT? IN LPAREN add_expr ( COMMA add_expr )* RPAREN )?
-    ;
+  : add_expr ( NOT? IN LPAREN add_expr ( COMMA add_expr )* RPAREN )?
+  ;
 
 /*
 numeric_expression
-    : add_expr
-    ;
+  : add_expr
+  ;
 */
 
 add_expr
-    : mul_expr ( ( DASH | PLUS | DOUBLEVERTBAR )^ mul_expr )*
-    ;
+  : mul_expr ( ( DASH | PLUS | DOUBLEVERTBAR )^ mul_expr )*
+  ;
 
 mul_expr
-    : unary_sign_expr ( ( STAR | SLASH )^ unary_sign_expr )*
-    ;
+  : unary_sign_expr ( ( STAR | SLASH )^ unary_sign_expr )*
+  ;
 
 unary_sign_expr
-    : ( DASH | PLUS )? exponent_expr
-    ;
+  : ( DASH | PLUS )? exponent_expr
+  ;
 
 exponent_expr
-    : atom ( EXPONENT^ atom )?
-    ;
+  : atom ( EXPONENT^ atom )?
+  ;
 
 atom
-    //: variable_or_function_call ( PERCENT attribute )?
-    : call ( PERCENT attribute )?
-    | SQL PERCENT attribute
-    | string_literal
-    | numeric_atom
-    | boolean_atom
-    | global_name_literal
-    | NULL
-    | LPAREN! expression_ RPAREN!
-    ;
+  //: variable_or_function_call ( PERCENT attribute )?
+  : call ( PERCENT attribute )?
+  | SQL PERCENT attribute
+  | string_literal
+  | numeric_atom
+  | boolean_atom
+  | global_name_literal
+  | NULL
+  | LPAREN! expression_ RPAREN!
+  | case_expression
+  ;
 
 global_name_literal
   : SYSDATE
@@ -1327,67 +1328,73 @@ call
 @init {
   is_call = False
 }
-    : /* COLON? sqlplus vars */
-      i=part_identifier
-      ( LPAREN ( parameter ( COMMA parameter )* )? RPAREN { is_call = True }
-        ( DOT call )? )?
-      -> { is_call }? ^( CALL {ValueNode($i.parts)} parameter* )
-      -> {ValueNode($i.parts)}
-    ;
+  : /* COLON? sqlplus vars */
+    i=part_identifier
+    ( LPAREN ( parameter ( COMMA parameter )* )? RPAREN { is_call = True }
+      ( DOT call )? )?
+    -> { is_call }? ^( CALL {ValueNode($i.parts)} parameter* )
+    -> {ValueNode($i.parts)}
+  ;
 
 attribute
-    : kBULK_ROWCOUNT LPAREN expression_ RPAREN
-    | kFOUND
-    | kISOPEN
-    | kNOTFOUND
-    | kROWCOUNT
-    ;
+  : kBULK_ROWCOUNT LPAREN expression_ RPAREN
+  | kFOUND
+  | kISOPEN
+  | kNOTFOUND
+  | kROWCOUNT
+  ;
 
 /*
 call_args
-    : LPAREN ( parameter ( COMMA parameter )* )? RPAREN
-    ;
+  : LPAREN ( parameter ( COMMA parameter )* )? RPAREN
+  ;
     */
 
 boolean_atom
-    : boolean_literal
-    /*| collection_exists
-    | conditional_predicate*/
-    ;
+  : boolean_literal
+  /*| collection_exists
+  | conditional_predicate*/
+  ;
 
 numeric_atom
-    : numeric_literal
-    ;
+  : numeric_literal
+  ;
 
 numeric_literal
-    : T_INTEGER
-    | REAL_NUMBER
-    ;
+  : T_INTEGER
+  | REAL_NUMBER
+  ;
 
 boolean_literal
-    : kTRUE
-    | kFALSE
-    ;
+  : kTRUE
+  | kFALSE
+  ;
 
 string_literal
-    : QUOTED_STRING
-    ;
+  : QUOTED_STRING
+  ;
 
+case_expression
+  : CASE expression_?
+    ( WHEN expression_ THEN expression_ )+
+    ( ELSE expression_ )?
+    END
+  ;
 /*
 collection_exists
-    : ID DOT EXISTS LPAREN expression_ RPAREN
-    ;
+  : ID DOT EXISTS LPAREN expression_ RPAREN
+  ;
 
 conditional_predicate
-    : INSERTING
-    | UPDATING ( LPAREN QUOTED_STRING RPAREN )?
-    | DELETING
-    ;
-    */
+  : INSERTING
+  | UPDATING ( LPAREN QUOTED_STRING RPAREN )?
+  | DELETING
+  ;
+  */
 
 parameter
-    : ( ID ARROW )? expression_
-    ;
+  : ( ID ARROW )? expression_
+  ;
 
 /*
 create_package :
