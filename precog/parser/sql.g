@@ -7,7 +7,7 @@ Originally based on a grammar by Patrick Higgins
 grammar sql;
 
 options {
-  language=Python;
+  language=Python3;
   superClass=LoggingParser;
   output=AST;
 }
@@ -114,7 +114,7 @@ scope { type; name; props }
   $obj = $plsql_stmt::type($plsql_stmt::name, source=$source.text,
                            database=$g::database, **$plsql_stmt::props)
 }
-  : CREATE (OR kREPLACE)? source=plsql_object_def
+  : CREATE (OR k['REPLACE'])? source=plsql_object_def
     TERMINATOR
   ;
 
@@ -168,7 +168,7 @@ directive_ignore
 @init {
   schema = False
 }
-  : kIGNORE (kSCHEMA { schema = True })? i=identifier {
+  : k['IGNORE'] (k['SCHEMA'] { schema = True })? i=identifier {
       name = $i.ident
       if schema:
         $g::database.ignore_schema(name.obj)
@@ -257,7 +257,7 @@ scope { props; table_name }
     LPAREN
       table_item (COMMA table_item)*
     RPAREN
-    ( kTABLESPACE ID
+    ( k['TABLESPACE'] ID
       { $create_table::props['tablespace_name'] = $ID.text }
     )?
   ;
@@ -287,8 +287,8 @@ scope tab_col_ref;
     ( dt=data_type[True]
       ( DEFAULT e=expression
         { props['data_default'] = $e.exp.text } )?
-    | ( dt=data_type[True] )? ( kGENERATED kALWAYS )?
-        AS LPAREN virt=expression RPAREN kVIRTUAL? {
+    | ( dt=data_type[True] )? ( k['GENERATED'] k['ALWAYS'] )?
+        AS LPAREN virt=expression RPAREN k['VIRTUAL']? {
         props['virtual_column'] = 'YES'
         props['expression'] = $virt.exp
       }
@@ -336,13 +336,13 @@ string_data_type[sized]
   : (t=CHAR | t=VARCHAR2) { $data_type::props_['data_type'] = $t.text.upper() }
     ( {$sized}? LPAREN
       l=tINTEGER { $data_type::props_['char_length'] = $l.val }
-      ( kBYTE { $data_type::props_['char_used'] = 'B' }
+      ( k['BYTE'] { $data_type::props_['char_used'] = 'B' }
       | CHAR { $data_type::props_['char_used'] = 'C' }
       )?
       RPAREN
     | {not $sized}? // nothing
     )
-  | (nt=kNCHAR | nt=kNVARCHAR2) {
+  | (nt=k['NCHAR'] | nt=k['NVARCHAR2']) {
       $data_type::props_['data_type'] = $nt.text.upper()
     }
     ( {$sized}? l=int_parameter { $data_type::props_['char_length'] = $l.val }
@@ -354,8 +354,8 @@ numeric_data_type[sized]
   : ( t=NUMBER ({$sized}? number_precision)?
     | t=FLOAT ({$sized}? p=int_parameter
                { $data_type::props_['data_precision'] = $p.val })?
-    | k1=kBINARY_FLOAT
-    | k2=kBINARY_DOUBLE
+    | k1=k['BINARY_FLOAT']
+    | k2=k['BINARY_DOUBLE']
     ) {
       $data_type::props_['data_type'] = (($t and $t.text) or
                                          $k1.text or $k2.text).upper()
@@ -395,20 +395,20 @@ long_raw_data_type[sized]
 datetime_data_type[sized]
   : DATE
     { $data_type::props_['data_type'] = 'DATE' }
-  | kTIMESTAMP ({$sized}? i=int_parameter)? (t=WITH l=kLOCAL? kTIME kZONE)?
+  | k['TIMESTAMP'] ({$sized}? i=int_parameter)? (t=WITH l=k['LOCAL']? k['TIME'] k['ZONE'])?
     {
       $data_type::props_['data_type'] = "TIMESTAMP({}){}".format(
         $i.val or 6,
         " WITH {}TIME ZONE".format('LOCAL ' if $l.text else '')
           if $t else '')
     }
-  | kINTERVAL
-    ( kYEAR ({$sized}? i=int_parameter)? TO kMONTH
+  | k['INTERVAL']
+    ( k['YEAR'] ({$sized}? i=int_parameter)? TO k['MONTH']
     {
       $data_type::props_['data_type'] = "INTERVAL YEAR({}) TO MONTH".format(
         $i.val or 2)
     }
-    | kDAY ({$sized}? d=int_parameter)? TO kSECOND ({$sized}? s=int_parameter)?
+    | k['DAY'] ({$sized}? d=int_parameter)? TO k['SECOND'] ({$sized}? s=int_parameter)?
     {
       $data_type::props_['data_type'] = "INTERVAL DAY({}) TO SECOND({})".format(
         $d.val or 2, $s.val or 6)
@@ -421,10 +421,10 @@ lob_data_type
   $data_type::props_['data_type'] = ($t1.text or $t2.text or $t3.text or
                                    $t4.text).upper()
 }
-  : t1=kBLOB
-  | t2=kCLOB
-  | t3=kNCLOB
-  | t4=kBFILE
+  : t1=k['BLOB']
+  | t2=k['CLOB']
+  | t3=k['NCLOB']
+  | t4=k['BFILE']
   ;
 
 rowid_data_type[sized]
@@ -432,14 +432,14 @@ rowid_data_type[sized]
   $data_type::props_['data_type'] = (($t and $t.text) or $t2.text).upper()
 }
   : t=ROWID
-  | t2=kUROWID ({$sized}? i=int_parameter
+  | t2=k['UROWID'] ({$sized}? i=int_parameter
                { $data_type::props_['data_length'] = $i.val })?
   ;
 
 oracle_data_type
 @after { $data_type::props_['data_type'] = ($t1.text or $t2.text).upper() }
-  : t1=kXMLTYPE
-  | t2=kURITYPE
+  : t1=k['XMLTYPE']
+  | t2=k['URITYPE']
   ;
 
 user_data_type
@@ -469,7 +469,7 @@ scope tab_col_ref;
   else:
     $cons = None
 }
-  : ( kCONSTRAINT constraint_name=tID // Non-spec: making required
+  : ( k['CONSTRAINT'] constraint_name=tID // Non-spec: making required
     | {
         token = self.input.LT(1)
         self.logSyntaxError('"CONSTRAINT [constraint_name]" is required.',
@@ -480,7 +480,7 @@ scope tab_col_ref;
       }
     )
     ( ( UNIQUE { props['is_pk'] = False }
-      | kPRIMARY kKEY { props['is_pk'] = True }
+      | k['PRIMARY'] k['KEY'] { props['is_pk'] = True }
       ) {
         cons_class = UniqueConstraint
         index_props = InsensitiveDict()
@@ -499,8 +499,8 @@ scope tab_col_ref;
       }
     )
     { props['is_enabled'] = True }
-    ( kENABLE
-    | kDISABLE { props['is_enabled'] = False } )?
+    ( k['ENABLE']
+    | k['DISABLE'] { props['is_enabled'] = False } )?
   ;
 
 references_clause returns [props]
@@ -513,9 +513,9 @@ scope tab_col_ref;
   $props['fk_constraint'] = $g::database.find_unique_constraint(
     $tab_col_ref::columns)
 }
-  : kREFERENCES ref=identifier { $tab_col_ref::table = $ref.ident }
+  : k['REFERENCES'] ref=identifier { $tab_col_ref::table = $ref.ident }
     LPAREN column_ref (COMMA column_ref)* RPAREN // Non-spec: making required
-    (ON DELETE ( kCASCADE { $props['delete_rule'] = 'CASCADE' }
+    (ON DELETE ( k['CASCADE'] { $props['delete_rule'] = 'CASCADE' }
                | SET NULL { $props['delete_rule'] = 'SET NULL' } ) )?
   ;
 
@@ -536,14 +536,14 @@ scope tab_col_ref;
                                             create_location=create_location,
                                             **props))
 }
-  : kCONSTRAINT constraint_name=tID // Non-spec: making required
+  : k['CONSTRAINT'] constraint_name=tID // Non-spec: making required
     ( ( ( UNIQUE { props['is_pk'] = False }
-        | kPRIMARY kKEY { props['is_pk'] = True } )
+        | k['PRIMARY'] k['KEY'] { props['is_pk'] = True } )
         {
           cons_class = UniqueConstraint
           props['index_ownership'] = UniqueConstraint.IMPLICIT_INDEX_CREATE
         }
-      | kFOREIGN kKEY
+      | k['FOREIGN'] k['KEY']
         { cons_class = ForeignKeyConstraint }
       )
       LPAREN
@@ -567,8 +567,8 @@ scope tab_col_ref;
         cons_class = CheckConstraint
       }
     )
-    ( kENABLE { props['is_enabled'] = True }
-    | kDISABLE { props['is_enabled'] = False } )?
+    ( k['ENABLE'] { props['is_enabled'] = True }
+    | k['DISABLE'] { props['is_enabled'] = False } )?
   ;
 
 column_ref
@@ -602,7 +602,7 @@ using_index [constraint_name] returns [props]
       Index($constraint_name, unique=True, database=$g::database,
             create_location=create_location, **index_props))
 }
-  : kUSING INDEX
+  : k['USING'] INDEX
     { create_location = self.get_location() }
     ( index_name=identifier {
         $props['index'] = $g::database.find($index_name.ident, Index)
@@ -634,7 +634,7 @@ scope tab_col_ref;
                database=$g::database, create_location=create_location, **props)
 }
   : CREATE ( UNIQUE { props['uniqueness'] = 'UNIQUE' }
-           | kBITMAP
+           | k['BITMAP']
            | { props['uniqueness'] = 'NONUNIQUE' }
            )
     INDEX index_name=identifier
@@ -663,13 +663,13 @@ scope { props_ }
   ;
 
 index_attribute
-  : kREVERSE { $index_attributes::props_['index_type'] = 'NORMAL/REV' }
-  | kTABLESPACE ID { $index_attributes::props_['tablespace_name'] = $ID.text }
+  : k['REVERSE'] { $index_attributes::props_['index_type'] = 'NORMAL/REV' }
+  | k['TABLESPACE'] ID { $index_attributes::props_['tablespace_name'] = $ID.text }
   ;
 
 /*
 tablespace_clause returns [ts_name]
-  : kTABLESPACE ID { $ts_name = $ID.text }
+  : k['TABLESPACE'] ID { $ts_name = $ID.text }
   ;
   */
 
@@ -681,7 +681,7 @@ scope { props }
 @after {
   $obj = Sequence($i.ident, database=$g::database, **$create_sequence::props)
 }
-  : CREATE kSEQUENCE i=identifier
+  : CREATE k['SEQUENCE'] i=identifier
     sequence_prop*
   ;
 
@@ -690,30 +690,30 @@ sequence_prop
     { $create_sequence::props['increment_by'] = $n.val }
   | START WITH n=tINTEGER
     { $create_sequence::props['start_with'] = $n.val }
-  | kMAXVALUE n=tINTEGER
+  | k['MAXVALUE'] n=tINTEGER
     { $create_sequence::props['maxvalue'] = $n.val }
-  | kNOMAXVALUE
+  | k['NOMAXVALUE']
     { $create_sequence::props['maxvalue'] = 9999999999999999999999999999 }
-  | kMINVALUE n=tINTEGER
+  | k['MINVALUE'] n=tINTEGER
     { $create_sequence::props['minvalue'] = $n.val }
-  | kNOMINVALUE
+  | k['NOMINVALUE']
     { $create_sequence::props['minvalue'] = 1 }
-  | kCYCLE
+  | k['CYCLE']
     { $create_sequence::props['cycle_flag'] = 'Y' }
-  | kNOCYCLE
+  | k['NOCYCLE']
     { $create_sequence::props['cycle_flag'] = 'N' }
-  | kCACHE n=tINTEGER
+  | k['CACHE'] n=tINTEGER
     { $create_sequence::props['cache_size'] = $n.val }
-  | kNOCACHE
+  | k['NOCACHE']
     { $create_sequence::props['cache_size'] = 0 }
   | ORDER
     { $create_sequence::props['order_flag'] = 'Y' }
-  | kNOORDER
+  | k['NOORDER']
     { $create_sequence::props['order_flag'] = 'N' }
   ;
 
 create_synonym returns [obj]
-  : CREATE (OR kREPLACE)? SYNONYM syn=identifier FOR target=identifier
+  : CREATE (OR k['REPLACE'])? SYNONYM syn=identifier FOR target=identifier
     {
       $obj = Synonym($syn.ident, for_name=$target.ident, database=$g::database)
     }
@@ -740,13 +740,13 @@ privilege
   $grant::privs.append(' '.join($privilege.text.split()))
 }
   : ALL PRIVILEGES?
-  | kEXECUTE
+  | k['EXECUTE']
   | DELETE
   | INDEX
   | INSERT
   | SELECT
   | UPDATE
-  | kREFERENCES
+  | k['REFERENCES']
   ;
 
 insert_statement
@@ -795,9 +795,9 @@ plsql_function
   : FUNCTION { $plsql_stmt::type = Function }
     i=identifier { $plsql_stmt::name = $i.ident }
     (LPAREN ~RPAREN* RPAREN)?
-    kRETURN data_type[False]
-    kDETERMINISTIC?
-    kPIPELINED?
+    k['RETURN'] data_type[False]
+    k['DETERMINISTIC']?
+    k['PIPELINED']?
     ( IS | AS )
     ( (~TERMINATOR)=> ~TERMINATOR )+
   ;
@@ -827,7 +827,7 @@ plsql_package
   ;
 
 plsql_package_body
-  : PACKAGE kBODY { $plsql_stmt::type = PackageBody }
+  : PACKAGE k['BODY'] { $plsql_stmt::type = PackageBody }
     i=identifier { $plsql_stmt::name = $i.ident }
     ( IS | AS )
     ( (~TERMINATOR)=> ~TERMINATOR )+
@@ -835,7 +835,7 @@ plsql_package_body
   ;
 
 plsql_type
-  : kTYPE { $plsql_stmt::type = Type }
+  : k['TYPE'] { $plsql_stmt::type = Type }
     i=identifier { $plsql_stmt::name = $i.ident }
     ( IS | AS )
     ( plsql_type_object
@@ -844,7 +844,7 @@ plsql_type
   ;
 
 plsql_type_object
-  : kOBJECT
+  : k['OBJECT']
     ( (~TERMINATOR)=> ~TERMINATOR )+
   /*
     LPAREN
@@ -858,7 +858,7 @@ plsql_type_object_attribute
   ;
 
 plsql_type_collection
-  : ( kVARRAY size=int_parameter {
+  : ( k['VARRAY'] size=int_parameter {
         $plsql_stmt::props['collection_type'] = "VARRAY({})".format($size.val)
       }
     | TABLE {
@@ -870,7 +870,7 @@ plsql_type_collection
   ;
 
 plsql_type_body
-  : kTYPE kBODY { $plsql_stmt::type = TypeBody }
+  : k['TYPE'] k['BODY'] { $plsql_stmt::type = TypeBody }
     i=identifier { $plsql_stmt::name = $i.ident }
     ( IS | AS )
     ( (~TERMINATOR)=> ~TERMINATOR )+
@@ -937,7 +937,7 @@ exception_declaration :
     ;
 
 type_definition :
-        kTYPE ID IS ( record_type_definition | collection_type_definition | ref_cursor_type_definition )
+        k['TYPE'] ID IS ( record_type_definition | collection_type_definition | ref_cursor_type_definition )
     ;
 
 subtype_definition :
@@ -945,43 +945,43 @@ subtype_definition :
     ;
 
 record_type_definition :
-	RECORD LPAREN record_field_declaration ( COMMA record_field_declaration )* RPAREN
+  RECORD LPAREN record_field_declaration ( COMMA record_field_declaration )* RPAREN
     ;
 
 record_field_declaration :
-	ID datatype ( ( NOT NULL )? ( ASSIGN | DEFAULT ) expression )?
+  ID datatype ( ( NOT NULL )? ( ASSIGN | DEFAULT ) expression )?
     ;
 
 collection_type_definition
-	:	varray_type_definition
-	|	nested_table_type_definition
-	;
+  : varray_type_definition
+  | nested_table_type_definition
+  ;
 
 varray_type_definition
-	:	( VARYING ARRAY? | VARRAY ) LPAREN numeric_literal RPAREN kOF datatype ( NOT NULL )?
-	;
+  : ( VARYING ARRAY? | VARRAY ) LPAREN numeric_literal RPAREN k['OF'] datatype ( NOT NULL )?
+  ;
 
 nested_table_type_definition
-	:	TABLE kOF datatype ( NOT NULL )? ( INDEX BY associative_index_type )?
-	;
+  : TABLE k['OF'] datatype ( NOT NULL )? ( INDEX BY associative_index_type )?
+  ;
 
 associative_index_type
-	:	datatype
-	;
+  : datatype
+  ;
 
 ref_cursor_type_definition
-	:	REF CURSOR ( RETURN datatype )?
-	;
+  : REF CURSOR ( RETURN datatype )?
+  ;
 
 datatype
-    : ( REF )? ID ( DOT ID )? ( LPAREN numeric_literal ( COMMA numeric_literal )* RPAREN | PERCENT ( kTYPE | ROWTYPE ) )?
+    : ( REF )? ID ( DOT ID )? ( LPAREN numeric_literal ( COMMA numeric_literal )* RPAREN | PERCENT ( k['TYPE'] | ROWTYPE ) )?
     ;
 
 function_declaration_or_definition :
         function_heading
         ( DETERMINISTIC | PIPELINED | PARALLEL_ENABLE | RESULT_CACHE )*
         ( ( IS | AS ) declare_section? body )?
-	;
+  ;
 
 function_declaration :
         function_heading
@@ -992,7 +992,7 @@ function_definition :
         function_heading
         ( DETERMINISTIC | PIPELINED | PARALLEL_ENABLE | RESULT_CACHE )*
         ( IS | AS ) declare_section? body
-	;
+  ;
 
 procedure_declaration_or_definition :
         procedure_heading
@@ -1000,23 +1000,23 @@ procedure_declaration_or_definition :
     ;
 
 procedure_declaration :
-	procedure_heading
-	;
+  procedure_heading
+  ;
 
 procedure_definition :
-	procedure_heading
-	( IS | AS ) declare_section? body
-	;
+  procedure_heading
+  ( IS | AS ) declare_section? body
+  ;
 
 body :
-	BEGIN statement SEMI ( statement SEMI | pragma SEMI )*
-	( EXCEPTION exception_handler+ )? END ID?
-	;
+  BEGIN statement SEMI ( statement SEMI | pragma SEMI )*
+  ( EXCEPTION exception_handler+ )? END ID?
+  ;
 
 exception_handler
-	:	WHEN ( qual_id ( OR qual_id )* | OTHERS )
-		THEN ( statement SEMI )+
-	;
+  : WHEN ( qual_id ( OR qual_id )* | OTHERS )
+    THEN ( statement SEMI )+
+  ;
 
 statement :
     label*
@@ -1102,8 +1102,8 @@ using_clause :
     ;
 
 param_modifiers
-	: IN OUT? | OUT
-	;
+  : IN OUT? | OUT
+  ;
 
 dynamic_returning_clause :
         ( RETURNING | RETURN ) ( into_clause | bulk_collect_into_clause )
@@ -1114,13 +1114,13 @@ for_loop_statement :
     ;
 
 forall_statement :
-        FORALL ID IN bounds_clause sql_statement ( kSAVE kEXCEPTIONS )?
+        FORALL ID IN bounds_clause sql_statement ( k['SAVE'] k['EXCEPTIONS'] )?
     ;
 
 bounds_clause
     : numeric_expression DOUBLEDOT numeric_expression
-    | kINDICES kOF atom ( BETWEEN numeric_expression AND numeric_expression )?
-    | kVALUES kOF atom
+    | k['INDICES'] k['OF'] atom ( BETWEEN numeric_expression AND numeric_expression )?
+    | k['VALUES'] k['OF'] atom
     ;
 
 goto_statement :
@@ -1163,7 +1163,7 @@ label :
     ;
 
 qual_id :
-	COLON? ID ( DOT COLON? ID )*
+  COLON? ID ( DOT COLON? ID )*
     ;
 
 sql_statement
@@ -1219,7 +1219,7 @@ match_parens
     | RPAREN match_parens LPAREN
     ;
 
-label_name:	ID;
+label_name: ID;
 
 */
 
@@ -1337,11 +1337,11 @@ call
   ;
 
 attribute
-  : kBULK_ROWCOUNT LPAREN expression_ RPAREN
-  | kFOUND
-  | kISOPEN
-  | kNOTFOUND
-  | kROWCOUNT
+  : k['BULK_ROWCOUNT'] LPAREN expression_ RPAREN
+  | k['FOUND']
+  | k['ISOPEN']
+  | k['NOTFOUND']
+  | k['ROWCOUNT']
   ;
 
 /*
@@ -1366,8 +1366,8 @@ numeric_literal
   ;
 
 boolean_literal
-  : kTRUE
-  | kFALSE
+  : k['TRUE']
+  | k['FALSE']
   ;
 
 string_literal
@@ -1398,20 +1398,20 @@ parameter
 
 /*
 create_package :
-        CREATE ( OR kREPLACE )? PACKAGE ( schema_name=ID DOT )? package_name=ID
+        CREATE ( OR k['REPLACE'] )? PACKAGE ( schema_name=ID DOT )? package_name=ID
         ( invoker_rights_clause )?
         ( IS | AS ) ( declare_section )? END ( ID )? SEMI
     ;
 
 create_package_body :
-        CREATE ( OR kREPLACE )? PACKAGE BODY ( schema_name=ID DOT )? package_name=ID
+        CREATE ( OR k['REPLACE'] )? PACKAGE BODY ( schema_name=ID DOT )? package_name=ID
         ( IS | AS ) ( declare_section )?
         ( initialize_section=body | END ( package_name2=ID )? )
         SEMI
     ;
 
 create_procedure :
-        CREATE ( OR kREPLACE )? PROCEDURE ( schema_name=ID DOT )? procedure_name=ID
+        CREATE ( OR k['REPLACE'] )? PROCEDURE ( schema_name=ID DOT )? procedure_name=ID
         ( LPAREN parameter_declaration ( COMMA parameter_declaration )* RPAREN )?
         invoker_rights_clause?
         ( IS | AS )
@@ -1422,7 +1422,7 @@ create_procedure :
     ;
 
 create_function :
-        CREATE ( OR kREPLACE )? FUNCTION ( schema_name=ID DOT )? function_name=ID
+        CREATE ( OR k['REPLACE'] )? FUNCTION ( schema_name=ID DOT )? function_name=ID
         ( LPAREN parameter_declaration ( COMMA parameter_declaration )* RPAREN )?
         RETURN datatype
         invoker_rights_clause?
@@ -1442,6 +1442,7 @@ call_spec
     ;
 */
 
+/*
 //kERRORS : { len(self.input.LT(1).text) >= 3 and "errors".startswith(self.input.LT(1).text.lower())}? ID;
 //kEXCEPTIONS : {self.input.LT(1).text.lower() == "exceptions"}? ID;
 kFOUND : {self.input.LT(1).text.lower() == "found"}? ID;
@@ -1520,6 +1521,9 @@ kXMLTYPE : {self.input.LT(1).text.lower() == 'xmltype'}? ID;
 kYEAR : {self.input.LT(1).text.lower() == 'year'}? ID;
 kZONE : {self.input.LT(1).text.lower() == 'zone'}? ID;
 // kXYZZY : {self.input.LT(1).text.lower() == 'xyzzy'}? ID;
+*/
+
+k[kw] : {self.input.LT(1).text.upper() == $kw}? ID;
 
 /*
 swallow_to_semi
@@ -1684,51 +1688,51 @@ WITH : 'with';
 
 
 QUOTED_STRING
-	:	( 'n' )? '\'' ( '\'\'' | ~('\'') )* '\''
-	;
+  : ( 'n' )? '\'' ( '\'\'' | ~('\'') )* '\''
+  ;
 
 ID
-	:	( 'a' .. 'z' )
-		( 'a' .. 'z' | '0' .. '9' | '_' | '$' | '#' )*
-	|	DOUBLEQUOTED_STRING
-	;
+  : ( 'a' .. 'z' )
+    ( 'a' .. 'z' | '0' .. '9' | '_' | '$' | '#' )*
+  | DOUBLEQUOTED_STRING
+  ;
 PLSQL_COMPILE_DIRECTIVE
   : '$' '$'? ID
   ;
 SEMI
-	:	';'
-	;
+  : ';'
+  ;
 COLON
-	:	':'
-	;
+  : ':'
+  ;
 DOUBLEDOT
-	:	POINT POINT
-	;
+  : POINT POINT
+  ;
 DOT
-	:	POINT
-	;
+  : POINT
+  ;
 fragment
 POINT
-	:	'.'
-	;
+  : '.'
+  ;
 COMMA
-	:	','
-	;
+  : ','
+  ;
 EXPONENT
-	:	'**'
-	;
+  : '**'
+  ;
 STAR
-	:	'*'
-	;
+  : '*'
+  ;
 BANG
   : '!'
   ;
 AT_SIGN
-	:	'@'
-	;
+  : '@'
+  ;
 DOUBLE_AT_SIGN
-	:	'@@'
-	;
+  : '@@'
+  ;
 fragment
 AMPERSAND
   : '&'
@@ -1737,97 +1741,97 @@ CARET
   : '^'
   ;
 RPAREN
-	:	')'
-	;
+  : ')'
+  ;
 LPAREN
-	:	'('
-	;
+  : '('
+  ;
 RBRACK
-	:	']'
-	;
+  : ']'
+  ;
 LBRACK
-	:	'['
-	;
+  : '['
+  ;
 PLUS
-	:	'+'
-	;
+  : '+'
+  ;
 DASH
-	:	'-'
-	;
+  : '-'
+  ;
 SLASH
-	:	'/'
-	;
+  : '/'
+  ;
 EQ
-	:	'='
-	;
+  : '='
+  ;
 PERCENT
-	:	'%'
-	;
+  : '%'
+  ;
 LLABEL
-	:	'<<'
-	;
+  : '<<'
+  ;
 RLABEL
-	:	'>>'
-	;
+  : '>>'
+  ;
 ASSIGN
-	:	':='
-	;
+  : ':='
+  ;
 ARROW
-	:	'=>'
-	;
+  : '=>'
+  ;
 VERTBAR
-	:	'|'
-	;
+  : '|'
+  ;
 DOUBLEVERTBAR
-	:	'||'
-	;
+  : '||'
+  ;
 NOT_EQ
-	:	'<>' | '!=' | '~='| '^='
-	;
+  : '<>' | '!=' | '~='| '^='
+  ;
 LTH
-	:	'<'
-	;
+  : '<'
+  ;
 LEQ
-	:	'<='
-	;
+  : '<='
+  ;
 GTH
-	:	'>'
-	;
+  : '>'
+  ;
 GEQ
-	:	'>='
-	;
+  : '>='
+  ;
 T_INTEGER
     :   N
     ;
 REAL_NUMBER
-	:	NUMBER_VALUE	( 'e' ( PLUS | DASH )? N )?
-	;
+  : NUMBER_VALUE  ( 'e' ( PLUS | DASH )? N )?
+  ;
 fragment
 NUMBER_VALUE
-	:	{self.numberDotValid()}?=> N POINT N?
-	|	POINT N
-	|	N
-	;
+  : {self.numberDotValid()}?=> N POINT N?
+  | POINT N
+  | N
+  ;
 fragment
 N
-	: ('0'..'9')+
-	;
+  : ('0'..'9')+
+  ;
 fragment
 DOUBLEQUOTED_STRING
-	:	'"' ( ~('"') )* '"'
-	;
+  : '"' ( ~('"') )* '"'
+  ;
 
 DIRECTIVE
-	:	'--@'
-	;
+  : '--@'
+  ;
 NL : '\r'? '\n' { $channel=NL_CHANNEL } ;
-SPACE	:	(' '|'\t') { $channel=HIDDEN } ;
+SPACE : (' '|'\t')+ { $channel=HIDDEN } ;
 SL_COMMENT
-	:	{ self.input.LT(3) != '@' }?=> '--' ~('\n'|'\r')* { $channel=HIDDEN }
-	;
+  : { self.input.LT(3) != '@' }?=> '--' ~('\n'|'\r')* { $channel=HIDDEN }
+  ;
 ML_COMMENT
-	:	'/*' ( options {greedy=false;} : . )* '*/' { $channel=HIDDEN }
-	;
+  : '/*' ( options {greedy=false;} : . )* '*/' { $channel=HIDDEN }
+  ;
 TERMINATOR
   : { self.aloneOnLine() }? SLASH
   ;
