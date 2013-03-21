@@ -8,7 +8,7 @@ from precog.objects.column import Column
 from precog.objects.constraint import Constraint
 from precog.objects.data import Data
 from precog.objects.index import Index
-from precog.objects.has.columns import HasColumns, OwnsColumns
+from precog.objects.has.columns import OwnsColumns
 from precog.objects.has.constraints import HasConstraints
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType

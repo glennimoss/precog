@@ -4,12 +4,16 @@ from precog.objects.has.prop import HasProp
 
 class HasColumns (HasProp('columns', dependency=Reference.AUTODROP,
                           assert_collection=list)):
+  comparable = set
 
   def _eq_columns (self, other):
     from precog.objects.column import VirtualColumn
-    names = lambda cols: {c if isinstance(c, VirtualColumn) else c.name
-                          for c in cols}
+    names = lambda cols: self.comparable(c if isinstance(c, VirtualColumn) else c.name
+                                         for c in cols)
     return names(self.columns) == names(other.columns)
+
+class HasOrderedColumns (HasColumns):
+  comparable = list
 
 _OwnsColumns = HasProp('columns', assert_collection=list)
 class OwnsColumns (_OwnsColumns):

@@ -2,18 +2,18 @@ from precog import db
 from precog.diff import Diff, Reference
 from precog.identifier import *
 from precog.objects.base import OracleObject
-from precog.objects.has.columns import HasColumns, HasTableFromColumns
+from precog.objects.has.columns import HasOrderedColumns, HasTableFromColumns
 
-class Index (HasTableFromColumns, HasColumns, OracleObject):
+class Index (HasTableFromColumns, HasOrderedColumns, OracleObject):
 
   def __init__ (self, name, unique=None, reverse=None, **props):
     super().__init__(name, **props)
     if unique is not None:
       self.unique = unique
 
-  @HasColumns.columns.setter
+  @HasOrderedColumns.columns.setter
   def columns (self, value):
-    HasColumns.columns.__set__(self, value)
+    HasOrderedColumns.columns.__set__(self, value)
     if (self.props['index_type'] and
         [col for col in self.columns if col.is_virtual]):
       self.props['index_type'] = "FUNCTION-BASED {}".format(
