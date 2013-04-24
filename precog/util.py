@@ -157,6 +157,8 @@ class HasLog (object):
     return logging.getLogger(
         "{}.{}{}".format(class_.__module__, class_.__name__, id_))
 
+progress_output_enabled = True
+
 def _progress (coll, output, message, start, count, complete):
   if count is None:
     count = len(coll)
@@ -187,7 +189,7 @@ def _progress (coll, output, message, start, count, complete):
 
 def progress_log (coll, log, message, level=logging.INFO, start=0, count=None,
                   complete=True):
-  if log.isEnabledFor(logging.DEBUG):
+  if not progress_output_enabled or log.isEnabledFor(logging.DEBUG):
     # These progress messages are just extra noise at debug level
     def output (msg, term):
       pass

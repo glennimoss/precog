@@ -4,6 +4,7 @@ from precog.objects.database import Database
 from precog.errors import PrecogError, UnappliedDependencyError
 from precog.util import progress_print, pluralize
 from precog.identifier import add_schema_alias
+import precog.util
 
 #Always print help
 class HelpyArgparser(argparse.ArgumentParser):
@@ -87,6 +88,10 @@ elif args.verbose:
 else:
   log_config['level'] = logging.WARN
 logging.basicConfig(**log_config)
+
+# Disable progress_log output when stderr is not interactive.
+precog.util.progress_output_enabled = os.isatty(sys.stderr.fileno())
+
 
 # Precog time
 try:
