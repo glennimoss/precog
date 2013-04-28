@@ -1,4 +1,10 @@
+#!/usr/bin/python3
+
 import argparse, logging, os, re, sys
+
+# Set up our importing environment
+sys.path.insert(1, os.path.join(sys.path[0], 'lib'))
+sys.path[0] = os.path.join(sys.path[0], 'src')
 
 from precog.objects.database import Database
 from precog.errors import PrecogError, UnappliedDependencyError
