@@ -1,4 +1,4 @@
-G := $(basename $(wildcard **/**/*.g))
+G := $(basename $(wildcard src/**/**/*.g))
 #G := $(basename $(wildcard **/*.g))
 DIR := $(dir $(G))
 
