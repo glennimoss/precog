@@ -6,7 +6,7 @@ from precog.identifier import *
 from precog.objects.base import OracleObject
 from precog.objects.column import Column
 from precog.objects.has.columns import HasColumns, HasTableFromColumns
-from precog.util import InsensitiveDict
+from precog.util import InsensitiveDict, pluralize
 
 class Data (HasColumns, HasTableFromColumns, OracleObject):
 
@@ -31,19 +31,51 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
   def __hash__ (self):
     return hash((self.table.name, self._comp()))
 
-  def _comp (self):
+  def _comp (self, warnings=False):
+    """ A tuple view for hashing, comparing, etc.
+    Optional "warnings" whether to warn about underspecification.
+    """
     discriminators = self.columns
-    uks = {uk for col in self.columns for uk in col._find_unique_constraints()}
+    uks = sorted(
+      {uk for col in self.columns for uk in col._find_unique_constraints()},
+      key=lambda o: len(o.columns), reverse=True)
 
     for uk in uks:
       col_set = set(uk.columns)
       if col_set.issubset(self.columns):
         discriminators = col_set
-        if uk.is_pk:
-          break
+
+      # If there's a PK we prefer it over anything else (Including warning
+      # about underspecified rows.)
+      if uk.is_pk:
+        break
+
+    # Warn about not enough columns to uniquely specify this row of data.
+    if warnings and discriminators is self.columns and uks:
+      try:
+        uk = [k for k in uks if k.is_pk][0]
+      except IndexError:
+        # If no PK, then use the shortest UK
+        uk = uks[-1]
+
+      unspec_cols = sorted({col.name.part for col in uk.columns} -
+                           {col.name.part for col in self.columns})
+      col_list = ''
+      if len(unspec_cols) > 1:
+        col_list = ', '.join(unspec_cols[:-1]) + ' and '
+      col_list += unspec_cols[-1]
+
+      self.log.warning_once('INSERT {} underspecifies the {} key "{}". '
+                            'Consider adding {} {} to the INSERT statement.'
+                            .format(
+                              self.get_location(True),
+                              "primary" if uk.is_pk else "unique",
+                              uk,
+                              pluralize(len(unspec_cols), "column", False),
+                              col_list))
+
     discriminators = {col.name.part.lower() for col in discriminators}
 
-    """ A tuple view for hashing, comparing, etc. """
     return tuple(sorted(tup for tup in self.values().items()
                         if tup[0] in discriminators))
 

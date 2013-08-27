@@ -124,7 +124,7 @@ sql_stmt returns [obj]
     | stmt_=create_sequence { $obj = $stmt_.obj }
     | stmt_=create_synonym { $obj = $stmt_.obj }
     | stmt_=grant { $obj = $stmt_.obj }
-    | insert_statement
+    | stmt_=insert_statement { $obj = $stmt_.obj }
     ) SEMI
   ;
 
@@ -749,7 +749,7 @@ privilege
   | kREFERENCES
   ;
 
-insert_statement
+insert_statement returns [obj]
 scope { expressions; }
 scope tab_col_ref;
 @init {
@@ -757,8 +757,7 @@ scope tab_col_ref;
   $tab_col_ref::columns = []
 }
 @after {
-  data = table.add_data($tab_col_ref::columns, $insert_statement::expressions)
-  $g::database.came_from_file(data)
+  $obj = table.add_data($tab_col_ref::columns, $insert_statement::expressions)
 }
   : INSERT INTO table_name=aliasing_identifier
     {

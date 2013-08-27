@@ -166,6 +166,9 @@ class Schema (OracleObject):
   def add (self, obj, alternate_name=None):
     if not obj:
       return
+    if isinstance(obj, Data):
+      # Data objects are attached to a table object, so don't add it here.
+      return obj
 
     obj_type = _resolve_type(obj)
 

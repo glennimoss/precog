@@ -1,4 +1,4 @@
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 import logging, sys, time
 
 class classproperty (object):
@@ -156,6 +156,44 @@ class HasLog (object):
 
     return logging.getLogger(
         "{}.{}{}".format(class_.__module__, class_.__name__, id_))
+
+class _OnceLogger (logging.Logger):
+  _logged = defaultdict(set)
+
+  def __init__ (self, name, level=0):
+    super().__init__(name, level)
+
+
+  def debug_once (self, msg, *args, **kwargs):
+    if self.isEnabledFor(logging.DEBUG):
+      self.log_once(logging.DEBUG, msg, *args, **kwargs)
+
+  def info_once (self, msg, *args, **kwargs):
+    if self.isEnabledFor(logging.INFO):
+      self.log_once(logging.INFO, msg, *args, **kwargs)
+
+  def warning_once (self, msg, *args, **kwargs):
+    if self.isEnabledFor(logging.WARNING):
+      self.log_once(logging.WARNING, msg, *args, **kwargs)
+
+  def error_once (self, msg, *args, **kwargs):
+    if self.isEnabledFor(logging.ERROR):
+      self.log_once(logging.ERROR, msg, *args, **kwargs)
+
+  def critical_once (self, msg, *args, **kwargs):
+    if self.isEnabledFor(logging.CRITICAL):
+      self.log_once(logging.CRITICAL, msg, *args, **kwargs)
+
+  fatal_once = critical_once
+
+  def log_once (self, level, msg, *args, **kwargs):
+    if self.isEnabledFor(level):
+      if msg not in self._logged[level]:
+        self._logged[level].add(msg)
+        self.log(level, msg, *args, **kwargs)
+
+
+logging.setLoggerClass(_OnceLogger)
 
 progress_output_enabled = True
 
