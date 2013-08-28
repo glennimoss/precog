@@ -84,7 +84,7 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
   def __new__ (class_, *args, **props):
     if 'table_type' in props and props['table_type']:
       class_ = ObjectTable
-    return super().__new__(class_, *args, **props)
+    return super().__new__(class_)
 
   def __init__ (self, name, **props):
     self._data = []

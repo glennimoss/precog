@@ -58,7 +58,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
         (('expression' in props and props['expression']) or
         ('data_default' in props and props['data_default']))):
       class_ = VirtualColumn
-    return super().__new__(class_, *args, **props)
+    return super().__new__(class_)
 
   def __init__ (self, name, internal_column_id=None, **props):
     if not isinstance(name, OracleFQN):
