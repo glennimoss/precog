@@ -394,9 +394,9 @@ class OracleObject (HasLog):
 
   def _depends_on (self, other, prop_name, integrity=Reference.HARD):
     old_dep = None
+    old_integrity = None
     if hasattr(self, prop_name):
       old_dep = getattr(self, prop_name)
-      old_integrity = None
       if old_dep:
         _old_dep = old_dep
         if isinstance(_old_dep,OracleObject):

@@ -116,7 +116,7 @@ class Index (HasTableFromColumns, HasOrderedColumns, OracleObject):
                          {}
                   """.format(index_filter), o=schema,
                   oracle_names=['tablespace_name', 'table_owner', 'table_name',
-                                'column_name'])
+                                'index_name', 'column_name'])
 
     for row in rs:
       index_name = OracleFQN(schema,
