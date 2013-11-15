@@ -4,10 +4,11 @@ from precog.identifier import OracleIdentifier, name_from_oracle
 from precog.util import InsensitiveDict
 from precog.errors import SqlError, PrecogError
 
+_log = logging.getLogger('precog.db')
 try:
   import cx_Oracle
 except ImportError as e:
-  logging.getLogger('precog.db').warn(
+  _log.warn(
       "Unable to load cx_Oracle: {}\nUsing stub...".format(e))
 
   class DummyModule (object):
@@ -60,10 +61,13 @@ def connect (connect_string):
   execute('ALTER SESSION SET RECYCLEBIN=OFF')
   # TODO: pass this in as a command-line parameter
   #execute("ALTER SESSION SET PLSQL_WARNINGS='ENABLE:ALL'")
-  _max_cursors = int(query_one(""" SELECT value
-                                   FROM v$parameter
-                                   WHERE name = 'open_cursors'
-                               """)['value'])
+  try:
+      _max_cursors = int(query_one(""" SELECT value
+                                       FROM v$parameter
+                                       WHERE name = 'open_cursors'
+                                   """)['value'])
+  except SqlError as e:
+      _log.warn('Unable to determine maximum number of open cursors: %s', e)
 
 def _fetch_subcursor (subcursor, oracle_names):
   _init_cursor(subcursor, oracle_names=oracle_names)
