@@ -410,10 +410,14 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                                   AND MAX(column_name) = dtc.column_name
                              ) AS constraints
                       FROM dba_tab_cols dtc
-                      WHERE owner = :o
+                         , dba_objects do
+                      WHERE dtc.owner = :o
                         -- Ignore columns on tables in the recyclebin
                         AND NOT (LENGTH(table_name) = 30
                              AND table_name LIKE 'BIN$%')
+                        AND do.owner = dtc.owner
+                        AND do.object_name = dtc.table_name
+                        AND do.object_type = 'TABLE'
                          {}
                   """.format(table_filter), o=schema,
                   oracle_names=['table_name', 'column_name',
