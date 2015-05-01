@@ -170,6 +170,16 @@ class NonexistentSchemaObjectError (ObjectError):
   def __str__ (self):
     return "{} does not exist".format(self.obj.pretty_name)
 
+class AmbiguousNameError (PrecogError):
+  def __init__ (self, name, objs):
+    self.name = name
+    self.objs = objs
+
+  def __str__ (self):
+    return "The name {} is ambiguous; found multiple objects: {}".format(
+      self.name, self.objs)
+
+
 class MergeConflict (PrecogError):
   def __init__ (self, into_schema, source_schema):
     self.into_schema = into_schema

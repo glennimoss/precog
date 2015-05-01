@@ -319,8 +319,16 @@ class Schema (OracleObject):
 
     # When you don't know what type you're looking up, it must be in the shared
     # namespace to return a real object. Otherwise it will be deferred.
-    if find_type is OracleObject and name in self.shared_namespace:
-      return self.shared_namespace[name]
+    if find_type is OracleObject:
+      if name in self.shared_namespace:
+        return self.shared_namespace[name]
+
+      all_found = [ns[name] for ns in self.objects.values() if name in ns]
+      if all_found:
+        if len(all_found) == 1:
+          return all_found[0]
+
+        raise AmbiguousNameError(name, all_found)
 
     self._resolve_unknown_type(name, obj_type)
 
