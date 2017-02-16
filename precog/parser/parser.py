@@ -1,4 +1,4 @@
-from antlr3.ext import (InputStream, FileStream, MultiChannelTokenStream,
+from precog.antlr3.ext import (InputStream, FileStream, MultiChannelTokenStream,
                         StringStream, ValueNode)
 
 from precog.errors import ParseError

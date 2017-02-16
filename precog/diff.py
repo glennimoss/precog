@@ -1,6 +1,6 @@
 import logging, pprint, inspect, itertools
 
-from antlr3.ext import NamedConstant
+from precog.antlr3.ext import NamedConstant
 from precog import db
 from precog.errors import PrecogError
 from precog.util import HasLog, progress_log

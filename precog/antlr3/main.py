@@ -34,8 +34,7 @@
 import sys
 import optparse
 
-import antlr3
-
+from . import ANTLRStringStream, ANTLRFileStream, ANTLRInputStream, CommonTokenStream, tree
 
 class _Main(object):
     def __init__(self):
@@ -114,20 +113,20 @@ class _Main(object):
                     self.stdout.write("\nBye.\n")
                     break
 
-                inStream = antlr3.ANTLRStringStream(user_input)
+                inStream = ANTLRStringStream(user_input)
                 self.parseStream(options, inStream)
 
         else:
             if options.input is not None:
-                inStream = antlr3.ANTLRStringStream(options.input)
+                inStream = ANTLRStringStream(options.input)
 
             elif len(args) == 1 and args[0] != '-':
-                inStream = antlr3.ANTLRFileStream(
+                inStream = ANTLRFileStream(
                     args[0], encoding=options.encoding
                     )
 
             else:
-                inStream = antlr3.ANTLRInputStream(
+                inStream = ANTLRInputStream(
                     self.stdin, encoding=options.encoding
                     )
 
@@ -232,7 +231,7 @@ class ParserMain(_Main):
             kwargs['debug_socket'] = sys.stderr
 
         lexer = self.lexerClass(inStream)
-        tokenStream = antlr3.CommonTokenStream(lexer)
+        tokenStream = CommonTokenStream(lexer)
         parser = self.parserClass(tokenStream, **kwargs)
         result = getattr(parser, options.parserRule)()
         if result is not None:
@@ -290,12 +289,12 @@ class WalkerMain(_Main):
 
     def parseStream(self, options, inStream):
         lexer = self.lexerClass(inStream)
-        tokenStream = antlr3.CommonTokenStream(lexer)
+        tokenStream = CommonTokenStream(lexer)
         parser = self.parserClass(tokenStream)
         result = getattr(parser, options.parserRule)()
         if result is not None:
             assert hasattr(result, 'tree'), "Parser did not return an AST"
-            nodeStream = antlr3.tree.CommonTreeNodeStream(result.tree)
+            nodeStream = tree.CommonTreeNodeStream(result.tree)
             nodeStream.setTokenStream(tokenStream)
             walker = self.walkerClass(nodeStream)
             result = getattr(walker, options.walkerRule)()

@@ -1,8 +1,8 @@
-from antlr3.ext import NL_CHANNEL
-from antlr3 import EOF
-from antlr3.constants import HIDDEN_CHANNEL
-from antlr3.recognizers import Lexer, Parser
-from antlr3.streams import TokenStream
+from precog.antlr3.ext import NL_CHANNEL
+from precog.antlr3 import EOF
+from precog.antlr3.constants import HIDDEN_CHANNEL
+from precog.antlr3.recognizers import Lexer, Parser
+from precog.antlr3.streams import TokenStream
 
 from precog.util import HasLog
 

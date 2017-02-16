@@ -31,7 +31,7 @@
 
 @outputFile.imports() ::= <<
 <@super.imports()>
-from antlr3.debug import *
+from precog.antlr3.debug import *
 >>
 
 @genericParser.args() ::= <<

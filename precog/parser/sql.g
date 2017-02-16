@@ -21,7 +21,7 @@ scope g { database ; var_dict }
 scope tab_col_ref { alias_map; table; columns }
 
 @lexer::header {
-  from antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
+  from precog.antlr3.ext import NamedConstant, FileStream, NL_CHANNEL
   from precog.parser.util import aloneOnLine, LoggingLexer
 
   # Monkey patch in our lexer superclass
@@ -30,8 +30,8 @@ scope tab_col_ref { alias_map; table; columns }
 @parser::header {
   import os
 
-  from antlr3.exceptions import RecognitionException
-  from antlr3.ext import (NamedConstant, FileStream, NL_CHANNEL, ValueNode,
+  from precog.antlr3.exceptions import RecognitionException
+  from precog.antlr3.ext import (NamedConstant, FileStream, NL_CHANNEL, ValueNode,
                           CommonTreeAdaptor)
   from precog.parser.util import *
   from precog.parser.parser import Expression
@@ -67,9 +67,9 @@ scope tab_col_ref { alias_map; table; columns }
   NamedConstant.name(locals())
 
   def main(argv):
-    from antlr3.ext import IterableTokenStream
+    from precog.antlr3.ext import IterableTokenStream
 
-    #from antlr3.ext import MultiChannelTokenStream
+    #from precog.antlr3.ext import MultiChannelTokenStream
     inStream = FileStream(argv[1])
     lexer = sqlLexer(inStream)
     tokenStream = IterableTokenStream(lexer)

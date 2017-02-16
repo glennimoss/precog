@@ -56,11 +56,11 @@ outputFile(LEXER,PARSER,TREE_PARSER, actionScope, actions,
 
 <@imports>
 import sys
-from antlr3 import *
+from precog.antlr3 import *
 <if(TREE_PARSER)>
-from antlr3.tree import *<\n>
+from precog.antlr3.tree import *<\n>
 <endif>
-from antlr3.compat import set, frozenset
+from precog.antlr3.compat import set, frozenset
 <@end>
 
 <actions.(actionScope).header>
@@ -80,15 +80,15 @@ HIDDEN = BaseRecognizer.HIDDEN
 <else>
 def main(argv, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr):
 <if(LEXER)>
-    from antlr3.main import LexerMain
+    from precog.antlr3.main import LexerMain
     main = LexerMain(<recognizer.name>)<\n>
 <endif>
 <if(PARSER)>
-    from antlr3.main import ParserMain
+    from precog.antlr3.main import ParserMain
     main = ParserMain("<recognizer.grammar.name>Lexer", <recognizer.name>)<\n>
 <endif>
 <if(TREE_PARSER)>
-    from antlr3.main import WalkerMain
+    from precog.antlr3.main import WalkerMain
     main = WalkerMain(<recognizer.name>)<\n>
 <endif>
     main.stdin = stdin
