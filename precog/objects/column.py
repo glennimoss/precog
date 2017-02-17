@@ -383,6 +383,8 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
   @classmethod
   def from_db (class_, schema, into_database, table_names=None):
     table_filter = db.filter_clause('table_name', table_names)
+    into_database.log.debug("Querying for columns {} from DB...".format(
+      "(all)" if table_names is None else "in tables {}".format(", ".join(table_names))))
     rs = db.query(""" SELECT table_name
                            , column_name
                            , qualified_col_name
@@ -426,7 +428,9 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                   oracle_names=['table_name', 'column_name',
                                 'qualified_col_name', 'constraints',
                                 'data_type_owner', 'data_type'])
+    into_database.log.debug("Cursor obtained")
     for row in rs:
+      into_database.log.debug("Grabbing a column row...")
       (_, table_name), (_, col_name), *props, (_, constraints) = row.items()
       props = dict(props)
 
@@ -435,6 +439,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
         props['qualified_col_name']._generated = generated
       col_name._generated = generated
       column_name = OracleFQN(schema, table_name, col_name)
+      into_database.log.debug("Processing column {}".format(column_name))
 
       if props['data_type_owner']:
         props['user_type'] = into_database.find(

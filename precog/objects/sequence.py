@@ -55,6 +55,8 @@ class Sequence (OracleObject):
   @classmethod
   def from_db (class_, schema, into_database, sequence_names=None):
     sequence_filter = db.filter_clause('sequence_name', sequence_names)
+    into_database.log.debug("Querying for sequences {} from DB...".format(
+      "(all)" if sequence_names is None else ", ".join(sequence_names)))
     rs = db.query(""" SELECT sequence_name
                            , min_value
                            , max_value
@@ -67,7 +69,9 @@ class Sequence (OracleObject):
                          {}
                   """.format(sequence_filter), o=schema,
                   oracle_names=['sequence_name', 'table_owner', 'table_name'])
+    into_database.log.debug("Cursor obtained")
     for row in rs:
+      into_database.log.debug("Processing sequence {}".format(row['sequence_name']))
       yield class_(OracleFQN(schema, row.pop('sequence_name')),
                    database=into_database, create_location=(db.location,),
                   **row)

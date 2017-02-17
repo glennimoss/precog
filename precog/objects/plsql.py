@@ -108,6 +108,8 @@ class PlsqlCode (OracleObject):
   def from_db (class_, schema, into_database, plsql_names=None):
     plsql_filter = db.filter_clause("object_type || '.' || object_name",
                                     plsql_names)
+    into_database.log.debug("Querying for plsql {} from DB...".format(
+      "(all)" if plsql_names is None else ", ".join(plsql_names)))
     rs = db.query(""" SELECT do.object_name
                            , do.object_type
                            , do.status
@@ -135,8 +137,10 @@ class PlsqlCode (OracleObject):
                   """.format(plsql_filter), o=schema,
                   oracle_names=['object_name'])
 
+    into_database.log.debug("Cursor obtained")
     for row in rs:
       plsql_name = OracleFQN(schema, row['object_name'])
+      into_database.log.debug("Processing plsql {}".format(plsql_name))
       yield _type_to_class(row['object_type'], plsql_name)(
         plsql_name, source=''.join(line['text'] for line in row['text']),
         database=into_database, create_location=(db.location,),

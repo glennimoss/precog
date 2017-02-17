@@ -194,6 +194,8 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
   @classmethod
   def from_db (class_, schema, into_database, table_names=None):
     table_filter = db.filter_clause('table_name', table_names)
+    into_database.log.debug("Querying for tables {} from DB...".format(
+      "(all)" if table_names is None else ", ".join(table_names)))
     rs = db.query(""" SELECT table_name
                            , table_type
                            , CASE WHEN table_type_owner = 'PUBLIC'
@@ -222,10 +224,12 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
                   """.format(table_filter), o=schema,
                   oracle_names=['table_name', 'columns', 'constraints', 'tablespace_name'])
 
+    into_database.log.debug("Cursor obtained")
     for row in rs:
       props = {'tablespace_name': row['tablespace_name'],
                'table_type': row['table_type']}
       table_name = OracleFQN(schema, row['table_name'])
+      into_database.log.debug("Processing table {}".format(table_name))
       if row['iot_type'] is not None:
         # TODO: currently ignoring index-organized tables
         into_database.log.debug(

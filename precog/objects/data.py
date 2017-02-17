@@ -182,11 +182,14 @@ class Data (HasColumns, HasTableFromColumns, OracleObject):
       order_by = "ORDER BY {}".format(", ".join(column_names))
     if not table.data:
       with db.exact_numbers():
+        table.log.debug("Querying {} data for columns {}...".format(
+          table.name, "(all)" if column_names is None else ", ".join(column_names)))
         rs = db.query_all(""" SELECT *
                               FROM {}
                               {}
                           """.format(table.name, order_by))
 
+        table.log.debug("Query returned {} rows.".format(len(rs)))
       if rs:
         columns = [table.database.find(
           OracleFQN(table.name.schema, table.name.obj, column_name), Column)

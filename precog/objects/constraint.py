@@ -69,6 +69,8 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
   @classmethod
   def from_db (class_, schema, into_database, constraint_names=None):
     constraint_filter = db.filter_clause('constraint_name', constraint_names)
+    into_database.log.debug("Querying for constraints {} from DB...".format(
+      "(all)" if constraint_names is None else ", ".join(constraint_names)))
     rs = db.query(""" SELECT constraint_name
                            , constraint_type
                            , status
@@ -101,10 +103,12 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                   oracle_names=['constraint_name', 'r_owner',
                                 'r_constraint_name', 'index_owner',
                                 'index_name', 'table_name', 'columns'])
+    into_database.log.debug("Cursor obtained")
     for row in rs:
       constraint_name = OracleFQN(schema,
             OracleIdentifier(row['constraint_name'], trust_me=True,
                              generated=(row['generated'] == 'GENERATED NAME')))
+      into_database.log.debug("Processing constraint {}".format(constraint_name))
       type = row['constraint_type']
       constraint_class = None
       props = {}

@@ -39,6 +39,7 @@ class Grant (_HasOnObj, _HasPrivileges, OracleObject):
 
   @classmethod
   def from_db (class_, schema, into_database, _):
+    into_database.log.debug("Querying for grants from DB...")
     rs = db.query(""" SELECT privilege
                            , owner
                            , table_name
@@ -46,6 +47,7 @@ class Grant (_HasOnObj, _HasPrivileges, OracleObject):
                       WHERE grantee = :o
                       ORDER BY owner, table_name
                       """, o=schema, oracle_names=['owner', 'table_name'])
+    into_database.log.debug("Cursor obtained")
 
     def group (iter):
       grant = None
@@ -67,6 +69,7 @@ class Grant (_HasOnObj, _HasPrivileges, OracleObject):
 
 
     for grant in group(rs):
+      into_database.log.debug("Processing grants on {}".format(grant['name']))
       yield class_(schema, privileges=set(grant['privs']),
                    on_obj=into_database.find(grant['name']),
                    database=into_database, create_location=(db.location,))

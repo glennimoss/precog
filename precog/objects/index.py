@@ -96,6 +96,8 @@ class Index (HasTableFromColumns, HasOrderedColumns, OracleObject):
   @classmethod
   def from_db (class_, schema, into_database, index_names=None):
     index_filter = db.filter_clause('index_name', index_names)
+    into_database.log.debug("Querying for indexes {} from DB...".format(
+      "(all)" if index_names is None else ", ".join(index_names)))
     rs = db.query(""" SELECT index_name
                            , index_type
                            , uniqueness
@@ -116,10 +118,12 @@ class Index (HasTableFromColumns, HasOrderedColumns, OracleObject):
                   oracle_names=['tablespace_name', 'table_owner', 'table_name',
                                 'index_name', 'columns'])
 
+    into_database.log.debug("Cursor obtained")
     for row in rs:
       index_name = OracleFQN(schema,
             OracleIdentifier(row['index_name'], trust_me=True,
                              generated=(row['generated'] == 'Y')))
+      into_database.log.debug("Processing index {}".format(index_name))
       index_type = row['index_type']
       if index_type == 'IOT - TOP':
         into_database.log.debug(

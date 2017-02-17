@@ -32,6 +32,8 @@ class Synonym (_HasForName, OracleObject):
   @classmethod
   def from_db (class_, schema, into_database, synonym_names=None):
     synonym_filter = db.filter_clause('synonym_name', synonym_names)
+    into_database.log.debug("Querying for synonyms {} from DB...".format(
+      "(all)" if synonym_names is None else ", ".join(synonym_names)))
     rs = db.query(""" SELECT synonym_name
                            , table_owner
                            , table_name
@@ -40,7 +42,9 @@ class Synonym (_HasForName, OracleObject):
                          {}
                   """.format(synonym_filter), o=schema,
                   oracle_names=['synonym_name', 'table_owner', 'table_name'])
+    into_database.log.debug("Cursor obtained")
     for row in rs:
+      into_database.log.debug("Processing synonym {}".format(row['synonym']))
       yield class_(OracleFQN(schema, row['synonym_name']),
                    for_name=OracleFQN(row['table_owner'], row['table_name']),
                    database=into_database, create_location=(db.location,))
