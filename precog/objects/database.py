@@ -406,57 +406,59 @@ class Schema (OracleObject):
 
     self.log.info("Fetching schema {}...".format(owner))
 
-    schema = db.query_one("""
-              SELECT CURSOR(SELECT object_name
-                                 , object_type
-                                 , last_ddl_time
-                            FROM dba_objects
-                            WHERE owner = :o
-                              AND subobject_name IS NULL
-                              AND object_type IN ( 'FUNCTION'
-                                                 , 'INDEX'
-                                                 , 'PACKAGE'
-                                                 , 'PACKAGE BODY'
-                                                 , 'PROCEDURE'
-                                                 , 'SEQUENCE'
-                                                 , 'SYNONYM'
-                                                 , 'TABLE'
-                                                 , 'TRIGGER'
-                                                 , 'TYPE'
-                                                 , 'TYPE BODY'
-                                              -- , 'VIEW'
-                                                 )
-                           ) AS objects
-                   , CURSOR(SELECT table_name
-                                 , COUNT(*) AS num_columns
-                            FROM dba_tab_cols
-                            WHERE owner = :o
-                              -- Ignore columns on tables in the recyclebin
-                              AND NOT (LENGTH(table_name) = 30
-                                   AND table_name LIKE 'BIN$%')
-                            GROUP BY table_name) AS columns
-                   , CURSOR(SELECT constraint_name
-                                 , last_change
-                            FROM dba_constraints
-                            WHERE owner = :o
-                              -- Ignore columns on tables in the recyclebin
-                              AND NOT (LENGTH(table_name) = 30
-                                   AND table_name LIKE 'BIN$%')
-                           ) AS constraints
-                   , 0 AS grants
-                   /* Disable grants
-                   , (SELECT COUNT(*)
-                      FROM (SELECT DISTINCT owner, table_name
-                            FROM dba_tab_privs
-                            WHERE grantee = :o)
-                     ) AS grants
-                   */
-              FROM dual
-      """, o=owner, oracle_names=['table_name', 'object_name',
-                                  'constraint_name'])
-    total_objects = (len(schema['objects']) +
-                     sum(table['num_columns'] for table in schema['columns']) +
-                     len(schema['constraints']) + schema['grants'])
+    schema = {
+      'objects': db.query_all(
+        """ SELECT object_name
+                 , object_type
+                 , last_ddl_time
+            FROM dba_objects
+            WHERE owner = :o
+              AND subobject_name IS NULL
+              AND object_type IN ( 'FUNCTION'
+                                 , 'INDEX'
+                                 , 'PACKAGE'
+                                 , 'PACKAGE BODY'
+                                 , 'PROCEDURE'
+                                 , 'SEQUENCE'
+                                 , 'SYNONYM'
+                                 , 'TABLE'
+                                 , 'TRIGGER'
+                                 , 'TYPE'
+                                 , 'TYPE BODY'
+                              -- , 'VIEW'
+                                 )
+            UNION ALL
+            SELECT constraint_name
+                 , 'CONSTRAINT'
+                 , last_change
+            FROM dba_constraints
+            WHERE owner = :o
+              -- Ignore constraints on tables in the recyclebin
+              AND NOT (LENGTH(table_name) = 30
+                   AND table_name LIKE 'BIN$%')
+        """, o=owner, oracle_names=['object_name']),
+      'columns': db.query_all(
+        """ SELECT table_name
+                 , COUNT(*) AS num_columns
+            FROM dba_tab_cols
+            WHERE owner = :o
+              -- Ignore columns on tables in the recyclebin
+              AND NOT (LENGTH(table_name) = 30
+                   AND table_name LIKE 'BIN$%')
+            GROUP BY table_name
+        """, o=owner, oracle_names=['table_name']),
+      'grants': 0,
+      # db.query_one(
+      # """ SELECT COUNT(*)
+      #     FROM (SELECT DISTINCT owner, table_name
+      #           FROM dba_tab_privs
+      #           WHERE grantee = :o)
+      # """, o=owner),
+    }
+
+    self.log.debug("Query complete.")
+    total_objects = (len(schema['objects']) + sum(table['num_columns'] for table in schema['columns']) +
+                     schema['grants'])
 
     modified_times = {}
     for object in schema['objects']:
@@ -468,9 +470,6 @@ class Schema (OracleObject):
       if object_type not in modified_times:
         modified_times[object_type] = {}
       modified_times[object_type][object_name] = object['last_ddl_time']
-    modified_times[Constraint] = {OracleFQN(owner, cons['constraint_name']):
-                                  cons['last_change']
-                                  for cons in schema['constraints']}
 
     self.log.info("Schema {} has {}.".format(owner, pluralize(total_objects,
                                                                 'object')))
