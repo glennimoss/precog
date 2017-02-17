@@ -73,13 +73,11 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                            , constraint_type
                            , status
                            , generated
-                           , CURSOR(
-                               SELECT table_name
-                                    , column_name
+                           , table_name
+                           , ( SELECT CAST(COLLECT(column_name ORDER BY dcc.position) AS gt_string_table)
                                FROM dba_cons_columns dcc
                                WHERE dcc.owner = dc.owner
                                  AND dcc.constraint_name = dc.constraint_name
-                               ORDER BY dcc.position
                              ) AS columns
 
                            -- For check constraints
@@ -102,8 +100,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                   """.format(constraint_filter), o=schema,
                   oracle_names=['constraint_name', 'r_owner',
                                 'r_constraint_name', 'index_owner',
-                                'index_name', 'table_name', 'column_name'])
-
+                                'index_name', 'table_name', 'columns'])
     for row in rs:
       constraint_name = OracleFQN(schema,
             OracleIdentifier(row['constraint_name'], trust_me=True,
@@ -112,11 +109,8 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
       constraint_class = None
       props = {}
       from precog.objects.column import Column
-      columns = [into_database.find(OracleFQN(schema,
-                                              col['table_name'],
-                                              col['column_name']),
-                                    Column)
-                 for col in row['columns']]
+      columns = [into_database.find(OracleFQN(schema, row['table_name'], column_name), Column)
+                 for column_name in row['columns']]
       if not columns:
         # I don't think there should be constraints without columns...
         # but there seems to be...

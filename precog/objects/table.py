@@ -203,26 +203,24 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
                            , tablespace_name
                            , iot_type
                            , nested
-                           , CURSOR(
-                               SELECT column_name
+                           , ( SELECT CAST(COLLECT(column_name ORDER BY dtc.internal_column_id) AS gt_string_table)
                                FROM dba_tab_cols dtc
                                WHERE dtc.owner = dat.owner
                                  AND dtc.table_name = dat.table_name
-                               ORDER BY dtc.internal_column_id
                              ) AS columns
-                           , CURSOR(
-                               SELECT constraint_name
-                               FROM dba_cons_columns dcc
-                               WHERE dcc.owner = dat.owner
-                                 AND dcc.table_name = dat.table_name
-                               GROUP BY constraint_name
-                               HAVING COUNT(*) > 1
+                           , ( SELECT CAST(COLLECT(constraint_name) AS gt_string_table)
+                               FROM ( SELECT constraint_name
+                                      FROM dba_cons_columns dcc
+                                      WHERE dcc.owner = dat.owner
+                                        AND dcc.table_name = dat.table_name
+                                      GROUP BY constraint_name
+                                      HAVING COUNT(*) > 1)
                              ) AS constraints
                       FROM dba_all_tables dat
                       WHERE owner = :o
                          {}
                   """.format(table_filter), o=schema,
-                  oracle_names=['table_name', 'column_name', 'tablespace_name'])
+                  oracle_names=['table_name', 'columns', 'constraints', 'tablespace_name'])
 
     for row in rs:
       props = {'tablespace_name': row['tablespace_name'],
@@ -245,15 +243,13 @@ class Table (HasConstraints, _HasData, OwnsColumns, OracleObject):
 
       props['columns'] = [into_database.find(OracleFQN(table_name.schema,
                                                        table_name.obj,
-                                                       col['column_name']),
+                                                       column_name),
                                              Column)
-                          for col in row['columns']]
+                          for column_name in row['columns']]
 
       props['constraints'] = {
-        into_database.find(OracleFQN(table_name.schema,
-                                     cons['constraint_name']),
-                           Constraint)
-        for cons in row['constraints']}
+        into_database.find(OracleFQN(table_name.schema, constraint_name), Constraint)
+        for constraint_name in row['constraints']}
 
       yield class_(table_name, database=into_database,
                         create_location=(db.location,), **props)

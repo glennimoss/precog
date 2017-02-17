@@ -102,21 +102,19 @@ class Index (HasTableFromColumns, HasOrderedColumns, OracleObject):
                            , tablespace_name
                            , status
                            , partitioned
-                           , CURSOR(
-                               SELECT table_owner
-                                    , table_name
-                                    , column_name
+                           , table_owner
+                           , table_name
+                           , ( SELECT CAST(COLLECT(column_name ORDER BY dic.column_position) AS gt_string_table)
                                FROM dba_ind_columns dic
                                WHERE dic.index_owner = di.owner
                                  AND dic.index_name = di.index_name
-                               ORDER BY dic.column_position
                              ) AS columns
                       FROM dba_indexes di
                       WHERE owner = :o
                          {}
                   """.format(index_filter), o=schema,
                   oracle_names=['tablespace_name', 'table_owner', 'table_name',
-                                'index_name', 'column_name'])
+                                'index_name', 'columns'])
 
     for row in rs:
       index_name = OracleFQN(schema,
@@ -138,10 +136,8 @@ class Index (HasTableFromColumns, HasOrderedColumns, OracleObject):
           #"Index {} has unsupported type {}".format(index_name, index_type))
 
       from precog.objects.column import Column
-      columns = [into_database.find(OracleFQN(col['table_owner'],
-                                              col['table_name'],
-                                              col['column_name']), Column)
-                 for col in row['columns']]
+      columns = [into_database.find(OracleFQN(row['table_owner'], row['table_name'], column_name), Column)
+                 for column_name in row['columns']]
       # An index without columns is hardly an index at all!
       if not columns:
         into_database.log.debug(

@@ -401,14 +401,16 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                            , virtual_column
                            , hidden_column
                            , internal_column_id
-                           , CURSOR(
-                               SELECT constraint_name
-                               FROM dba_cons_columns dcc
-                               WHERE dcc.owner = dtc.owner
-                                 AND dcc.table_name = dtc.table_name
-                               GROUP BY constraint_name
-                               HAVING COUNT(*) = 1
-                                  AND MAX(column_name) = dtc.column_name
+                           , ( SELECT CAST(COLLECT(constraint_name) AS gt_string_table)
+                               FROM (
+                                 SELECT constraint_name
+                                 FROM dba_cons_columns dcc
+                                 WHERE dcc.owner = dtc.owner
+                                   AND dcc.table_name = dtc.table_name
+                                 GROUP BY constraint_name
+                                 HAVING COUNT(*) = 1
+                                    AND MAX(column_name) = dtc.column_name
+                               )
                              ) AS constraints
                       FROM dba_tab_cols dtc
                          , dba_objects do
@@ -422,7 +424,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                          {}
                   """.format(table_filter), o=schema,
                   oracle_names=['table_name', 'column_name',
-                                'qualified_col_name', 'constraint_name',
+                                'qualified_col_name', 'constraints',
                                 'data_type_owner', 'data_type'])
     for row in rs:
       (_, table_name), (_, col_name), *props, (_, constraints) = row.items()
@@ -443,9 +445,8 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
         props['data_type'] = props['data_type'].strip('"')
 
       constraints = {
-        into_database.find(OracleFQN(schema, cons['constraint_name']),
-                           Constraint)
-        for cons in constraints}
+        into_database.find(OracleFQN(schema, constraint_name), Constraint)
+        for constraint_name in constraints}
 
       yield class_(column_name, constraints=constraints,
                     database=into_database, create_location=(db.location,),

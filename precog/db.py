@@ -112,7 +112,10 @@ def _init_cursor (cursor, args=[], kwargs={}, oracle_names=[]):
       row[column_name] = transform(row[column_name])
     for column_name in oracle_names:
       if column_name in row:
-        row[column_name] = name_from_oracle(row[column_name])
+        if isinstance(row[column_name], list):
+          row[column_name] = [name_from_oracle(v) for v in row[column_name]]
+        else:
+          row[column_name] = name_from_oracle(row[column_name])
     return row
   cursor.rowfactory = rowfactory
 
