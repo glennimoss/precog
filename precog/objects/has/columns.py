@@ -1,8 +1,8 @@
 from precog.diff import Reference
 from precog.objects.has.prop import HasProp
 
-class HasColumns (HasProp('columns', dependency=Reference.AUTODROP,
-                          assert_collection=list)):
+_HasColumnsProp = HasProp('columns', dependency=Reference.AUTODROP, assert_collection=list)
+class _HasColumnsLogic ():
   comparable = set
 
   def _eq_columns (self, other):
@@ -10,6 +10,13 @@ class HasColumns (HasProp('columns', dependency=Reference.AUTODROP,
     names = lambda cols: self.comparable(c if isinstance(c, VirtualColumn) else c.name
                                          for c in cols)
     return names(self.columns) == names(other.columns)
+
+class HasColumns (_HasColumnsLogic, _HasColumnsProp):
+  pass
+
+_HasSoftColumnsProp = HasProp('columns', dependency=Reference.SOFT, assert_collection=list)
+class HasSoftColumns (_HasColumnsLogic, _HasSoftColumnsProp):
+  pass
 
 class HasOrderedColumns (HasColumns):
   comparable = list

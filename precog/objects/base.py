@@ -154,7 +154,7 @@ class OracleObject (HasLog):
       for ref in self._referenced_by:
         self.log.debug(ref)
     return [diff for ref in self._referenced_by
-              if ref.integrity != Reference.SOFT
+              if ref.integrity == Reference.HARD
             for diff in ref.from_.drop()]
 
   def build_up (self):

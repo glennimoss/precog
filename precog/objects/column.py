@@ -344,7 +344,7 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                             'COMMIT',
                             "ALTER TABLE {} DROP ({})".format(other_table_name,
                                                              temp_col)])
-          creates = other.build_up()
+          creates = self.build_up()
           creates.append(create)
 
           for diff in creates:

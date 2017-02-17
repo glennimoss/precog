@@ -5,10 +5,10 @@ from precog.diff import Diff
 from precog.identifier import OracleFQN
 from precog.objects.base import OracleObject
 from precog.objects.column import Column
-from precog.objects.has.columns import HasColumns, HasTableFromColumns
+from precog.objects.has.columns import HasSoftColumns, HasTableFromColumns
 from precog.util import InsensitiveDict, pluralize
 
-class Data (HasColumns, HasTableFromColumns, OracleObject):
+class Data (HasSoftColumns, HasTableFromColumns, OracleObject):
 
   def __init__ (self, table, columns, expressions, **props):
     super().__init__(OracleFQN(table.name.schema, table.name.obj,
