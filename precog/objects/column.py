@@ -255,9 +255,12 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
              'data_length' in prop_diff or
              'char_length' in prop_diff) and
             _is_string_type(other_data_type)):
+          col_expr = other.name.part
+          if other_data_type == 'CHAR':
+            col_expr = "RTRIM({})".format(other.name.part)
           max_data_length = db.query_one(""" SELECT MAX(LENGTH({})) AS max
                                              FROM {}
-                                         """.format(other.name.part,
+                                         """.format(col_expr,
                                                     other.table.name))['max']
         elif (('data_precision' in prop_diff or 'data_scale' in prop_diff) and
               _is_number_type(other_data_type)):
@@ -280,6 +283,8 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
             copypasta = True
         elif prop in ('data_length', 'char_length'):
           data_type_change = True
+          if other_data_type == 'CHAR' and expected < other_prop:
+            copypasta = True
           if max_data_length is not None and max_data_length > expected:
             raise DataConflict(self,
               "has length too small for data found. (Min length {})"
@@ -338,9 +343,14 @@ class Column (HasConstraints, HasDataDefault, _HasTable, HasUserType,
                             .format(other_table_name, other.name.part.lower(),
                                     temp_col))
 
+          temp_col_expr = temp_col
+          if other_data_type == 'CHAR':
+            # Special case because of space padding
+            temp_col_expr = 'RTRIM({})'.format(temp_col)
+
           create.sql.extend(["UPDATE {} SET {} = {}"
                             .format(other_table_name, self.name.part.lower(),
-                                    temp_col),
+                                    temp_col_expr),
                             'COMMIT',
                             "ALTER TABLE {} DROP ({})".format(other_table_name,
                                                              temp_col)])

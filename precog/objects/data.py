@@ -167,6 +167,9 @@ class Data (HasSoftColumns, HasTableFromColumns, OracleObject):
             formatstr.append(".%f")
           formatstr = "".join(formatstr)
           return datetime.datetime.strptime(datestr, formatstr)
+      if column.props['data_type'] == 'CHAR':
+        # Special case because CHARs are automatically space padded to their length.
+        value = "'{}'".format(value.strip("'").rstrip(" "))
     return value
 
   @staticmethod
