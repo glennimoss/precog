@@ -3,10 +3,9 @@ from precog import db
 from precog.diff import Diff, ErrorCheckingDiff, PlsqlDiff, Reference
 from precog.errors import (NonexistentSchemaObjectError, PlsqlSyntaxError,
                            PrecogError)
-from precog.objects._assert import *
 from precog.objects.base import OracleObject, OracleFQN
 from precog.objects.has.prop import HasProp
-from precog.util import HasLog, _type_to_class_name, _with_location
+from precog.util import _type_to_class_name, _with_location
 
 def _type_to_class (type, name):
   try:

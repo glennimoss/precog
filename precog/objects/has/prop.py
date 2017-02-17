@@ -1,6 +1,6 @@
 import logging
 from precog.errors import PropertyConflict
-from precog.objects._assert import *
+from precog.objects._assert import _assert_type, _assert_contains_type
 from precog.objects.base import OracleObject
 
 def HasProp (prop_name, dependency=None, assert_collection=None,

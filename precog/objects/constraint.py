@@ -1,6 +1,7 @@
 from precog import db
 from precog.diff import Diff, Reference
-from precog.identifier import *
+from precog.errors import UnimplementedFeatureError
+from precog.identifier import OracleFQN, OracleIdentifier
 from precog.objects._assert import _assert_type
 from precog.objects.base import OracleObject
 from precog.objects.has.columns import HasColumns, HasTableFromColumns

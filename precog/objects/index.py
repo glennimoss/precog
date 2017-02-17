@@ -1,6 +1,6 @@
 from precog import db
 from precog.diff import Diff, Reference
-from precog.identifier import *
+from precog.identifier import OracleFQN, OracleIdentifier
 from precog.objects.base import OracleObject
 from precog.objects.has.columns import HasOrderedColumns, HasTableFromColumns
 

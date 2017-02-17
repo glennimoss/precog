@@ -2,7 +2,7 @@ import itertools
 
 from precog import db
 from precog.diff import Commit, Diff
-from precog.identifier import *
+from precog.identifier import OracleFQN
 from precog.objects.base import OracleObject
 from precog.objects.column import Column
 from precog.objects.constraint import Constraint

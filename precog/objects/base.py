@@ -1,8 +1,10 @@
 import logging
+import re
 
 from precog.diff import Diff, Reference
-from precog.identifier import *
+from precog.identifier import OracleFQN, OracleIdentifier
 from precog.util import classproperty, HasLog, InsensitiveDict, _with_location
+from precog.errors import PropertyConflict, DataConflict, UnimplementedFeatureError
 
 def _generatify (l, r):
   if isinstance(l, OracleFQN) and isinstance(r, OracleFQN):

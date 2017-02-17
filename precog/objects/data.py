@@ -2,7 +2,7 @@ import datetime, re
 
 from precog import db
 from precog.diff import Diff
-from precog.identifier import *
+from precog.identifier import OracleFQN
 from precog.objects.base import OracleObject
 from precog.objects.column import Column
 from precog.objects.has.columns import HasColumns, HasTableFromColumns

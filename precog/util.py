@@ -60,7 +60,7 @@ def ValidatingList (validator):
       super().__init__(init)
 
     def __add__ (self, other):
-      return MyList(super().__add__(other))
+      return ValidatingList(super().__add__(other))
 
     def __iadd__ (self, other):
       validate_each(other)

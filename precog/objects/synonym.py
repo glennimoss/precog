@@ -1,6 +1,5 @@
 from precog import db
-from precog.diff import Reference
-from precog.identifier import *
+from precog.identifier import OracleFQN, schema_alias
 from precog.objects.base import OracleObject
 from precog.objects.has.prop import HasProp
 

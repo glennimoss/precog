@@ -1,5 +1,4 @@
 from precog.diff import Reference
-from precog.objects.base import OracleObject
 from precog.objects.has.prop import HasProp
 from precog.parser.parser import Expression
 

@@ -2,7 +2,8 @@ import re
 
 from precog import db
 from precog.diff import Diff, Reference
-from precog.identifier import *
+from precog.errors import PropertyConflict, DataConflict
+from precog.identifier import OracleFQN, GeneratedId
 from precog.objects.base import OracleObject
 from precog.objects.constraint import (Constraint, CheckConstraint,
                                        UniqueConstraint)
@@ -11,7 +12,7 @@ from precog.objects.has.expression import (HasDataDefault,
                                            HasExpressionWithDataDefault)
 from precog.objects.has.prop import HasProp
 from precog.objects.has.user_type import HasUserType
-from precog.objects.index import Index
+#from precog.objects.index import Index
 from precog.objects.plsql import Type
 
 _is_char = re.compile('(VAR)?CHAR', re.I)

@@ -3,7 +3,7 @@ import logging, pprint, inspect, itertools
 from precog.antlr3.ext import NamedConstant
 from precog import db
 from precog.errors import PrecogError
-from precog.util import HasLog, progress_log
+from precog.util import progress_log
 
 class Reference (object):
   SOFT = 'SOFT'
@@ -194,7 +194,7 @@ class DuplicateCreationError (PrecogError):
     self.diff2 = diff2
 
   def __str__ (self):
-    return "{} overlaps creation with {}".format(self.diff1, diff2)
+    return "{} overlaps creation with {}".format(self.diff1, self.diff2)
 
 def order_diffs (diffs):
   log = logging.getLogger('precog.diff.order_diffs')

@@ -1,3 +1,5 @@
+import pprint
+
 __all__ = ['_assert_type', '_assert_contains_type']
 
 def _assert_type (value, type):

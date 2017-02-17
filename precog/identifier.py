@@ -1,7 +1,7 @@
 import re
 
 from precog import reserved
-from precog.errors import *
+from precog.errors import OracleNameError, ReservedNameError, PrecogError
 from precog.util import coerced_comparison
 
 @coerced_comparison

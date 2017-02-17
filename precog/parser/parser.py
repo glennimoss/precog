@@ -75,7 +75,7 @@ class Expression (object):
 
   @property
   def references (self):
-    from precog.parser.sqlParser import CALL
+    #from precog.parser.sqlParser import CALL
     references = set()
     names = []
 

@@ -1,5 +1,4 @@
 from precog.diff import Reference
-from precog.identifier import OracleIdentifier
 from precog.objects.has.prop import HasProp
 
 class HasColumns (HasProp('columns', dependency=Reference.AUTODROP,

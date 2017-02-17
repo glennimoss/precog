@@ -2,10 +2,9 @@ import logging, os, pickle
 
 from precog import db
 from precog.diff import order_diffs
-from precog.identifier import *
+from precog.identifier import OracleFQN, OracleIdentifier
 from precog.objects import *
 from precog.parser import parser
-from precog.parser.parser import Expression
 from precog.util import (HasLog, progress_log, pluralize, split_list,
                          _type_to_class_name)
 

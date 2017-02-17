@@ -49,7 +49,7 @@ class LoggingRecognizer (HasLog):
   def logSyntaxError (self, message, input, index, line, column):
     self._log_syntax(message, input, index, line, column, self.log.error)
 
-  def logSyntaxWarning (self):
+  def logSyntaxWarning (self, message, input, index, line, column):
     self._log_syntax(message, input, index, line, column, self.log.warn)
 
   def _log_syntax (self, message, input, index, line, column, logger):
