@@ -93,6 +93,13 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
                            -- For PK/unique constraints
                            , index_owner
                            , index_name
+                           , CASE WHEN last_change = ( SELECT timestamp
+                                                       FROM dba_objects do
+                                                       WHERE do.object_type = 'INDEX'
+                                                       AND do.owner = dc.index_owner
+                                                       AND do.object_name = dc.index_name
+                                                     )
+                             THEN 'INDEX_AUTO_DROP' END AS index_ownership
                       FROM dba_constraints dc
                       WHERE owner = :o
                         -- Ignore columns on tables in the recyclebin
@@ -133,6 +140,7 @@ class Constraint (HasProp('is_enabled', assert_type=bool), HasTableFromColumns,
           props['index'] = into_database.find(OracleFQN(row['index_owner'],
                                                         row['index_name']),
                                               Index)
+          props['index_ownership'] = row['index_ownership']
         constraint_class = UniqueConstraint
 
       elif type == 'R':
@@ -165,27 +173,23 @@ class CheckConstraint (HasExpression, Constraint):
     return ['CHECK (', self.expression.text, ')']
 
 _HasIndex = HasProp('index')
-class UniqueConstraint (HasProp('index_ownership'),
-                        HasProp('is_pk', assert_type=bool), _HasIndex,
-                        Constraint):
+class UniqueConstraint (HasProp('is_pk', assert_type=bool), _HasIndex,
+                        HasProp('index_ownership', diff_this=False), Constraint):
   namespace = Constraint
 
   FULL_INDEX_CREATE = 'FULL_INDEX_CREATE'
   SHORT_INDEX_CREATE = 'SHORT_INDEX_CREATE'
   IMPLICIT_INDEX_CREATE = 'IMPLICIT_INDEX_CREATE'
-
-  def __init__ (self, name, **props):
-    super().__init__(name, **props)
+  INDEX_AUTO_DROP = 'INDEX_AUTO_DROP'
 
   @_HasIndex.index.setter
   def index (self, value):
     _assert_type(value, Index)
+    _HasIndex.index.__set__(self, value)
     if self.index_ownership:
       value._depends_on(self, '_unique_constraint', Reference.AUTODROP)
     else:
       self._depends_on(value, '_index', Reference.HARD)
-    #self._depends_on(value, '_index', Reference.AUTODROP
-                     #if self.index_ownership else Reference.HARD)
     if self.index and not self.index.columns:
       # If our index has no columns it was likely created as part of an inline
       # constraint, so once the constraint is told its columns, it should pass
@@ -235,10 +239,10 @@ class UniqueConstraint (HasProp('index_ownership'),
 
   def _drop (self):
     diff = super()._drop()
-    if self.index_ownership:
-      diff.sql[0] += ' DROP INDEX'
-    else:
+    if not self.index_ownership:
       diff.sql[0] += ' KEEP INDEX'
+    elif self.index_ownership != UniqueConstraint.INDEX_AUTO_DROP:
+      diff.sql[0] += ' DROP INDEX'
     return diff
 
 _HasFkConstraint = HasProp('fk_constraint', dependency=Reference.HARD,

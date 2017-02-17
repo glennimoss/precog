@@ -4,7 +4,7 @@ from precog.objects._assert import _assert_type, _assert_contains_type
 from precog.objects.base import OracleObject
 
 def HasProp (prop_name, dependency=None, assert_collection=None,
-             assert_type=None, strict_none=False):
+             assert_type=None, strict_none=False, diff_this=True):
   under_prop = '_' + prop_name
   eq_prop = '_eq_' + prop_name
 
@@ -49,7 +49,7 @@ def HasProp (prop_name, dependency=None, assert_collection=None,
 
     def _diff_props (self, other):
       prop_diff = super()._diff_props(other)
-      if not equal(self, other):
+      if diff_this and not equal(self, other):
         expected = getattr(self, prop_name, None)
         other_prop = getattr(other, prop_name, None)
         prop_diff[prop_name] = (expected, other_prop)
