@@ -2,6 +2,10 @@ import logging, os, pickle
 
 from precog import db
 from precog.diff import order_diffs
+from precog.errors import (AmbiguousNameError, DuplicateIndexConflict,
+                           MergeConflict, NonexistentSchemaObjectError,
+                           PrecogError, SchemaConflict,
+                           UnsatisfiedDependencyError)
 from precog.identifier import OracleFQN, OracleIdentifier
 from precog.objects import *
 from precog.parser import parser
@@ -301,6 +305,9 @@ class Schema (OracleObject):
     return name
 
   def find (self, name, obj_type, deferred=True):
+    if isinstance(obj_type, str):
+      obj_type = _to_type(obj_type, name)
+
     if callable(name):
       test = name # For clarity
       if obj_type in self.objects:
@@ -773,6 +780,9 @@ class Database (HasLog):
     return name
 
   def find (self, name, obj_type=OracleObject, deferred=True):
+    if isinstance(obj_type, str):
+      obj_type = _to_type(obj_type, name)
+
     if obj_type is OracleObject and isinstance(name, list):
       # Try and resolve a very ambiguous name
       schema = None

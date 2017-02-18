@@ -180,7 +180,7 @@ class exact_numbers (object):
     global _numbers_as_strings
     _numbers_as_strings = self.orig_str_setting
 
-def filter_clause (column_name, values):
+def filter_clause (column_name, values, logical_connective="AND"):
   if values:
-    return "AND {} IN ('{}')".format(column_name, "', '".join(values))
+    return "{} {} IN ('{}')".format(logical_connective, column_name, "', '".join(values))
   return ''

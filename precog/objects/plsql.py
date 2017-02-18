@@ -2,7 +2,7 @@ import difflib, re
 from precog import db
 from precog.diff import Diff, ErrorCheckingDiff, PlsqlDiff, Reference
 from precog.errors import (NonexistentSchemaObjectError, PlsqlSyntaxError,
-                           PrecogError)
+                           PrecogError, UnimplementedFeatureError)
 from precog.objects.base import OracleObject, OracleFQN
 from precog.objects.has.prop import HasProp
 from precog.util import _type_to_class_name, _with_location
@@ -145,7 +145,55 @@ class PlsqlCode (OracleObject):
         plsql_name, source=''.join(line['text'] for line in row['text']),
         database=into_database, create_location=(db.location,),
         status=row['status'])
-    rs.close()
+
+    filter_clause = ''
+    if plsql_names:
+      dep_filter = db.filter_clause("type || '.' || name", plsql_names, logical_connective="AND (")
+      ref_filter = db.filter_clause("referenced_type || '.' || referenced_name", plsql_names, logical_connective="OR")
+      filter_clause = '{} {})'.format(dep_filter, ref_filter)
+
+    into_database.log.debug("Querying for plsql {} dependencies from DB...".format(
+      "(all)" if plsql_names is None else ", ".join(plsql_names)))
+    rs = db.query(""" SELECT name
+                           , type
+                           , dependency_type
+                           , referenced_owner
+                           , referenced_name
+                           , referenced_type
+                      FROM dba_dependencies
+                      WHERE owner = :o
+                        AND type IN ( 'TYPE', 'TABLE' /*'FUNCTION'
+                                    , 'PACKAGE'
+                                    , 'PACKAGE BODY'
+                                    , 'PROCEDURE'
+                                    , 'TRIGGER'
+                                    , 'TYPE'
+                                    , 'TYPE BODY' */
+                                    )
+                        AND referenced_type = 'TYPE'
+                        AND referenced_owner NOT IN ('SYS', 'PUBLIC')
+                        {}
+                      ORDER BY type, name
+                  """.format(filter_clause), o=schema,
+                  oracle_names=['name', 'referenced_owner', 'referenced_name'])
+    into_database.log.debug("Cursor obtained")
+    for row in rs:
+      if row['dependency_type'] != 'HARD':
+        raise UnimplementedFeatureError("Unsupported dependency_type = {}".format(row['dependency_type']))
+
+      name = OracleFQN(schema, row['name'])
+      try:
+        obj = into_database.find(name, row['type'], deferred=False)
+
+        referenced_name = OracleFQN(row['referenced_owner'], row['referenced_name'])
+        referenced_obj = into_database.find(referenced_name, row['referenced_type'])
+
+        into_database.log.debug("{} depends on {}".format(obj.pretty_name, referenced_obj.pretty_name))
+        obj._set_dependency(referenced_obj)
+      except NonexistentSchemaObjectError:
+        # If we don't know about the object, we don't want to track its dependencies
+        pass
+
 
 class PlsqlHeader (PlsqlCode):
 
@@ -208,7 +256,15 @@ class Trigger (PlsqlCode):
   pass
 
 class Type (PlsqlHeader):
-  pass
+  def recreate (self, other):
+    create = self.create()
+    teardowns = other.teardown()
+    create.add_dependencies(teardowns)
+    rebuild = other.build_up()
+    for diff in rebuild:
+      diff.add_dependencies(create)
+    diffs = teardowns + [create] + rebuild
+    return diffs
 
 class TypeBody (PlsqlBody):
 

@@ -158,8 +158,12 @@ class OracleObject (HasLog):
             for diff in ref.from_.drop()]
 
   def build_up (self):
-    return [ref.from_.create() for ref in self._referenced_by
-            if ref.integrity != Reference.SOFT]
+    diffs = []
+    for ref in self._referenced_by:
+      if ref.integrity != Reference.SOFT:
+        diffs.append(ref.from_.create())
+        diffs.extend(ref.from_.build_up())
+    return diffs
 
   def _drop (self):
     return Diff("DROP {} {}".format(self.type, self.name.lower()), self,
